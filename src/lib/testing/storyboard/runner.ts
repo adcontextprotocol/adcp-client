@@ -406,7 +406,7 @@ export function applyAdcpVersionRunOptions(
   if (options.adcpVersion === adcpVersion && options.versionEnvelope === versionEnvelope) {
     return options;
   }
-  return { ...options, adcpVersion, versionEnvelope };
+  return { ...options, adcpVersion, ...(versionEnvelope !== undefined && { versionEnvelope }) };
 }
 
 function getRunSchemaRoot(options: StoryboardRunOptions): { adcpVersion: string; schemaRoot: string } | undefined {
@@ -420,11 +420,17 @@ function getRunSchemaRoot(options: StoryboardRunOptions): { adcpVersion: string;
   return { adcpVersion, schemaRoot: options.schemaRoot };
 }
 
-function storyboardVersionEnvelopeMode(adcpVersion: string): VersionEnvelopeMode {
+/**
+ * Run-level envelope for a storyboard release. AdCP 3+ keeps the SDK default
+ * (`auto` on ordinary calls) rather than setting `auto` explicitly: an explicit
+ * envelope also pins capability discovery, which must go out unpinned for a
+ * preview release the seller has not advertised yet.
+ */
+function storyboardVersionEnvelopeMode(adcpVersion: string): VersionEnvelopeMode | undefined {
   const bundleKey = resolveBundleKey(adcpVersion);
   const major = parseAdcpMajorVersion(bundleKey);
   if (Number.isFinite(major) && major < 3) return 'none';
-  return 'auto';
+  return undefined;
 }
 
 /**

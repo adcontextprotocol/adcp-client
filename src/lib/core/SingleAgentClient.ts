@@ -70,6 +70,7 @@ import {
   creativeStartPolicyOptInFields,
 } from '../media-buy/creative-start-policy';
 import {
+  capabilityDiscoveryEnvelope,
   convertRequest,
   convertResponse,
   getVersionAdapter,
@@ -10079,12 +10080,12 @@ export class SingleAgentClient {
     const scopeKey = this.config._reuseConfiguredDiscovery?.() ? this.getCapabilityEvidenceScope().scopeKey : undefined;
     const agent = await this.ensureEndpointDiscovered(options);
     this.executor.validateRequest('get_adcp_capabilities', params);
-    const result = await this.executor.executeTask<GetAdCPCapabilitiesResponse>(
+    const result = await this.executeCapabilityDiscovery<GetAdCPCapabilitiesResponse>(
       agent,
-      'get_adcp_capabilities',
       params,
       inputHandler,
-      options
+      options,
+      options.versionEnvelope ?? this.config.versionEnvelope
     );
     if (
       this.config._reuseConfiguredDiscovery?.() &&
@@ -10102,6 +10103,59 @@ export class SingleAgentClient {
       }
     }
     return result;
+  }
+
+  /**
+   * Dispatch `get_adcp_capabilities` under the discovery version rule.
+   *
+   * A preview pin goes out unpinned (see {@link capabilityDiscoveryEnvelope}),
+   * and a pinned discovery the seller refuses with `VERSION_UNSUPPORTED` is
+   * retried once unpinned. Neither applies when the caller chose the pin, with
+   * version fields in `params` or an `explicitEnvelope`: the seller's refusal,
+   * carrying its `supported_versions` in `adcpError.details`, is the answer.
+   * A caller `operationId` also skips the retry, which would need an id of its
+   * own. Only a successful retry replaces the pinned refusal, whose diagnostics
+   * name the release actually sent.
+   */
+  private async executeCapabilityDiscovery<T>(
+    agent: AgentConfig,
+    params: object,
+    inputHandler: InputHandler | undefined,
+    options: TaskOptions,
+    explicitEnvelope: import('../protocols').VersionEnvelopeMode | undefined
+  ): Promise<TaskResult<T>> {
+    const requested = params as { adcp_version?: unknown; adcp_major_version?: unknown };
+    const callerPinned =
+      explicitEnvelope !== undefined ||
+      requested.adcp_version !== undefined ||
+      requested.adcp_major_version !== undefined;
+    const envelope = capabilityDiscoveryEnvelope(
+      explicitEnvelope,
+      options.wireAdcpVersion ?? this.config.wireAdcpVersion ?? this.resolvedAdcpVersion
+    );
+    const result = await this.executor.executeTask<T>(
+      agent,
+      'get_adcp_capabilities',
+      params,
+      inputHandler,
+      envelope === undefined ? options : { ...options, versionEnvelope: envelope }
+    );
+    if (
+      callerPinned ||
+      envelope === 'none' ||
+      options.operationId !== undefined ||
+      result.success ||
+      result.adcpError?.code !== 'VERSION_UNSUPPORTED'
+    ) {
+      return result;
+    }
+    throwIfAborted(options.signal);
+    // A separate physical dispatch: its own correlation id, the same deadline.
+    const unpinned = await this.executor.executeTask<T>(agent, 'get_adcp_capabilities', params, inputHandler, {
+      ...childTaskOptions(options),
+      versionEnvelope: 'none',
+    });
+    return unpinned.success ? unpinned : result;
   }
 
   // ====== CREATIVE BUILD TASKS ======
@@ -12174,15 +12228,13 @@ export class SingleAgentClient {
         // and callback authorization provenance. The active OpenTelemetry
         // context remains in the async chain, correlating both physical tasks.
         const callerOptions = options as CapabilityProbeRequestOptions | undefined;
-        const isPreview = !!parseAdcpRelease(this.resolvedAdcpVersion)?.prerelease;
+        const isPreview =
+          capabilityDiscoveryEnvelope(undefined, this.config.wireAdcpVersion ?? this.resolvedAdcpVersion) === 'none';
         const probeOptions: CapabilityProbeRequestOptions = {
           // Discover the seller's release window before claiming a preview
           // older sellers may reject. Ordinary calls still negotiate exact
           // preview evidence or a maintained stable downgrade afterwards.
-          ...(isPreview && {
-            versionEnvelope: callerOptions?.versionEnvelope ?? this.config.versionEnvelope ?? 'none',
-            disableWebhook: true,
-          }),
+          ...(isPreview && { disableWebhook: true }),
           ...(options?.signal !== undefined && { signal: options.signal }),
           ...(options?.transport !== undefined && { transport: options.transport }),
           ...(callerOptions?.disableWebhook !== undefined &&
@@ -12193,12 +12245,14 @@ export class SingleAgentClient {
             delegatedOperatorAuthorization: { ...callerOptions.delegatedOperatorAuthorization },
           }),
         };
-        const result = await this.executor.executeTask<any>(
+        const result = await this.executeCapabilityDiscovery<any>(
           agent,
-          'get_adcp_capabilities',
           {},
           undefined,
-          probeOptions
+          probeOptions,
+          // The operation's own envelope steers only a preview probe; a stable
+          // probe keeps the client's configured envelope.
+          (isPreview ? callerOptions?.versionEnvelope : undefined) ?? this.config.versionEnvelope
         );
         throwIfAborted(options?.signal);
         const requestTimeoutMs = resolveRequestTimeoutMs(

@@ -599,9 +599,12 @@ function membershipOf(
   const configuration = version.configuration;
   const edits = (version.membershipEdits ?? []).filter(edit => edit.accountId === accountId);
   const byAccountIds = configuration.scope.account_ids !== undefined;
+  // Only an explicit all_authorized_accounts covers every account; an unknown
+  // selector covers none.
   const memberNow = byAccountIds
     ? configuration.scope.account_ids!.includes(accountId)
-    : configuration.exclude_account_ids?.includes(accountId) !== true;
+    : configuration.scope.all_authorized_accounts === true &&
+      configuration.exclude_account_ids?.includes(accountId) !== true;
   const lastRemoval = [...edits].reverse().find(edit => !edit.member);
   const lastAdded = [...edits].reverse().find(edit => edit.member);
   const result: { excluded?: number; joinedAt?: number; lastAddedAt?: number } = {};

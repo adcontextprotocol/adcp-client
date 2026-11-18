@@ -89,7 +89,7 @@ describe('Zod Schema Validation', () => {
     assert.equal(schemas.ReportingDeliveryMethodSchema.safeParse(audienceTransfer).success, false);
   });
 
-  test('reporting file manifests reject unknown fields at every normative closed boundary', async () => {
+  test('reporting file manifests accept extension members and still enforce declared values', async () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
 
     const manifest = {
@@ -120,7 +120,8 @@ describe('Zod Schema Validation', () => {
     };
 
     assert.equal(schemas.ReportingFileManifestSchema.safeParse(manifest).success, true);
-    for (const invalid of [
+    // AdCP 3.3.0-beta.6 opened every manifest boundary (adcp#8866).
+    for (const extended of [
       { ...manifest, not_in_protocol: true },
       { ...manifest, period: { ...manifest.period, not_in_protocol: true } },
       { ...manifest, files: [{ ...manifest.files[0], not_in_protocol: true }] },
@@ -128,6 +129,13 @@ describe('Zod Schema Validation', () => {
         ...manifest,
         control_totals: [{ ...manifest.control_totals[0], not_in_protocol: true }],
       },
+    ]) {
+      assert.equal(schemas.ReportingFileManifestSchema.safeParse(extended).success, true, JSON.stringify(extended));
+    }
+    for (const invalid of [
+      { ...manifest, period: undefined },
+      { ...manifest, files: [{ ...manifest.files[0], sha256: 'not-a-digest' }] },
+      { ...manifest, control_totals: [{ ...manifest.control_totals[0], value_type: 'not-a-type' }] },
     ]) {
       assert.equal(
         schemas.ReportingFileManifestSchema.safeParse(invalid).success,
@@ -359,10 +367,14 @@ describe('Zod Schema Validation', () => {
       { ...valid, accepted_losses: ['feed_version_not_atomic'] },
       { ...valid, accepted_losses: [...valid.accepted_losses, valid.accepted_losses[0]] },
       { ...valid, selected_product_ids: [...valid.selected_product_ids, valid.selected_product_ids[0]] },
-      { ...valid, unexpected: true },
     ]) {
       assert.equal(schemas.CompatibilityPurchaseCoordinatorInputSchema.safeParse(invalid).success, false);
     }
+    // AdCP 3.3.0-beta.6 opened the root (adcp#8866); loss consent stays closed.
+    assert.equal(
+      schemas.CompatibilityPurchaseCoordinatorInputSchema.safeParse({ ...valid, unexpected: true }).success,
+      true
+    );
   });
 
   test('beta.4 request-proposals response schema enforces every legacy continuation loss', async () => {
@@ -1287,7 +1299,10 @@ describe('Zod Schema Validation', () => {
       );
     }
 
-    assert.ok(!schemas.TMPXChunkSchema.safeParse({ ...chunk, destination: 'PUBLISHER_MACRO' }).success);
+    // AdCP 3.3.0-beta.6 opened the chunk (adcp#8866): an extension member is
+    // accepted, while hop isolation above and the chunk's own fields still hold.
+    assert.ok(schemas.TMPXChunkSchema.safeParse({ ...chunk, destination: 'PUBLISHER_MACRO' }).success);
+    assert.ok(!schemas.TMPXChunkSchema.safeParse({ slot_id: 'primary', value: '' }).success);
     assert.ok(
       !schemas.IdentityMatchResponseProviderRouterSchema.safeParse({ ...baseResponse, tmpx_chunks: [] }).success
     );

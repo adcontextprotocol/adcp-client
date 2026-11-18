@@ -47,7 +47,7 @@ function buildServer({ capabilities, validation, idempotency, adcpVersion, recei
 
 // `undefined` yields a package with a different control, so every entry is valid.
 const controlRequest = (policies, overrides = {}) => ({
-  adcp_version: '3.3-beta.5',
+  adcp_version: '3.3-beta.6',
   idempotency_key: 'a'.repeat(16),
   account: { account_id: 'acct_1' },
   media_buy_id: 'mb_1',
@@ -161,7 +161,7 @@ describe('control_media_buy creative start policy: server', () => {
       },
     });
     const frame = await call(server, 'update_media_buy', {
-      adcp_version: '3.3-beta.5',
+      adcp_version: '3.3-beta.6',
       idempotency_key: 'b'.repeat(16),
       account: { account_id: 'acct_1' },
       media_buy_id: 'mb_1',
@@ -200,7 +200,7 @@ describe('control_media_buy creative start policy: server', () => {
     const featuresOf = async capabilities => {
       const frame = await buildServer({ capabilities }).dispatchTestRequest({
         method: 'tools/call',
-        params: { name: 'get_adcp_capabilities', arguments: { adcp_version: '3.3-beta.5' } },
+        params: { name: 'get_adcp_capabilities', arguments: { adcp_version: '3.3-beta.6' } },
       });
       return frame.structuredContent.media_buy.features;
     };
@@ -378,8 +378,8 @@ describe('control_media_buy creative start policy: client unit cases', () => {
 
   test('synthetic capabilities send and let the seller decide', async () => {
     const client = stubClient({
-      capabilities: { ...discovered(['3.3-beta.5']), _synthetic: true },
-      wireAdcpVersion: '3.3-beta.5',
+      capabilities: { ...discovered(['3.3-beta.6']), _synthetic: true },
+      wireAdcpVersion: '3.3-beta.6',
     });
     const calls = await dispatched(client, request(true));
     assert.strictEqual(calls.length, 1);
@@ -387,15 +387,15 @@ describe('control_media_buy creative start policy: client unit cases', () => {
   });
 
   test('discovered capabilities without the feature refuse, with it send', async () => {
-    const refused = stubClient({ capabilities: discovered(['3.3-beta.5']) });
+    const refused = stubClient({ capabilities: discovered(['3.3-beta.6']) });
     await assert.rejects(dispatched(refused, request(true)), error => error instanceof ProtocolFeatureUnsupportedError);
 
-    const accepted = stubClient({ capabilities: discovered(['3.3-beta.5'], { creativeStartPolicy: true }) });
+    const accepted = stubClient({ capabilities: discovered(['3.3-beta.6'], { creativeStartPolicy: true }) });
     assert.strictEqual((await dispatched(accepted, request(true))).length, 1);
   });
 
   test('false and omission send even when the feature is undeclared', async () => {
-    const client = stubClient({ capabilities: discovered(['3.3-beta.5']) });
+    const client = stubClient({ capabilities: discovered(['3.3-beta.6']) });
     assert.strictEqual((await dispatched(client, request(false))).length, 1);
     const omitted = { ...request(false), packages: [{ package_id: 'pkg_0', paused: false }] };
     assert.strictEqual((await dispatched(client, omitted)).length, 1);

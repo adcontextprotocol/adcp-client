@@ -37,5 +37,6 @@ export {
   isReportingAdjustmentReceiptEvidence,
   isReportingReceiptEvidence,
   isReportingVerificationEvidence,
+  undeclaredReportingMaterializationMembers,
 } from '../evidence';
 export { isWellFormedUnicodeString } from '../../utils/well-formed-unicode';

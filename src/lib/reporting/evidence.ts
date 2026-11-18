@@ -1,3 +1,5 @@
+import { projectToDeclaredMembers } from '../adapters/version/schema-projection';
+
 const CONTROL_TOTAL_NAME = /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/;
 const CANONICAL_DECIMAL = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
 const SHA256_HEX = /^[A-Fa-f0-9]{64}$/;
@@ -251,5 +253,18 @@ export function isReportingAdjustmentReceiptEvidence(value: unknown): boolean {
     value.rejection_codes.length > 0 &&
     new Set(value.rejection_codes).size === value.rejection_codes.length &&
     value.rejection_codes.every(code => typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,127}$/.test(code))
+  );
+}
+
+/**
+ * JSON paths of members a materialization carries, at any depth, that its
+ * bundled schema does not declare. AdCP 3.3.0-beta.6 opened these schemas
+ * (adcontextprotocol/adcp#8866), so schema validation alone now accepts them; a
+ * store or managed runtime refuses evidence that reports any, as it did while
+ * the schemas were closed.
+ */
+export function undeclaredReportingMaterializationMembers(materialization: unknown): string[] {
+  return projectToDeclaredMembers('core/reporting-materialization.json', materialization).dropped.map(
+    drop => drop.path
   );
 }

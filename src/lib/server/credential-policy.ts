@@ -20,6 +20,8 @@
  * @see docs/guides/CTX-METADATA-SAFETY.md
  */
 
+import { MAX_JSON_DEPTH } from '../utils/json-depth';
+
 /**
  * Enforcement mode.
  *
@@ -254,6 +256,11 @@ export function scanArgsForCredentials(value: unknown, patterns?: CredentialPatt
   const walk = (node: unknown, path: readonly string[]): void => {
     if (node === null || typeof node !== 'object') return;
     if (seen.has(node)) return;
+    // Fail closed, like an unreadable member, rather than overflowing the stack.
+    if (path.length > MAX_JSON_DEPTH) {
+      hits.push([...path.slice(0, 8), '<too-deep>'].join('.'));
+      return;
+    }
     seen.add(node);
 
     if (Array.isArray(node)) {

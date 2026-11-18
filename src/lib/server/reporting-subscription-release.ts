@@ -5,7 +5,7 @@
  * emitted only when the served release's own bundled schema declares them: earlier response
  * shapes are closed (`additionalProperties: false`). The answer comes from the bundle, not from
  * a version literal, so a release cut without these fields never opens the gate. The SDK's own
- * pin (3.3.0-beta.5) defines all of them; the gate stays for callers served an older release
+ * pin (3.3.0-beta.6) defines all of them; the gate stays for callers served an older release
  * (an external schema root, for example). A response without a served release (a direct
  * handler call outside protocol dispatch) is the pinned release, as in the Python SDK.
  */

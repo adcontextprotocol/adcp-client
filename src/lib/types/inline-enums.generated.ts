@@ -256,6 +256,8 @@ export const AttestationResourceSubject_TypeValues = ["resource"] as const;
 
 /** single | AudienceEvidence.evidence_type */
 export const AudienceEvidence_EvidenceTypeValues = ["measured", "forecast", "seller_declared"] as const;
+/** single | AudienceEvidence.relationship */
+export const AudienceEvidence_RelationshipValues = ["composition", "index", "reach_estimate"] as const;
 /** single | AudienceEvidence.unit */
 export const AudienceEvidence_UnitValues = ["fraction", "ratio", "count"] as const;
 
@@ -879,11 +881,6 @@ export const EmptyReportGoldenVector_PurposeValues = ["empty_report"] as const;
 /** single | EmptyReportGoldenVector.sha256 */
 export const EmptyReportGoldenVector_Sha256Values = ["4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"] as const;
 
-// ====== EscalationSLA ======
-
-/** single | EscalationSLA.clock */
-export const EscalationSLA_ClockValues = ["elapsed"] as const;
-
 // ====== EventSourceExecutionRequirement ======
 
 /** single | EventSourceExecutionRequirement.kind */
@@ -1134,6 +1131,11 @@ export const InlineMarkup_MarkupTypeValues = ["iframe_javascript", "javascript",
 
 /** single | InspectedDocumentVersionMismatch.mismatch_reason */
 export const InspectedDocumentVersionMismatch_MismatchReasonValues = ["document_version_mismatch"] as const;
+
+// ====== InstallmentChange ======
+
+/** single | InstallmentChange.action */
+export const InstallmentChange_ActionValues = ["include", "omit"] as const;
 
 // ====== IntegerReportingControlTotal ======
 
@@ -1495,11 +1497,6 @@ export const ProvidePerformanceFeedbackSuccess_ApplicationStatusValues = ["accep
 /** single | ProvisionBinding.mode */
 export const ProvisionBinding_ModeValues = ["provision"] as const;
 
-// ====== PublishedPostAsset ======
-
-/** single | PublishedPostAsset.asset_type */
-export const PublishedPostAsset_AssetTypeValues = ["published_post"] as const;
-
 // ====== PublisherCatalogFormatOptionReference ======
 
 /** single | PublisherCatalogFormatOptionReference.scope */
@@ -1679,6 +1676,8 @@ export const ReportingObligation_ReconciliationStatusValues = ["not_required", "
 
 // ====== ReportingReportDefinition ======
 
+/** single | ReportingReportDefinition.contract_version */
+export const ReportingReportDefinition_ContractVersionValues = ["1.0", "1.1", "1.2"] as const;
 /** single | ReportingReportDefinition.media_type */
 export const ReportingReportDefinition_MediaTypeValues = ["application/vnd.adcp.reporting-definition+json"] as const;
 
@@ -2083,7 +2082,7 @@ export const VideoAssetRequirements_AudioCodecsValues = ["aac", "pcm", "ac3", "e
 /** array of | VideoAssetRequirements.codecs */
 export const VideoAssetRequirements_CodecsValues = ["h264", "h265", "vp8", "vp9", "av1", "prores"] as const;
 /** array of | VideoAssetRequirements.containers */
-export const VideoAssetRequirements_ContainersValues = ["mp4", "webm", "mov", "avi", "mkv"] as const;
+export const VideoAssetRequirements_ContainersValues = ["mp4", "webm", "mov", "avi", "mkv", "3gp", "mpeg", "m4v"] as const;
 
 // ====== VideoBriefAsset ======
 
@@ -2163,6 +2162,8 @@ export const BuildCreativeVariantSuccess_KeepModeAppliedValues = BuildCreativeRe
 // --- CanonicalAudienceEvidence ---
 /** @deprecated use `AudienceEvidence_EvidenceTypeValues` — same literal set, CanonicalAudienceEvidence.evidence_type duplicates the canonical export. */
 export const CanonicalAudienceEvidence_EvidenceTypeValues = AudienceEvidence_EvidenceTypeValues;
+/** @deprecated use `AudienceEvidence_RelationshipValues` — same literal set, CanonicalAudienceEvidence.relationship duplicates the canonical export. */
+export const CanonicalAudienceEvidence_RelationshipValues = AudienceEvidence_RelationshipValues;
 /** @deprecated use `AudienceEvidence_UnitValues` — same literal set, CanonicalAudienceEvidence.unit duplicates the canonical export. */
 export const CanonicalAudienceEvidence_UnitValues = AudienceEvidence_UnitValues;
 // --- CanonicalAudienceEvidenceSelection ---
@@ -2721,9 +2722,6 @@ export const SignalSelectionGroupRule_TargetingModeValues = CollectionListApplic
 // --- SignalTargetingRules ---
 /** @deprecated use `SignalSelectionGroupRule_SelectionModeValues` — same literal set, SignalTargetingRules.selection_mode duplicates the canonical export. */
 export const SignalTargetingRules_SelectionModeValues = SignalSelectionGroupRule_SelectionModeValues;
-// --- SLAWindow ---
-/** @deprecated use `CreativeReviewSLA_ClockValues` — same literal set, SLAWindow.clock duplicates the canonical export. */
-export const SLAWindow_ClockValues = CreativeReviewSLA_ClockValues;
 // --- SyncAudiencesSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, SyncAudiencesSubmitted.status duplicates the canonical export. */
 export const SyncAudiencesSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
@@ -2802,6 +2800,9 @@ export const UpdateMediaBuySubmitted_StatusValues = BuildCreativeAsyncSubmitted_
 // --- URLAsset ---
 /** @deprecated use `GroupUrlAsset_AssetTypeValues` — same literal set, URLAsset.asset_type duplicates the canonical export. */
 export const URLAsset_AssetTypeValues = GroupUrlAsset_AssetTypeValues;
+// --- URLAsset1 ---
+/** @deprecated use `GroupUrlAsset_AssetTypeValues` — same literal set, URLAsset1.asset_type duplicates the canonical export. */
+export const URLAsset1_AssetTypeValues = GroupUrlAsset_AssetTypeValues;
 // --- VASTTrackerConstraints ---
 /** @deprecated use `VASTTrackerAsset_TargetValues` — same literal set, VASTTrackerConstraints.target duplicates the canonical export. */
 export const VASTTrackerConstraints_TargetValues = VASTTrackerAsset_TargetValues;

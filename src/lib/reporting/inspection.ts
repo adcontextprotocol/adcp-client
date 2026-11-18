@@ -1447,6 +1447,9 @@ function assertIJson(value: unknown, seen = new Set<object>()): void {
   seen.delete(value);
 }
 
+/** 1.1 adds adjustments-only official closes; 1.2 (AdCP 3.3) adds the package_id rule. */
+const REPORT_DEFINITION_CONTRACT_VERSIONS: ReadonlySet<unknown> = new Set(['1.0', '1.1', '1.2']);
+
 function isValidReportDefinition(value: unknown): value is Record<string, any> {
   if (
     !isRecord(value) ||
@@ -1463,7 +1466,7 @@ function isValidReportDefinition(value: unknown): value is Record<string, any> {
       'restatement_policy',
       'finality_policies',
     ]) ||
-    value.contract_version !== '1.0' ||
+    !REPORT_DEFINITION_CONTRACT_VERSIONS.has(value.contract_version) ||
     value.media_type !== 'application/vnd.adcp.reporting-definition+json' ||
     typeof value.report_definition_id !== 'string' ||
     !ENTITY_ID_PATTERN.test(value.report_definition_id) ||
@@ -1536,14 +1539,25 @@ function isValidReportDefinition(value: unknown): value is Record<string, any> {
   ) {
     return false;
   }
+  // 1.2 (AdCP 3.3): a media-buy definition must also carry the buyer-visible package.
+  if (
+    value.contract_version === '1.2' &&
+    value.dimensions.includes('media_buy_id') &&
+    !value.dimensions.includes('package_id')
+  ) {
+    return false;
+  }
 
   const restatement = value.restatement_policy;
   if (
     !isRecord(restatement) ||
-    !hasOnlyKeys(restatement, ['source_requery_duration', 'emit_only_on_content_change']) ||
+    !hasOnlyKeys(restatement, ['source_requery_duration', 'emit_only_on_content_change', 'official_correction_mode']) ||
     typeof restatement.source_requery_duration !== 'string' ||
     !ISO_DURATION_PATTERN.test(restatement.source_requery_duration) ||
-    restatement.emit_only_on_content_change !== true
+    restatement.emit_only_on_content_change !== true ||
+    (restatement.official_correction_mode !== undefined &&
+      restatement.official_correction_mode !== 'adjustments_only') ||
+    (value.contract_version !== '1.0' && restatement.official_correction_mode === undefined)
   ) {
     return false;
   }

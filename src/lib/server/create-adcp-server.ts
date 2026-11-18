@@ -6264,7 +6264,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     response: McpToolResponse,
     servedVersion: string
   ): McpToolResponse => {
-    if (toolName !== 'get_task_status' || config.identity33) return response;
+    if (toolName !== 'get_task_status') return response;
     if (translationSteps(adcpVersion, servedVersion).length === 0) return response;
     const body = response.structuredContent as Record<string, unknown> | undefined;
     if (!body || typeof body.task_type !== 'string' || !body.result || typeof body.result !== 'object') return response;
@@ -6771,7 +6771,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // converts between it and the served release. Capabilities keep their
         // own per-release projection.
         const translatesRelease =
-          !config.identity33 &&
           toolName !== 'get_adcp_capabilities' &&
           translationSteps(adcpVersion, requestRelease.validationVersion).length > 0;
         const ctx: HandlerContext<TAccount> = withImmutableServedAdcpVersion(
