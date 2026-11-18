@@ -7,7 +7,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { parse } from 'yaml';
+import { parseStoryboardYaml } from './yaml-cache';
 import type { Storyboard } from './types';
 import { MUTATING_TASKS } from '../../utils/idempotency';
 import { validateFixtureResolutionDeclarations } from './fixture-resolution';
@@ -40,7 +40,7 @@ function hasOfflineFormatDirective(value: unknown): boolean {
 
 /** Parse a YAML string into a Storyboard. Throws if required fields are missing. */
 export function parseStoryboard(yamlContent: string): Storyboard {
-  const parsed = parse(yamlContent) as Storyboard;
+  const parsed = parseStoryboardYaml(yamlContent) as Storyboard;
   if (!parsed?.id || !parsed?.phases) {
     throw new Error('Invalid storyboard YAML: missing required fields (id, phases)');
   }

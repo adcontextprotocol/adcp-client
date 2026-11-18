@@ -9,9 +9,9 @@
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
-import { parse as parseYaml } from 'yaml';
 import { basename, dirname, join, resolve } from 'path';
 import { loadStoryboardFile } from './loader';
+import { parseStoryboardYaml } from './yaml-cache';
 import { ADCP_VERSION } from '../../version';
 import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
@@ -578,7 +578,7 @@ function annotateStoryboardVersion(
 function isUniversalMetadataFile(path: string): boolean {
   try {
     const source = readFileSync(path, 'utf8');
-    const document: unknown = parseYaml(source);
+    const document: unknown = parseStoryboardYaml(source);
     // The published storyboard-schema guide consists entirely of comments.
     // Keep genuinely empty or malformed files visible as missing coverage.
     if (document === null && /^\s*#/m.test(source) && source.split(/\r?\n/).every(line => /^\s*(?:#.*)?$/.test(line)))
