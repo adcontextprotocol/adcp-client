@@ -1,5 +1,0 @@
----
-'@adcp/sdk': patch
----
-
-Add an opt-in on-disk cache for compiled bundled-schema validators. Set `ADCP_VALIDATOR_CACHE_DIR` to an absolute directory and the first process stores each bundled response or request validator it compiles as Ajv standalone code; later processes load it instead of compacting and compiling the schema again. Entries are keyed by a digest of the exact prepared schema, the loader code, the Ajv and ajv-formats versions and the Ajv options, so a changed input is a new entry. The directory and every entry must belong to the current user and be closed to group and other users; entries are written atomically, checked against a SHA-256 in their header before they run, and any doubt (wrong owner or mode, symlink, digest mismatch, truncation) falls back to the live compile. `ADCP_VALIDATOR_CACHE_MAX_MB` caps the directory (default 512). With the variable unset, empty or relative, nothing changes and the cache code is never loaded. Validation results, diagnostics and loader epochs are the same cache off, cold and warm.
