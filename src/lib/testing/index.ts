@@ -93,6 +93,7 @@ export {
   // Types
   type TestScenario,
   type TestOptions,
+  type TestKitAuth,
   type OrchestratorOptions,
   type TestResult,
   type SuiteResult,
