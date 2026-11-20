@@ -12,6 +12,7 @@ import type {
   RefineProposalsResponse,
 } from './types';
 import { PROPOSAL_REFINEMENT_DIMENSIONS } from './types';
+import { MAX_INSTALLMENT_CHANGES, installmentChangeKey, isInstallmentChange } from './installment-changes';
 import { assertRefineProposalsResponse, isStrictDateTime } from './verification';
 import { describeRefinementVersion, isProposalRefinementVersion } from './version';
 
@@ -85,6 +86,7 @@ export function refinementDimensions(refinement: ProposalRefinement): ProposalRe
     if (refinement.constraints.flight) dimensions.push('flight');
   }
   if (refinement.product_changes) dimensions.push('product_changes');
+  if (refinement.installment_changes) dimensions.push('installment_changes');
   if (refinement.alternatives) dimensions.push('alternatives');
   if (refinement.criteria) dimensions.push('criteria');
   return dimensions;
@@ -115,6 +117,7 @@ export function validateRefineProposalsRequest(
     fail('governance_context must be a non-empty string of at most 4096 characters', 'governance_context');
   }
   if (request.context !== undefined && !isRecord(request.context)) fail('context must be an object', 'context');
+  if (request.ext !== undefined && !isRecord(request.ext)) fail('ext must be an object', 'ext');
   if (request.push_notification_config !== undefined && !isRecord(request.push_notification_config)) {
     fail('push_notification_config must be an object', 'push_notification_config');
   }
@@ -155,6 +158,7 @@ export function validateRefineProposalsRequest(
     } else {
       assertAllowedKeys(refinement, REVISE_KEYS, base);
     }
+    if (refinement.ext !== undefined && !isRecord(refinement.ext)) fail('ext must be an object', `${base}.ext`);
     if (hasFinalize && refinement.action !== 'finalize') {
       throw new ProposalRefinementValidationError(
         'a batch containing finalize may contain only finalize entries',
@@ -189,17 +193,24 @@ export function validateRefineProposalsRequest(
         refinement.change_kind === 'cancellation' ||
         refinement.constraints != null ||
         refinement.product_changes != null ||
+        refinement.installment_changes != null ||
         refinement.alternatives != null ||
         refinement.ask != null ||
         refinement.criteria != null ||
         refinement.remove_media_buy_frequency_cap === true;
       if (!hasRevision) {
         throw new ProposalRefinementValidationError(
-          'revise requires a constraint, product change, alternative request, ask, criteria, frequency-cap removal, or cancellation',
+          'revise requires a constraint, product change, installment change, alternative request, ask, criteria, frequency-cap removal, or cancellation',
           base
         );
       }
       validateConstraints(refinement as Extract<ProposalRefinement, { action: 'revise' }>, base);
+      if (refinement.installment_changes !== undefined) {
+        if (!String(request.adcp_version).startsWith('3.3')) {
+          fail('installment_changes requires AdCP 3.3', `${base}.installment_changes`);
+        }
+        validateInstallmentChanges(refinement.installment_changes, `${base}.installment_changes`);
+      }
       const count = refinement.alternatives?.count;
       if (count !== undefined) {
         if (!Number.isInteger(count) || count < 2 || count > MAX_PROPOSAL_ALTERNATIVES) {
@@ -417,7 +428,19 @@ export function buildRefineProposalsRequest(
   return deepFreeze(request);
 }
 
-const REQUEST_KEYS = new Set([
+/**
+ * The request envelope and each refinement entry are open objects in the
+ * refine_proposals schemas (`additionalProperties: true`), so the strict key
+ * checks below must still admit AdCP's vendor extension point. `context` is the
+ * request-level echo object and is listed explicitly; closed sub-objects
+ * (constraints and their bounds, alternatives) stay closed and never accept
+ * `ext`. Criteria declares `ext` itself in CRITERIA_KEYS.
+ */
+function withExtensionPoint(keys: readonly string[]): ReadonlySet<string> {
+  return new Set([...keys, 'ext']);
+}
+
+const REQUEST_KEYS = withExtensionPoint([
   'adcp_version',
   'adcp_major_version',
   'context_id',
@@ -427,18 +450,20 @@ const REQUEST_KEYS = new Set([
   'idempotency_key',
   'refinements',
 ]);
-const FINALIZE_KEYS = new Set(['proposal_id', 'action']);
-const REVISE_KEYS = new Set([
+const FINALIZE_KEYS = withExtensionPoint(['proposal_id', 'action']);
+const REVISE_KEYS = withExtensionPoint([
   'proposal_id',
   'action',
   'change_kind',
   'constraints',
   'product_changes',
+  'installment_changes',
   'alternatives',
   'ask',
   'criteria',
   'remove_media_buy_frequency_cap',
 ]);
+const INSTALLMENT_CHANGE_KEYS = new Set(['product_id', 'installment_ref', 'action']);
 const CONSTRAINT_KEYS = new Set(['total_budget', 'cpm', 'impressions', 'flight']);
 const BUDGET_KEYS = new Set(['min', 'max', 'currency']);
 const CPM_KEYS = new Set(['max', 'currency']);
@@ -507,6 +532,27 @@ function unwrapCapabilityPayload(source: unknown): unknown {
   if (source.structuredContent !== undefined) return source.structuredContent;
   if (source.data !== undefined && (source.success === true || source.status !== undefined)) return source.data;
   return source;
+}
+
+function validateInstallmentChanges(value: unknown, path: string): void {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_INSTALLMENT_CHANGES) {
+    fail(`installment_changes must contain 1-${MAX_INSTALLMENT_CHANGES} entries`, path);
+  }
+  const seen = new Set<string>();
+  for (const [index, change] of value.entries()) {
+    const entryPath = `${path}[${index}]`;
+    if (!isRecord(change)) fail('installment change must be an object', entryPath);
+    assertAllowedKeys(change, INSTALLMENT_CHANGE_KEYS, entryPath);
+    if (!isInstallmentChange(change)) {
+      fail(
+        'installment change requires a non-empty product_id, a canonical installment_ref, and an include or omit action',
+        entryPath
+      );
+    }
+    const key = installmentChangeKey(change as { product_id: string; installment_ref: unknown });
+    if (seen.has(key)) fail('installment_changes must be unique by product_id and installment_ref', entryPath);
+    seen.add(key);
+  }
 }
 
 function validateNonemptyUniqueStrings(value: unknown, path: string): void {

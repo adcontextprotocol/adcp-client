@@ -117,9 +117,7 @@ test('public targeting Zod schemas preserve wire-only scalar and nested constrai
   const invalidOverlays = [
     { geo_countries: ['USA'] },
     { geo_metros: [{ system: 'unsupported', values: ['501'] }] },
-    { geo_metros: [{ system: 'nielsen_dma', values: ['501'], extra: true }] },
     { keyword_targets: [{ keyword: '', match_type: 'exact' }] },
-    { keyword_targets: [{ keyword: 'shoe', match_type: 'exact', extra: true }] },
   ];
   for (const overlay of invalidOverlays) {
     const purchase = { product_id: 'product-1', pricing_option_id: 'price-1', targeting_overlay: overlay };
@@ -127,6 +125,16 @@ test('public targeting Zod schemas preserve wire-only scalar and nested constrai
     assert.equal(validateInput(purchase), false, JSON.stringify(overlay));
     assert.equal(TargetingOverlaySchema.safeParse(overlay).success, false, JSON.stringify(overlay));
     assert.equal(TargetingOverlayInputSchema.safeParse(overlay).success, false, JSON.stringify(overlay));
+  }
+  // AdCP 3.3.0-beta.6 opened these items (adcp#8866): extra members are accepted.
+  const openedOverlays = [
+    { geo_metros: [{ system: 'nielsen_dma', values: ['501'], extra: true }] },
+    { keyword_targets: [{ keyword: 'shoe', match_type: 'exact', extra: true }] },
+  ];
+  for (const overlay of openedOverlays) {
+    assert.equal(validateTargeting(overlay), true, JSON.stringify(overlay));
+    assert.equal(TargetingOverlaySchema.safeParse(overlay).success, true, JSON.stringify(overlay));
+    assert.equal(TargetingOverlayInputSchema.safeParse(overlay).success, true, JSON.stringify(overlay));
   }
 });
 

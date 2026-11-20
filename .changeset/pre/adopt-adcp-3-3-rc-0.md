@@ -1,0 +1,12 @@
+---
+'@adcp/sdk': minor
+---
+
+**Beta-channel break for beta.6 pins:** this SDK advertises and negotiates only the AdCP `3.3-rc.0` preview, the first 3.3 release candidate, and no longer packages or advertises `3.3-beta.6`. A buyer or seller still on beta.6 will not select the 3.3 preview with this release; the pair negotiates a shared stable release (3.2.8, 3.1.31 or 3.0.25) instead. Upgrade both sides together to keep exercising 3.3 preview features. An explicit `adcpVersion: '3.3.0-beta.6'` (or `'3.3-beta.6'`) pin now fails with a configuration error.
+
+Adopt the signed AdCP 3.3.0-rc.0 bundle (tag commit b5ac0e1bf733, sha256 bdcacb0bb548..., cosign-verified), replacing 3.3.0-beta.6. Public types, Zod schemas, tool metadata and the packaged compliance corpus are regenerated from the rc.0 release.
+
+- **Renamed experimental values, no alias (adcontextprotocol/adcp#8989):** execution readiness `input_required` is now `input-required`, creative change kind `click_through` is now `clickthrough`, and delivery projection end state `underdelivery` is now `under_delivery`. The generated types follow.
+- **Reserved-word-safe replacements (adcp#8915):** `passed` replaces `pass` (content-standards verdicts, `get_media_buy_artifacts` `local_verdict`, registry feed compliance tracks), `all` replaces `global` (`RATE_LIMITED` scope), and `full_name` replaces `name` (signal onboarder `match_keys`). The originals stay valid and deprecated through 3.x. Version projection to a pre-3.3 seller or caller now maps a replacement back to the value it supersedes (`passed` to `pass`) instead of dropping it.
+- **Additions:** Instagram, Facebook, Snapchat and X distribution identifier types (adcp#8995); `creative.assignment_operations` (adcp#8997), which sellers declare through the new `creative.assignmentOperations` capability option and buyers read from `CreativeCapabilities.assignmentOperations` (newly exported with `CreativeAssignmentOperation`; a compact seller with a creative library must list `assign`); audience targeting without inline member push (adcp#8996); `image_carousel` `cta_values` (adcp#9001). `by_package` should carry a row (adcp#8970), inline `submitted` branches are aligned (adcp#8934), and `sync_plans` accepts an omitted `human_review_required` (adcp#9007).
+- The proposal-terms review table, canonical storyboard fixtures and reporting-subscription vectors are unchanged from beta.6 and are re-pinned to v3.3.0-rc.0.

@@ -438,6 +438,32 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.strictEqual(caps?.account?.sandbox, true);
     assert.strictEqual(caps?.account?.require_operator_auth, true);
     assert.deepStrictEqual(caps?.account?.supported_billing, ['operator']);
+    // Undeclared stays undeclared.
+    assert.strictEqual(caps?.creative?.assignment_operations, undefined);
+  });
+
+  // AdCP 3.3 (adcp#8997): a seller declares the sync_creatives assignment operations it accepts.
+  it('projects creative.assignmentOperations and the client parses it back', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        creative: {
+          supportsCompliance: false,
+          hasCreativeLibrary: true,
+          supportsGeneration: false,
+          supportsTransformation: false,
+          assignmentOperations: ['assign', 'unassign'],
+        },
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const caps = (await dispatchCapabilities(server)).structuredContent;
+    assert.deepStrictEqual(caps?.creative?.assignment_operations, ['assign', 'unassign']);
+    const { parseCapabilitiesResponse } = require('../dist/lib/utils/capabilities.js');
+    const parsed = parseCapabilitiesResponse({
+      ...caps,
+      creative: { ...caps.creative, assignment_operations: ['assign', 'teleport'] },
+    });
+    assert.deepStrictEqual(parsed.creative.assignmentOperations, ['assign']);
   });
 
   it('brand-protocol capability block projects via overrides.brand', async () => {

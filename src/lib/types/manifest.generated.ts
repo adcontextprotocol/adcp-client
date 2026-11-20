@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.3.0-beta.5/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.3.0-rc.0/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.3.0-beta.5.
+ * Manifest-derived constants for AdCP 3.3.0-rc.0.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.3.0-beta.5/manifest.json` (adcp_version: 3.3.0-beta.5, generated_at:
- * 2026-11-07T22:40:40.149Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.3.0-rc.0/manifest.json` (adcp_version: 3.3.0-rc.0, generated_at:
+ * 2026-11-16T19:45:12.091Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -226,7 +226,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
   "CREATIVE_LIVE_UPDATE_UNSUPPORTED": {
     description: "A sync_creatives item changed a live creative in a way the seller does not apply in place under the same creative_id. A creative is live when its status is approved and it has at least one assignment on a package that is not canceled, whose flight has not ended, and whose media buy is not in a terminal state; a paused package still counts. Returned only by sellers that declare creative.live_updates (others keep returning INVALID_STATE). The seller MUST fail only that item, MUST leave the creative, its review state, and its serving unchanged, SHOULD set error.field to the item, and SHOULD return details conforming to error-details/creative-live-update-unsupported.json naming the refused change kinds and the live packages. A dry_run returns the same refusal.",
     recovery: "correctable",
-    suggestion: "sync the change as a new creative_id and swap it in on each live package with an assignment_operations replace; send the change with dry_run to see the exact outcome without applying it"
+    suggestion: "sync the change as a new creative_id and swap it in on each live package with an assignment_operations replace, which every seller declaring creative.live_updates lists in creative.assignment_operations; send the change with dry_run to see the exact outcome without applying it"
   },
   "CREATIVE_LOCALE_NOT_ACCEPTED": {
     description: "A creative bound to a locale-constrained product format has no materialized variant matching locale_policy.accepted_language_ranges, lacks protocol-declared locale topology, or uses serve_default with a seller-ineligible default variant. Seller ranges use RFC 4647 Basic Filtering and are applied independently for every placement where the assignment may serve, before buyer Lookup, locale_fallbacks, or default selection. Distinct from CREATIVE_REJECTED because this is a mechanically discoverable assignment-eligibility mismatch, not subjective content review. error.field SHOULD point to the offending creative or assignment; error.details SHOULD include format_option_id when present, accepted_language_ranges, available_variant_locales, and placement identity when applicable.",
@@ -234,9 +234,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "supply or assign a creative variant matching every in-scope format option's accepted_language_ranges, narrow placement scope, choose a compatible format option, or change an ineligible serve_default"
   },
   "CREATIVE_MERGE_REJECTED": {
-    description: "One or more sync_creatives merge assignment operations failed seller verification. The seller evaluates every merge in the request, MUST leave every assignment unchanged (assignment operations are atomic), SHOULD set error.field to the first rejected assignment_operations entry, and SHOULD return details conforming to error-details/creative-merge-rejected.json listing each rejected merge with a reason: content_mismatch (the seller judges the copy is a different creative), format_mismatch (the buyer's creative cannot take over the copy's serving object), not_on_package (merged_creative_id is not a seller-assigned creative assigned to the package in this account, reported uniformly for unknown IDs), or not_supported (the seller cannot merge this pairing on this package). A seller that does not declare creative.supports_assignment_merge returns UNSUPPORTED_FEATURE instead.",
+    description: "One or more sync_creatives merge assignment operations failed seller verification. The seller evaluates every merge in the request, MUST leave every assignment unchanged (assignment operations are atomic), SHOULD set error.field to the first rejected assignment_operations entry, and SHOULD return details conforming to error-details/creative-merge-rejected.json listing each rejected merge with a reason: content_mismatch (the seller judges the copy is a different creative), format_mismatch (the buyer's creative cannot take over the copy's serving object), not_on_package (merged_creative_id is not a seller-assigned creative assigned to the package in this account, reported uniformly for unknown IDs), or not_supported (the seller cannot merge this pairing on this package). A seller that does not list merge in creative.assignment_operations returns UNSUPPORTED_FEATURE instead.",
     recovery: "correctable",
-    suggestion: "confirm the pairing via list_creatives, or use a replace assignment operation to traffic creative_id as a new serving object"
+    suggestion: "confirm the pairing via list_creatives, or, when the seller lists replace in creative.assignment_operations, use a replace assignment operation to traffic creative_id as a new serving object"
   },
   "CREATIVE_MISSING_CLICK_URL": {
     description: "A submitted creative that requires a destination URL does not provide one. Sellers SHOULD identify the missing buyer-visible field in error.field and MUST NOT expose downstream ad-server names or internal object identifiers in the buyer-facing message.",
@@ -274,7 +274,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "correct the buyer-visible validation problem and resubmit the creative"
   },
   "CREATIVE_VALUE_NOT_ALLOWED": {
-    description: "A submitted text-asset value is not in the format's declared `allowed_values` list. Distinct from `CREATIVE_REJECTED` (generic creative-review failure) by being a closed-set constraint violation that the buyer can resolve mechanically without policy interpretation — the seller has published the complete list of acceptable values on the format, and any value outside that list is rejected by definition. The seller MUST set `error.field` to the offending asset's path within the manifest (e.g., `creatives[0].creative_manifest.assets[0].value` or the field name declared by the format) and SHOULD include the format's `allowed_values` array in `error.details.allowed_values` so the buyer agent can re-prompt its LLM with constrained sampling.",
+    description: "A submitted text-asset value is not in the closed set the targeted format option declares: its `allowed_values` list, or a canonical closed-set parameter such as native_in_feed `cta_values`. Sellers MUST NOT return this code for a slot whose option declares no such set; that slot takes free text. Distinct from `CREATIVE_REJECTED` (generic creative-review failure) by being a closed-set constraint violation that the buyer can resolve mechanically without policy interpretation — the seller has published the complete list of acceptable values on the format, and any value outside that list is rejected by definition. The seller MUST set `error.field` to the offending asset's path within the manifest (e.g., `creatives[0].creative_manifest.assets[0].value` or the field name declared by the format) and SHOULD include the format's `allowed_values` array in `error.details.allowed_values` so the buyer agent can re-prompt its LLM with constrained sampling.",
     recovery: "correctable",
     suggestion: "pick a value from error.details.allowed_values (or re-fetch the format) and resubmit"
   },
@@ -623,8 +623,13 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "target an output format the transformer prices, or have the seller add a pricing option covering it"
   },
+  "UNRECOGNIZED_TERMS": {
+    description: "The request carries commercial terms the seller would record and be bound by, such as a buy_products purchase, and at least one member of them, at any depth and including ext, is one the seller cannot interpret. Accepting signed terms binds the accepting party to every member, so the seller MUST reject the request instead of accepting it, dropping the member, or carrying it without interpreting it. A member whose schema defines it as opaque, such as context, is interpreted by that definition. The seller SHOULD set error.field to the path of the first such member. Distinct from UNSUPPORTED_FEATURE (a field the seller recognizes but does not support) and INVALID_REQUEST (a request that fails the schema).",
+    recovery: "correctable",
+    suggestion: "remove the member the seller cannot interpret, or send it only to sellers that interpret it"
+  },
   "UNSUPPORTED_FEATURE": {
-    description: "A requested feature or field is not supported by this seller. When rejecting a `refine_proposals` request that uses a typed dimension omitted from an explicit `proposal_refinement.supported_dimensions` declaration, the error details SHOULD follow `error-details/unsupported-refinement-dimension.json` — `unsupported_dimension` names the offending dimension and `supported_dimensions` echoes the seller's declaration so the buyer can remove or translate the field without another capability round trip. When rejecting a targeting dimension that is unsupported for the product or seller, or has been removed, the error details SHOULD follow `error-details/unsupported-targeting-dimension.json` (`unsupported_dimension`, optional `supported_dimensions`, `deprecated`, `replacement_dimension`) and `error.field` SHOULD point at the targeting path.",
+    description: "A requested feature or field is not supported by this seller. When rejecting a `refine_proposals` request that uses a typed dimension omitted from an explicit `proposal_refinement.supported_dimensions` declaration, the error details SHOULD follow `error-details/unsupported-refinement-dimension.json` — `unsupported_dimension` names the offending dimension and `supported_dimensions` echoes the seller's declaration so the buyer can remove or translate the field without another capability round trip. When rejecting a targeting dimension that is unsupported for the product or seller, or has been removed, the error details SHOULD follow `error-details/unsupported-targeting-dimension.json` (`unsupported_dimension`, optional `supported_dimensions`, `deprecated`, `replacement_dimension`) and `error.field` SHOULD point at the targeting path. When rejecting a `sync_creatives` assignment operation the agent does not list in `creative.assignment_operations`, `error.field` SHOULD point at that operation's `operation`.",
     recovery: "correctable",
     suggestion: "check get_adcp_capabilities (or the product's overlay_support for a rejected targeting dimension), remove unsupported fields, and use details.replacement_dimension when present"
   },

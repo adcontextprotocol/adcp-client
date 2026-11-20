@@ -7,6 +7,7 @@
  */
 
 import { prefetchOwedPeriods } from './owed-periods-match';
+import { applyStoryboardVerdictExplanation } from './verdict-explanation';
 import { createStoryboardWebBotAuthFetch } from './web-bot-auth';
 import { jwkThumbprint } from '../../signing/web-bot-auth';
 import { createAgentTransportFetch } from '../../net/agent-transport-fetch';
@@ -241,6 +242,8 @@ import type {
   RequirementName,
   RunnerSkipReason,
   RunnerNotice,
+  AnyOfCapabilityPredicate,
+  CapabilityPathPredicate,
   RequiresCapabilityPredicate,
   ResponseNotApplicableGate,
   StepAuthDirective,
@@ -406,7 +409,7 @@ export function applyAdcpVersionRunOptions(
   if (options.adcpVersion === adcpVersion && options.versionEnvelope === versionEnvelope) {
     return options;
   }
-  return { ...options, adcpVersion, versionEnvelope };
+  return { ...options, adcpVersion, ...(versionEnvelope !== undefined && { versionEnvelope }) };
 }
 
 function getRunSchemaRoot(options: StoryboardRunOptions): { adcpVersion: string; schemaRoot: string } | undefined {
@@ -420,11 +423,17 @@ function getRunSchemaRoot(options: StoryboardRunOptions): { adcpVersion: string;
   return { adcpVersion, schemaRoot: options.schemaRoot };
 }
 
-function storyboardVersionEnvelopeMode(adcpVersion: string): VersionEnvelopeMode {
+/**
+ * Run-level envelope for a storyboard release. AdCP 3+ keeps the SDK default
+ * (`auto` on ordinary calls) rather than setting `auto` explicitly: an explicit
+ * envelope also pins capability discovery, which must go out unpinned for a
+ * preview release the seller has not advertised yet.
+ */
+function storyboardVersionEnvelopeMode(adcpVersion: string): VersionEnvelopeMode | undefined {
   const bundleKey = resolveBundleKey(adcpVersion);
   const major = parseAdcpMajorVersion(bundleKey);
   if (Number.isFinite(major) && major < 3) return 'none';
-  return 'auto';
+  return undefined;
 }
 
 /**
@@ -533,11 +542,7 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
 
 const GET_ADCP_CAPABILITIES_RESPONSE_SCHEMA_REF = 'protocol/get-adcp-capabilities-response.json';
 
-function resolveCapabilityPathForGate(
-  raw: unknown,
-  predicate: RequiresCapabilityPredicate,
-  adcpVersion?: string
-): unknown {
+function resolveCapabilityPathForGate(raw: unknown, predicate: CapabilityPathPredicate, adcpVersion?: string): unknown {
   const actual = resolveCapabilityPath(raw, predicate.path);
   if (actual !== undefined) return actual;
   // `present:` is an absence-detection matcher — an absent field IS the
@@ -600,10 +605,24 @@ function schemaDefaultShouldApply(raw: unknown, dottedPath: string): boolean {
  *   that does not include `V` (structural JSON equality, no coercion). Missing and
  *   non-array values skip; an empty array satisfies the predicate.
  *
+ * For `contains` and `not_contains`, an object `V` matches an object entry
+ * that carries every key of `V` with an equal value; the entry may carry
+ * other keys.
+ *
+ * An `any_of` predicate tests several paths, so it has no single `actual`
+ * value: this function throws a `TypeError` for one. Evaluate it with
+ * `evaluateCapabilityPredicateAgainstCapabilities`.
+ *
  * Exported for direct testing so the predicate semantics are pinned without
  * needing a full runStoryboard() roundtrip.
  */
 export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredicate, actual: unknown): string | null {
+  if (isAnyOfCapabilityPredicate(predicate)) {
+    throw new TypeError(
+      'evaluateCapabilityPredicate: an any_of predicate tests several paths; ' +
+        'use evaluateCapabilityPredicateAgainstCapabilities with the raw capabilities instead.'
+    );
+  }
   if ('present' in predicate) {
     const isPresent = actual !== undefined && actual !== null;
     if (predicate.present && !isPresent) {
@@ -663,9 +682,14 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
   return null;
 }
 
-/** Governance task declarations combine all supported modes in one task entry. */
+/**
+ * Array-entry match for `contains` / `not_contains`. Governance task
+ * declarations combine all supported modes in one task entry. Elsewhere an
+ * object `expected` matches an object entry carrying every key of `expected`
+ * with an equal value (a key subset); scalars and arrays match by equality.
+ */
 function capabilityContainsValue(path: string, actual: unknown, expected: unknown): boolean {
-  if (path !== 'adcp.governance_enforcement.tasks') return capabilityValuesEqual(actual, expected);
+  if (path !== 'adcp.governance_enforcement.tasks') return capabilityEntryMatches(actual, expected);
   if (!actual || !expected || typeof actual !== 'object' || typeof expected !== 'object') {
     return capabilityValuesEqual(actual, expected);
   }
@@ -684,6 +708,18 @@ function capabilityContainsValue(path: string, actual: unknown, expected: unknow
   return (
     actualTask.task === expectedTask.task &&
     expectedTask.modes.every(mode => actualModes.some(actualMode => capabilityValuesEqual(actualMode, mode)))
+  );
+}
+
+function isPlainCapabilityObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function capabilityEntryMatches(actual: unknown, expected: unknown): boolean {
+  if (!isPlainCapabilityObject(expected)) return capabilityValuesEqual(actual, expected);
+  if (!isPlainCapabilityObject(actual)) return false;
+  return Object.keys(expected).every(
+    key => Object.prototype.hasOwnProperty.call(actual, key) && capabilityValuesEqual(actual[key], expected[key])
   );
 }
 
@@ -706,12 +742,76 @@ function capabilityValuesEqual(a: unknown, b: unknown): boolean {
   );
 }
 
+/** Type guard for the OR-composed `any_of` capability predicate. */
+export function isAnyOfCapabilityPredicate(
+  predicate: RequiresCapabilityPredicate
+): predicate is AnyOfCapabilityPredicate {
+  return (
+    predicate !== null &&
+    typeof predicate === 'object' &&
+    Object.prototype.hasOwnProperty.call(predicate, 'any_of') &&
+    Array.isArray((predicate as AnyOfCapabilityPredicate).any_of)
+  );
+}
+
+/**
+ * Every path predicate a capability gate tests, flattening `any_of` groups.
+ * Consumers that key on predicate paths (for example the compliance rollup's
+ * `compliance_testing` exclusion) read this instead of `predicate.path`.
+ */
+export function capabilityPathPredicates(predicate: RequiresCapabilityPredicate): CapabilityPathPredicate[] {
+  if (!isAnyOfCapabilityPredicate(predicate)) return [predicate];
+  return predicate.any_of.flatMap(capabilityPathPredicates);
+}
+
+function combineAnyOfDetails(predicate: AnyOfCapabilityPredicate, details: string[]): string {
+  return (
+    `Capability predicate \`${describeCapabilityPredicate(predicate)}\` not satisfied: ` +
+    `no alternative passed (${details.join(' | ')})`
+  );
+}
+
+/**
+ * Evaluate a capability predicate, including `any_of` groups, against a raw
+ * `get_adcp_capabilities` response. Returns `null` when the predicate is
+ * satisfied and a human-readable detail otherwise. Path predicates resolve
+ * schema defaults on the same terms as the runner's gates.
+ */
+export function evaluateCapabilityPredicateAgainstCapabilities(
+  predicate: RequiresCapabilityPredicate,
+  rawCapabilities: unknown,
+  adcpVersion?: string
+): string | null {
+  if (isAnyOfCapabilityPredicate(predicate)) {
+    const details: string[] = [];
+    for (const entry of predicate.any_of) {
+      const detail = evaluateCapabilityPredicateAgainstCapabilities(entry, rawCapabilities, adcpVersion);
+      if (detail === null) return null;
+      details.push(detail);
+    }
+    return combineAnyOfDetails(predicate, details);
+  }
+  const actual = resolveCapabilityPathForGate(rawCapabilities, predicate, adcpVersion);
+  return evaluateCapabilityPredicate(predicate, actual);
+}
+
 function evaluateRequiresCapabilityGate(
   predicate: RequiresCapabilityPredicate,
   profile: AgentProfile | undefined,
   agentTools?: readonly string[],
   adcpVersion?: string
 ): string | null {
+  // OR-composition: each alternative runs through this same gate, so the
+  // no-raw-capabilities fallbacks below apply per alternative.
+  if (isAnyOfCapabilityPredicate(predicate)) {
+    const details: string[] = [];
+    for (const entry of predicate.any_of) {
+      const detail = evaluateRequiresCapabilityGate(entry, profile, agentTools, adcpVersion);
+      if (detail === null) return null;
+      details.push(detail);
+    }
+    return combineAnyOfDetails(predicate, details);
+  }
   const rawCaps = profile?.raw_capabilities;
   if (rawCaps !== undefined) {
     const actual = resolveCapabilityPathForGate(rawCaps, predicate, adcpVersion);
@@ -783,12 +883,43 @@ export function describeStoryboardCapabilityGates(storyboard: Storyboard): strin
 }
 
 function describeCapabilityPredicate(predicate: RequiresCapabilityPredicate): string {
+  if (isAnyOfCapabilityPredicate(predicate)) {
+    return `(${predicate.any_of.map(describeCapabilityPredicate).join(' OR ')})`;
+  }
   if ('present' in predicate) return `${predicate.path} ${predicate.present ? 'present' : 'absent'}`;
   if ('contains' in predicate) return `${predicate.path} contains ${JSON.stringify(predicate.contains)}`;
   if ('not_contains' in predicate) {
     return `${predicate.path} does not contain ${JSON.stringify(predicate.not_contains)}`;
   }
   return `${predicate.path} = ${JSON.stringify(predicate.equals)}`;
+}
+
+/** Compound-gate evaluation against present raw capabilities, with value provenance per path. */
+function evaluateFailClosedCapabilityPredicate(
+  predicate: RequiresCapabilityPredicate,
+  rawCapabilities: unknown,
+  adcpVersion?: string
+): string | null {
+  if (isAnyOfCapabilityPredicate(predicate)) {
+    const details: string[] = [];
+    for (const entry of predicate.any_of) {
+      const detail = evaluateFailClosedCapabilityPredicate(entry, rawCapabilities, adcpVersion);
+      if (detail === null) return null;
+      details.push(detail);
+    }
+    return combineAnyOfDetails(predicate, details);
+  }
+  const declared = resolveCapabilityPath(rawCapabilities, predicate.path);
+  const resolved = resolveCapabilityPathForGate(rawCapabilities, predicate, adcpVersion);
+  const detail = evaluateCapabilityPredicate(predicate, resolved);
+  if (detail === null) return null;
+  const provenance =
+    declared !== undefined
+      ? `declared value ${JSON.stringify(declared)}`
+      : resolved !== undefined
+        ? `resolved schema default ${JSON.stringify(resolved)}`
+        : 'no declared or resolved value';
+  return `${detail} [${provenance}]`;
 }
 
 function evaluateStoryboardCapabilityGates(
@@ -811,17 +942,7 @@ function evaluateStoryboardCapabilityGates(
           'no declared or resolved value (raw capabilities unavailable).'
         );
       }
-      const declared = resolveCapabilityPath(rawCapabilities, predicate.path);
-      const resolved = resolveCapabilityPathForGate(rawCapabilities, predicate, adcpVersion);
-      const detail = evaluateCapabilityPredicate(predicate, resolved);
-      if (detail === null) return null;
-      const provenance =
-        declared !== undefined
-          ? `declared value ${JSON.stringify(declared)}`
-          : resolved !== undefined
-            ? `resolved schema default ${JSON.stringify(resolved)}`
-            : 'no declared or resolved value';
-      return `${detail} [${provenance}]`;
+      return evaluateFailClosedCapabilityPredicate(predicate, rawCapabilities, adcpVersion);
     })
     .filter((detail): detail is string => detail !== null);
   if (failures.length === 0) return null;
@@ -1637,6 +1758,37 @@ export async function runStoryboard(
     _allowCapabilityDiagnostic: storyboardAllowsCapabilityDiagnostic(storyboard),
   };
   if (hasTestClientScope() && !options._discoveryPass) options = { ...options, _discoveryPass: {} };
+  const result = await runStoryboardGated(agentUrlOrUrls, storyboard, options);
+  // Every path out of the runner — full runs, multi-pass, and the synthetic
+  // discovery / refusal / requirement builders — explains a failing verdict
+  // the same way (adcp#8576). The storyboard is passed so optional phases are
+  // not blamed.
+  return attachStoryboardVerdictExplanation(result, storyboard);
+}
+
+/**
+ * Set `verdict_reason` / `verdict_detail` / `verdict_contributing` on a
+ * failing result (and clear them on a passing one), using the runner's own
+ * signing-coverage rule. Exported for consumers that regrade a result after
+ * the runner returns it, so the explanation tracks the final verdict.
+ */
+export function attachStoryboardVerdictExplanation<T extends StoryboardResult>(
+  result: T,
+  storyboard?: Pick<Storyboard, 'phases'>
+): T {
+  if (result.overall_passed) return applyStoryboardVerdictExplanation(result);
+  const steps = (result.passes?.flatMap(pass => pass.phases) ?? result.phases).flatMap(phase => phase.steps);
+  return applyStoryboardVerdictExplanation(result, {
+    ...(storyboard && { storyboard }),
+    coverageUnverified: signingCoverageUnverified(steps),
+  });
+}
+
+async function runStoryboardGated(
+  agentUrlOrUrls: string | string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): Promise<StoryboardResult> {
   return withPropertyListCredentialRedaction(() =>
     withMCPConnectionScope(
       async () => {
@@ -1845,10 +1997,10 @@ async function runStoryboardBody(
   // alone and answers in place, which is what keeps a topology gate from being
   // reported as a discovery failure.
   //
-  // With a root capability predicate, AdCP 3.2's applicability order puts the
-  // capability verdict first ("predicates MUST be evaluated before the runner
-  // evaluates `requires`"), so the whole list defers until discovery has
-  // resolved it (adcp-client#2945).
+  // With a root capability predicate, AdCP 3.2's applicability order
+  // (backported to 3.1.24) puts the capability verdict first ("predicates MUST
+  // be evaluated before the runner evaluates `requires`"), so the whole list
+  // defers until discovery has resolved it (adcp-client#2945).
   const preflightDefersRequirement = (requirement: string): boolean => {
     switch (requirement) {
       case 'controller':

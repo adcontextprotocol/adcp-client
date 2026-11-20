@@ -18,15 +18,22 @@ import {
   withTestClientScope,
 } from '../client';
 import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
-import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
+import {
+  collectDetachedAssertionFailures,
+  mapStoryboardResultsToTrackResult,
+  storyboardVerdictExplanation,
+  TRACK_LABELS,
+} from './storyboard-tracks';
 import {
   applyAdcpVersionRunOptions,
+  attachStoryboardVerdictExplanation,
   collectCapabilityNotices,
   runStoryboard,
   storyboardCapabilityGateUnmet,
   storyboardRequiresCapabilityEvidence,
   storyboardAllowsCapabilityDiagnostic,
   storyboardCapabilityPredicates,
+  capabilityPathPredicates,
 } from '../storyboard/runner';
 import { applyNativeA2AComplianceTransportOptions } from '../storyboard/native-a2a-compliance';
 import { validateTestKit } from '../storyboard/test-kit';
@@ -72,6 +79,7 @@ import type {
   ComplianceBundleResult,
   ComplianceTrack,
   ComplianceFailure,
+  ComplianceVerdictExplanation,
   TrackResult,
   TestedTrackEntry,
   ComplianceResult,
@@ -1078,6 +1086,28 @@ const NEUTRAL_BUNDLE_SKIP_REASONS = new Set<string>([
 /** AdCP release that introduced the normative "Applicability order" rule. */
 const CAPABILITY_ROLLUP_MIN_ADCP_VERSION = '3.2';
 
+/**
+ * First 3.1 patch carrying the same rule. adcp#7625 (adcp#7584) backported the
+ * "Applicability order" rule to the 3.1.x line (and gated the governance
+ * scenarios on `media_buy.governance_aware`), so this rollup "can apply to 3.1
+ * bundles as well". 3.1.0–3.1.23 and every 3.0 release lack the rule.
+ */
+const CAPABILITY_ROLLUP_MIN_3_1_PATCH = 24;
+
+/** A stable 3.1 release. The 3.1 line had no prerelease after 3.1.0. */
+const STABLE_3_1_RELEASE_PATTERN = /^3\.1\.(\d+)$/;
+
+/**
+ * Whether a bundle release carries the "Applicability order" rule.
+ * `compareAdcpVersionStrings` orders by major.minor and ignores the patch, so
+ * the 3.1 line is matched on its exact patch.
+ */
+function carriesApplicabilityOrderRule(adcpVersion: string): boolean {
+  if (compareAdcpVersionStrings(adcpVersion, CAPABILITY_ROLLUP_MIN_ADCP_VERSION) >= 0) return true;
+  const patch = STABLE_3_1_RELEASE_PATTERN.exec(adcpVersion)?.[1];
+  return patch !== undefined && Number.parseInt(patch, 10) >= CAPABILITY_ROLLUP_MIN_3_1_PATCH;
+}
+
 /** Phase id, step id and detailed skip reason of the root applicability row. */
 const CAPABILITY_UNSUPPORTED_ROW_ID = 'capability_unsupported';
 
@@ -1156,10 +1186,11 @@ function isCapabilityUnsupportedSkip(storyboard: Storyboard, result: StoryboardR
   // makes this grade normative — capability predicates evaluated before
   // `requires`, an unsatisfied predicate keeping the storyboard "out of the
   // coverage totals of agents that never claimed the capability" — arrived in
-  // AdCP 3.2. `adcp_version` is stamped onto every cache-loaded storyboard by
-  // `annotateStoryboardVersion`; a storyboard without it is hand-built or
-  // caller-supplied, and a pre-3.2 bundle predates the rule. Both keep capping
-  // the bundle exactly as before (adcp-client#2945 review).
+  // AdCP 3.2 and was backported to 3.1.24 (adcp#7625). `adcp_version` is
+  // stamped onto every cache-loaded storyboard by `annotateStoryboardVersion`;
+  // a storyboard without it is hand-built or caller-supplied, and a 3.0 or
+  // pre-3.1.24 bundle predates the rule. Both keep capping the bundle exactly
+  // as before (adcp-client#2945 review).
   //
   // Typed `string | undefined`, but this is an exported grading boundary a
   // JavaScript caller can reach with anything at all. `null`, a number, or a
@@ -1168,13 +1199,17 @@ function isCapabilityUnsupportedSkip(storyboard: Storyboard, result: StoryboardR
   // version this rule can read, so it fails closed like an absent one
   // (adcp-client#2945 review).
   if (typeof storyboard.adcp_version !== 'string') return false;
-  if (compareAdcpVersionStrings(storyboard.adcp_version, CAPABILITY_ROLLUP_MIN_ADCP_VERSION) < 0) return false;
+  if (!carriesApplicabilityOrderRule(storyboard.adcp_version)) return false;
   // A `compliance_testing.*` gate declares which deterministic-test scenarios
   // the agent's own controller implements — test-harness scope, not product
   // surface. Neutralizing it would let an agent drop one scenario string from
   // its own list and flip the bundle to `passing` at no cost, which is the
   // asymmetry this rule exists to avoid. Those storyboards stay coverage gaps.
-  if (predicates.some(predicate => capabilityPathSegments(predicate.path).includes('compliance_testing'))) {
+  if (
+    predicates
+      .flatMap(capabilityPathPredicates)
+      .some(predicate => capabilityPathSegments(predicate.path).includes('compliance_testing'))
+  ) {
     return false;
   }
 
@@ -1723,7 +1758,11 @@ async function runComplyStoryboard(
   const routed = buildRoutedStoryboardRun(agentUrl, storyboard, runOptions, routing);
   if ('refused' in routed) return buildRouteSkippedStoryboardResult(agentUrl, storyboard, routed.refused, runOptions);
   const result = await runStoryboard('', routed.storyboard, routed.options);
-  return gradeRoutedResultForAgentUnderTest(result, routed.agentUnderTestIndexes, routed.keyByIndex);
+  // The downgrade can flip the verdict, so re-explain against the final one.
+  return attachStoryboardVerdictExplanation(
+    gradeRoutedResultForAgentUnderTest(result, routed.agentUnderTestIndexes, routed.keyByIndex),
+    routed.storyboard
+  );
 }
 
 function sameAgentUrl(a: string, b: string): boolean {
@@ -2241,6 +2280,36 @@ export function extractFailures(
   return failures;
 }
 
+/**
+ * One explanation per failing storyboard (adcp#8576), with a `fix_command`
+ * that re-runs the whole storyboard. `storyboard_level` marks the verdicts no
+ * `failures[]` row explains — the ones that used to surface only as
+ * "storyboard-level verdict failed".
+ */
+export function extractVerdictExplanations(
+  results: StoryboardResult[],
+  storyboards: Storyboard[],
+  agentRef: string,
+  failures: readonly ComplianceFailure[],
+  fixOptions: Parameters<typeof buildFixCommand>[3] = {}
+): ComplianceVerdictExplanation[] {
+  const trackById = new Map(storyboards.map(sb => [sb.id, (sb.track as ComplianceTrack) ?? 'core']));
+  const explained = new Set(failures.map(failure => failure.storyboard_id));
+  const explanations: ComplianceVerdictExplanation[] = [];
+  for (const result of results) {
+    const explanation = storyboardVerdictExplanation(result);
+    if (!explanation) continue;
+    explanations.push({
+      track: trackById.get(result.storyboard_id) ?? 'core',
+      storyboard_id: result.storyboard_id,
+      ...explanation,
+      storyboard_level: !explained.has(result.storyboard_id),
+      fix_command: buildFixCommand(agentRef, result.storyboard_id, undefined, fixOptions),
+    });
+  }
+  return explanations;
+}
+
 function findStoryboardStepExpected(storyboard: Storyboard | undefined, stepId: string): string | undefined {
   if (!storyboard) return undefined;
   for (const phase of storyboard.phases) {
@@ -2721,13 +2790,21 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     const safeAgentUrl = redactOAuthUrlForOutput(agentUrl);
     const agentRef = options.agent_alias || safeAgentUrl;
-    const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef, {
+    const fixOptions = {
       complianceVersion: complianceIndex.adcp_version,
       ...(complianceDir !== undefined && { complianceDir }),
       ...(schemaRoot !== undefined && { schemaRoot }),
       ...(hostedStableLineAlias !== undefined && { hostedStableLineAlias }),
       ...(options.testKitPath !== undefined && { testKitPath: options.testKitPath }),
-    });
+    };
+    const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef, fixOptions);
+    const verdictExplanations = extractVerdictExplanations(
+      storyboardResults,
+      runnableStoryboards,
+      agentRef,
+      failures,
+      fixOptions
+    );
 
     // Aggregate notices from all storyboard runs. Dedup is by `code`, or by
     // (`code`, `capability_pointer`) for schema-validation notices, while the per-occurrence
@@ -2766,6 +2843,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       summary,
       observations: allObservations,
       failures: failures.length > 0 ? failures : undefined,
+      ...(verdictExplanations.length > 0 && { verdict_explanations: verdictExplanations }),
       storyboards_executed: executedStoryboards.map(sb => sb.id),
       ...(resolvedBundles !== undefined && {
         bundle_results: buildComplianceBundleResults(resolvedBundles, storyboardResults, {
@@ -3047,13 +3125,21 @@ async function runWithDegradedProfile(
   const overallStatus: OverallStatus = stoppedForTimeoutBudget ? 'partial' : computeOverallStatus(summary);
   const safeAgentUrl = redactOAuthUrlForOutput(agentUrl);
   const agentRef = options.agent_alias || safeAgentUrl;
-  const failures = extractFailures(storyboardResults, storyboards, agentRef, {
+  const fixOptions = {
     complianceVersion: adcpVersion,
     ...(options.complianceDir !== undefined && { complianceDir: options.complianceDir }),
     ...(options.schemaRoot !== undefined && { schemaRoot: options.schemaRoot }),
     ...(options.hostedStableLineAlias !== undefined && { hostedStableLineAlias: options.hostedStableLineAlias }),
     ...(options.testKitPath !== undefined && { testKitPath: options.testKitPath }),
-  });
+  };
+  const failures = extractFailures(storyboardResults, storyboards, agentRef, fixOptions);
+  const verdictExplanations = extractVerdictExplanations(
+    storyboardResults,
+    storyboards,
+    agentRef,
+    failures,
+    fixOptions
+  );
 
   // Scenario detail is canonical under `tracks`; `tested_tracks` is a
   // reference-only projection so full JSON output contains each scenario once.
@@ -3080,6 +3166,7 @@ async function runWithDegradedProfile(
     summary,
     observations: allObservations,
     failures: failures.length > 0 ? failures : undefined,
+    ...(verdictExplanations.length > 0 && { verdict_explanations: verdictExplanations }),
     storyboards_executed: executedStoryboards.map(sb => sb.id),
     controller_detected: false,
     tested_at: new Date().toISOString(),
@@ -3407,6 +3494,11 @@ export function formatComplianceResults(result: ComplianceResult): string {
           if (failedSteps.length > 3) {
             output += `      ... and ${failedSteps.length - 3} more\n`;
           }
+          // A storyboard-level verdict has no failed step to show; say why
+          // instead of printing a bare ❌ (adcp#8576).
+          if (failedSteps.length === 0 && scenario.verdict_detail) {
+            output += `      Why: ${fenceAgentText(scenario.verdict_detail, 600)}\n`;
+          }
         }
       }
 
@@ -3452,6 +3544,21 @@ export function formatComplianceResults(result: ComplianceResult): string {
     }
     if (failuresWithExpected.length > 5) {
       output += `   ... and ${failuresWithExpected.length - 5} more (use --json for all)\n`;
+    }
+  }
+
+  // Storyboards that failed with no failed step to fix (adcp#8576).
+  const storyboardLevel = (result.verdict_explanations ?? []).filter(explanation => explanation.storyboard_level);
+  if (storyboardLevel.length > 0) {
+    output += `\nStoryboard-level Verdicts\n`;
+    output += `${'─'.repeat(50)}\n`;
+    for (const explanation of storyboardLevel.slice(0, 5)) {
+      output += `❌ ${explanation.storyboard_id} (${explanation.verdict_reason})\n`;
+      output += `   Why: ${fenceAgentText(explanation.verdict_detail, 600)}\n`;
+      output += `   Debug: ${explanation.fix_command}\n`;
+    }
+    if (storyboardLevel.length > 5) {
+      output += `   ... and ${storyboardLevel.length - 5} more (use --json for all)\n`;
     }
   }
 

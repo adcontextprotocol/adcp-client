@@ -1,4 +1,5 @@
 import { isPre31AdcpVersion } from '../utils/adcp-version-config';
+import { parseAdcpRelease as parseFullAdcpRelease } from '../adapters/version/negotiate';
 import { assertWebBotAuthSigningKey, getWebBotAuthLegacyOriginGate } from '../signing/web-bot-auth';
 import {
   downgradeResponse,
@@ -86,6 +87,7 @@ import { IdentityAuthorizationError, TrustRecordUnavailableError } from '../iden
 
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import {
   COMPATIBLE_ADCP_VERSIONS,
   parseAdcpMajorVersion,
@@ -3337,6 +3339,7 @@ const REFINE_PROPOSALS_INPUT_SHAPE = {
   push_notification_config: SHALLOW_HINT_FIELD_SCHEMA,
   adcp_version: SHALLOW_HINT_FIELD_SCHEMA,
   adcp_major_version: SHALLOW_HINT_FIELD_SCHEMA,
+  ext: SHALLOW_HINT_FIELD_SCHEMA,
 } as unknown as ZodRawShapeCompat;
 function getToolInputShapes(): ToolInputShapeMap {
   cachedToolInputShapes ??= TOOL_INPUT_SHAPES as unknown as ToolInputShapeMap;
@@ -5375,7 +5378,16 @@ function selectServedAdcpRelease(
       });
     }
     selected = supported
-      .filter(candidate => candidate.major === requested.major && compareAdcpRelease(candidate, requested) <= 0)
+      .filter(candidate =>
+        requested.prerelease !== undefined
+          ? candidate.major === requested.major &&
+            candidate.minor === requested.minor &&
+            parseFullAdcpRelease(candidate.exactValue)?.patch === parseFullAdcpRelease(requested.exactValue)?.patch &&
+            candidate.prerelease === requested.prerelease
+          : candidate.major === requested.major &&
+            candidate.prerelease === undefined &&
+            compareAdcpRelease(candidate, requested) <= 0
+      )
       .sort((left, right) => compareAdcpRelease(right, left))[0];
   } else if (requestedMajor !== undefined && Number.isFinite(requestedMajor)) {
     // A major-only request may be a 3.0 buyer that cannot send
@@ -6264,7 +6276,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     response: McpToolResponse,
     servedVersion: string
   ): McpToolResponse => {
-    if (toolName !== 'get_task_status' || config.identity33) return response;
+    if (toolName !== 'get_task_status') return response;
     if (translationSteps(adcpVersion, servedVersion).length === 0) return response;
     const body = response.structuredContent as Record<string, unknown> | undefined;
     if (!body || typeof body.task_type !== 'string' || !body.result || typeof body.result !== 'object') return response;
@@ -6771,7 +6783,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // converts between it and the served release. Capabilities keep their
         // own per-release projection.
         const translatesRelease =
-          !config.identity33 &&
           toolName !== 'get_adcp_capabilities' &&
           translationSteps(adcpVersion, requestRelease.validationVersion).length > 0;
         const ctx: HandlerContext<TAccount> = withImmutableServedAdcpVersion(
@@ -9739,6 +9750,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       has_creative_library: capConfig.creative.hasCreativeLibrary ?? false,
       supports_generation: capConfig.creative.supportsGeneration ?? false,
       supports_transformation: capConfig.creative.supportsTransformation ?? false,
+      ...(capConfig.creative.assignmentOperations !== undefined && {
+        assignment_operations: [...capConfig.creative.assignmentOperations],
+      }),
     };
   }
 
@@ -10249,6 +10263,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ? 'media-buy'
       : 'all';
   const mediaBuyProfileTools = new Set<string>(MEDIA_BUY_MCP_TOOL_PROFILE);
+  const discoveryFallback = (requestedVersion: unknown): ServedAdcpRelease | undefined => {
+    if (!parseAdcpRelease(requestedVersion)?.prerelease) return undefined;
+    if (!parseAdcpRelease(selectedDefault.validationVersion)?.prerelease) return selectedDefault;
+    const ceiling = parseAdcpRelease(adcpVersion)!;
+    const stable = selectServedAdcpRelease(
+      { adcp_version: `${ceiling.major}.${ceiling.minor}` },
+      capConfig,
+      adcpVersion,
+      defaultAdcpVersion
+    );
+    return isMcpToolResponse(stable) ? undefined : stable;
+  };
   const wrappedToolsList = wrapSdkRequestHandler(server, 'tools/list', async (original, request, extra) => {
     const response = await original(request, extra);
     if (response == null || typeof response !== 'object') return response;
@@ -10271,9 +10297,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       adcpVersion,
       defaultAdcpVersion
     );
-    const listRelease: ServedAdcpRelease = isMcpToolResponse(selectedListRelease)
-      ? { validationVersion: selectedDefault.validationVersion }
+    const listRelease = isMcpToolResponse(selectedListRelease)
+      ? discoveryFallback(requestedListRelease)
       : selectedListRelease;
+    if (!listRelease) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'VERSION_UNSUPPORTED',
+        (selectedListRelease as McpToolResponse).structuredContent
+      );
+    }
     const parsedListRelease = parseAdcpRelease(listRelease.validationVersion);
     const listServes32OrNewer =
       parsedListRelease !== undefined &&
@@ -10293,11 +10326,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       return listMcpToolProfile === 'all' || mediaBuyProfileTools.has(toolName);
     });
     const projectedTools = visibleTools.map(tool => {
-      if (listMcpToolProfile !== 'media-buy') return tool;
       const toolName = (tool as { name?: unknown } | null)?.name;
       if (typeof toolName !== 'string') return tool;
-      const inputSchema = getMcpProfileInputSchema(toolName, 'media-buy', listRelease.validationVersion);
-      return inputSchema ? { ...(tool as Record<string, unknown>), inputSchema } : tool;
+      const toolRecord = tool as Record<string, unknown>;
+      const meta = isPlainObject(toolRecord._meta) ? toolRecord._meta : undefined;
+      const frameworkAdcpTool = meta?.adcp_version === adcpVersion;
+      const inputSchema =
+        listMcpToolProfile === 'media-buy'
+          ? getMcpProfileInputSchema(toolName, 'media-buy', listRelease.validationVersion)
+          : undefined;
+      return {
+        ...toolRecord,
+        ...(frameworkAdcpTool && {
+          _meta: { ...meta, adcp_version: listRelease.advertisedVersion ?? listRelease.validationVersion },
+        }),
+        ...(inputSchema && { inputSchema }),
+      };
     });
 
     return {
@@ -10428,9 +10472,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       adcpVersion,
       defaultAdcpVersion
     );
-    return isMcpToolResponse(selected)
-      ? defaultAdcpVersion
-      : (selected.advertisedVersion ?? selected.validationVersion);
+    if (isMcpToolResponse(selected)) {
+      const fallback = discoveryFallback(requestedVersion);
+      if (fallback) return fallback.advertisedVersion ?? fallback.validationVersion;
+      throw new McpError(ErrorCode.InvalidParams, 'VERSION_UNSUPPORTED', selected.structuredContent);
+    }
+    return selected.advertisedVersion ?? selected.validationVersion;
   });
   setMcpToolProfile(wrapped, activeMcpToolProfile);
   setMcpAppResources(wrapped, mcpAppResources);

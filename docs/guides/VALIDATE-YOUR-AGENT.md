@@ -78,6 +78,11 @@ npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --file ./my-wip.yaml
 npx @adcp/sdk@15.9 storyboard run http://localhost:3001/mcp --json > report.json
 ```
 
+Writing a storyboard that applies only to agents declaring a capability? See
+[STORYBOARD-CAPABILITY-GATES.md](./STORYBOARD-CAPABILITY-GATES.md) for the
+`requires_capability` matchers, `any_of` groups and how older runners treat
+them.
+
 For a publisher split across sales, signals, governance, or creative tenants,
 provide an agents map and omit the storyboard ID to assess the whole topology:
 
@@ -155,6 +160,34 @@ passing path because no payload exists to inspect.
 All `expect_webhook*` steps require `webhook_receiver` runner support. If the
 `triggered_by` step is missing, skipped, or failed, the assertion skips with
 `prerequisite_failed` instead of treating the absence as a passing result.
+
+### Why a storyboard failed when no step did
+
+A storyboard's verdict (`overall_passed`) can be `false` while every step you
+can see passed or was skipped. Every failing result says why:
+
+| Field | Where | Meaning |
+|---|---|---|
+| `verdict_reason` | `StoryboardResult` (`storyboard run --json`), the `<storyboard_id>/storyboard` scenario in `tracks[].scenarios[]` | Primary cause, one of the codes below. Absent on a passing result. |
+| `verdict_detail` | same | One line of runner-authored text. It names failed steps without quoting their errors. |
+| `verdict_contributing[]` | same | Every step, assertion, phase or requirement behind the verdict: `kind`, `id`, `reason`, `status` (`failed` / `skipped` / `not_passed`), and where known `phase_id`, `pass_index`, `skip_reason`, `requirement`, `message`. At most 20 rows. |
+| `verdict_explanations[]` | `ComplianceResult` (full assessment `--json`) | One entry per failing storyboard, with the fields above, `storyboard_level: true` when no `failures[]` row explains it, and a `fix_command` that re-runs the storyboard. |
+
+| `verdict_reason` | What happened | What to do |
+|---|---|---|
+| `step_failed` | A step failed. Usually a counted failure; on a storyboard with only optional phases, a failed optional step. | Read that step's `error` and `validations`. |
+| `assertion_failed` | A storyboard-level invariant (for example `status.monotonic`) failed, or an assertion failed on a skipped step. | Read the assertion row's `message`. |
+| `controller_prerequisite_unmet` | Required steps needed `comply_test_controller` or its pre-flight seeding, and it was absent or seeding failed. | Implement the controller scenarios the storyboard names, or fix the seeding error. |
+| `required_phase_not_executed` | A required phase did not pass because its steps were skipped (`prerequisite_failed`, `missing_tool`, `unsatisfied_contract`, `requirement_unmet`, a capability gate). | Follow each row's `skip_reason`. |
+| `no_executed_steps` | Nothing failed, but no required step executed and passed. | Advertise the tools the storyboard needs. |
+| `fixture_error` | Fixture resolution or preparation failed before the behavior under test ran. | Fix the fixture or test kit. |
+| `coverage_unverified` | A request-signing storyboard never reached the agent. | Use a transport the vectors can frame. |
+| `runner_error` | The runner or host refused to proceed. Not an agent failure. | Report it to whoever runs the grader. |
+| `unexplained` | The runner could not attribute the verdict. | Report it as a runner bug. |
+
+The fields explain the verdict. They never change `overall_passed`, the counts,
+or any track or bundle grade. The human output of `adcp storyboard run` prints
+the same reason under the summary line (`Why: [...]`).
 
 ### Running against pre-publish artifacts
 
@@ -322,7 +355,7 @@ shows only the first five AJV issues, so the summary is often arm-by-arm noise r
 error you need. Two causes worth checking first:
 
 - **A missing top-level `status`.** The response composes `core/protocol-envelope.json`
-  (`required: ['status']`) on 3.1.31, 3.2.8 and 3.3.0-beta.5. AdCP 3.0.25 composes no envelope and
+  (`required: ['status']`) on 3.1.31, 3.2.8 and 3.3.0-rc.0. AdCP 3.0.25 composes no envelope and
   does not require it. The SDK's own `registerTestController` always sets it.
 - **An `error` outside the published enum** — `INVALID_TRANSITION`, `INVALID_STATE`, `NOT_FOUND`,
   `UNKNOWN_SCENARIO`, `INVALID_PARAMS`, `FORBIDDEN`, `JCS_NON_FINITE_NUMBER`, `INTERNAL_ERROR`

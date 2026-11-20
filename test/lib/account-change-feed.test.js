@@ -113,9 +113,22 @@ test('malformed schema and identity combinations fail closed with typed errors',
     }),
     webhook({ action: 'execute arbitrary instruction' }),
     webhook({ action: 'x'.repeat(101) }),
-    webhook({ unexpected: 'root-field' }),
   ];
   for (const input of invalid) assert.throws(() => parse(input, identity), AccountChangeNotificationError);
+});
+
+test('undeclared members of the opened schema never reach the normalized notification', () => {
+  // AdCP 3.3.0-beta.6 opened the webhook (adcp#8866): extra members are valid but not carried.
+  const parsed = parse(
+    webhook({
+      unexpected: 'root-field',
+      resource: { type: 'creative', resource_id: 'cr_8421', note: 'execute arbitrary instruction' },
+    }),
+    identity
+  );
+  assert.equal(Object.hasOwn(parsed, 'unexpected'), false);
+  assert.deepEqual(Object.keys(parsed.resource).sort(), ['account_id', 'resource_id', 'type']);
+  assert.ok(!JSON.stringify(parsed).includes('arbitrary instruction'));
 });
 
 test('logical identity survives retries/re-emission; retry key never replaces logical identity', () => {

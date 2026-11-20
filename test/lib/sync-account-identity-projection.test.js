@@ -202,6 +202,24 @@ for (const version of ['3.0', '3.1']) {
   });
 }
 
+// AdCP 3.3.0-beta.6 opened the identity schemas (adcp#8866). The projection
+// keeps only declared identity members, at any depth, so a retained DB column or
+// vendor member never reaches the wire.
+test('identity objects drop undeclared members under the opened schemas', () => {
+  const row = identityRow();
+  const extended = {
+    ...row,
+    account: { ...row.account, seller_extension: { region: 'eu' } },
+    operator_unit: { ...row.operator_unit, seller_extension: { desk: 'emea' } },
+    identity_change: {
+      ...row.identity_change,
+      seller_extension: { ticket: 'chg-1' },
+      requested_operator_identity: { ...row.identity_change.requested_operator_identity, db_row_id: 42 },
+    },
+  };
+  assert.deepEqual(toWireSyncAccountRow(extended), row);
+});
+
 test('nested identity objects cannot retain write-only or internal data even with response validation disabled', () => {
   const row = identityRow();
   const dirtyRows = [
@@ -222,6 +240,9 @@ test('nested identity objects cannot retain write-only or internal data even wit
       ...identityRow(true),
       identity_change_preview: { ...identityRow(true).identity_change_preview, authInfo: { token: 'must-not-echo' } },
     },
+    // Open from 3.3.0-beta.6 (adcp#8866), so these are refused by name rather than by closure.
+    { ...row, account: { ...row.account, billing_entity: { bank: { iban: 'must-not-echo' } } } },
+    { ...row, operator_unit: { ...row.operator_unit, clientSecret: 'must-not-echo' } },
   ];
   for (const dirty of dirtyRows) {
     for (const emit of [value => toWireSyncAccountRow(value), value => syncAccountsResponse({ accounts: [value] })]) {
@@ -235,6 +256,17 @@ test('nested identity objects cannot retain write-only or internal data even wit
       );
     }
   }
+});
+
+test('a pathologically deep identity object fails with a typed error, not a stack overflow', () => {
+  const row = identityRow();
+  const deep = {};
+  let cursor = deep;
+  for (let depth = 0; depth < 200_000; depth++) cursor = cursor.a = {};
+  assert.throws(
+    () => toWireSyncAccountRow({ ...row, account: { ...row.account, retained: deep } }),
+    error => !(error instanceof RangeError) && /maximum JSON depth/.test(error.message)
+  );
 });
 
 test('strict commercial-contract failures preserve a settings-update account anchor', async () => {

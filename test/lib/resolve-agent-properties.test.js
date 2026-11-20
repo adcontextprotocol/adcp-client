@@ -151,7 +151,7 @@ describe('resolveAgentProperties — authorization_type: property_ids', () => {
     assert.ok(result.byAgent.has('https://agent-news.example/mcp'));
   });
 
-  test('external URL lookup fails closed when canonical-equivalent entries are ambiguous', () => {
+  test('external URL lookup fails closed when canonical-equivalent entries are ambiguous (AdCP 3.2)', () => {
     const file = {
       properties: [makeProperty('home', 'home.example'), makeProperty('news', 'news.example')],
       authorized_agents: [
@@ -169,9 +169,17 @@ describe('resolveAgentProperties — authorization_type: property_ids', () => {
         },
       ],
     };
-    const scope = resolveAgentProperties(file, 'https://agent-news.example/mcp');
+    const scope = resolveAgentProperties(file, 'https://agent-news.example/mcp', { adcpVersion: '3.2' });
     assert.strictEqual(scope.properties.length, 0);
     assert.strictEqual(scope.unresolvable, 'ambiguous_agent_url');
+
+    // AdCP 3.3+ (adcontextprotocol/adcp#9011): every matching entry authorizes, and the scope is the union.
+    const union = resolveAgentProperties(file, 'https://agent-news.example/mcp', { adcpVersion: '3.3' });
+    assert.deepStrictEqual(
+      union.properties.map(p => p.property_id),
+      ['home', 'news']
+    );
+    assert.strictEqual(union.unresolvable, undefined);
   });
 
   test('returns no_match when none of the property_ids resolve', () => {

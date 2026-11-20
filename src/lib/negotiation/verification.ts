@@ -7,6 +7,7 @@ import { ConfigurationError } from '../errors';
 import { compareProposalRefinementVersions, describeRefinementVersion, isProposalRefinementVersion } from './version';
 import { commercialTermsSchemaSupportError } from './commercial-terms-schema';
 import { COMMERCIAL_TERMS_KEYWORDS } from './commercial-terms-keywords';
+import { MAX_INSTALLMENT_CHANGES, installmentChangeIdentity, isInstallmentChange } from './installment-changes';
 export type {
   CanonicalProposal,
   ProposalCommercialTermsMismatch,
@@ -650,6 +651,7 @@ function validateResultShape(
 ): boolean {
   if (!isRecord(value)) return shape(issues, path, 'result must be an object');
   let valid = allowedKeys(value, RESULT_KEYS, path, issues);
+  if (value.ext !== undefined && !isRecord(value.ext)) valid = shape(issues, `${path}.ext`, 'ext must be an object');
   if (!nonempty(value.source_proposal_id))
     valid = shape(issues, `${path}.source_proposal_id`, 'source_proposal_id is required');
   if (!OUTCOMES.has(value.outcome as string)) {
@@ -664,14 +666,28 @@ function validateResultShape(
     }
   };
   if (outcome === 'revised') {
-    forbidden(['proposal', 'reason_code', 'reason', 'unsatisfied_constraints', 'unsatisfied_product_changes']);
+    forbidden([
+      'proposal',
+      'reason_code',
+      'reason',
+      'unsatisfied_constraints',
+      'unsatisfied_product_changes',
+      'unsatisfied_installment_changes',
+    ]);
     if (!validateProposalArray(value.proposals, `${path}.proposals`, issues, adcpVersion)) valid = false;
   } else if (outcome === 'partial') {
     forbidden(['proposal']);
     if (!validateProposalArray(value.proposals, `${path}.proposals`, issues, adcpVersion)) valid = false;
     if (!validateReason(value, path, issues)) valid = false;
   } else if (outcome === 'finalized') {
-    forbidden(['proposals', 'reason_code', 'reason', 'unsatisfied_constraints', 'unsatisfied_product_changes']);
+    forbidden([
+      'proposals',
+      'reason_code',
+      'reason',
+      'unsatisfied_constraints',
+      'unsatisfied_product_changes',
+      'unsatisfied_installment_changes',
+    ]);
     if (!validateCanonicalProposalShape(value.proposal, `${path}.proposal`, issues, adcpVersion)) valid = false;
   } else {
     forbidden(['proposal', 'proposals']);
@@ -699,6 +715,27 @@ function validateResultShape(
         issues,
         `${path}.unsatisfied_product_changes`,
         'unsatisfied_product_changes must be a non-empty include/omit map'
+      );
+    }
+  }
+  if (value.unsatisfied_installment_changes !== undefined) {
+    const changes = value.unsatisfied_installment_changes;
+    if (
+      !Array.isArray(changes) ||
+      changes.length === 0 ||
+      changes.length > MAX_INSTALLMENT_CHANGES ||
+      changes.some(
+        change =>
+          !isInstallmentChange(change) ||
+          typeof change.reason !== 'string' ||
+          change.reason.length === 0 ||
+          change.reason.length > 1024
+      )
+    ) {
+      valid = shape(
+        issues,
+        `${path}.unsatisfied_installment_changes`,
+        `unsatisfied_installment_changes must contain 1-${MAX_INSTALLMENT_CHANGES} installment changes, each with a reason`
       );
     }
   }
@@ -1252,8 +1289,24 @@ function verifyUnsatisfiedSubsets(
         'change was not requested'
       );
   }
+  const requestedInstallments = new Set(
+    (refinement.action === 'revise' ? (refinement.installment_changes ?? []) : []).map(installmentChangeIdentity)
+  );
+  for (const [index, change] of (result.unsatisfied_installment_changes ?? []).entries()) {
+    if (!requestedInstallments.has(installmentChangeIdentity(change)))
+      push(
+        issues,
+        'unsatisfied_subset',
+        `${base}.unsatisfied_installment_changes[${index}]`,
+        'installment change was not requested'
+      );
+  }
+  const hasTypedFailure =
+    !!result.unsatisfied_constraints?.length ||
+    Object.keys(result.unsatisfied_product_changes ?? {}).length > 0 ||
+    !!result.unsatisfied_installment_changes?.length;
   if (result.reason_code === 'constraint_unsatisfiable') {
-    if (!result.unsatisfied_constraints?.length && !Object.keys(result.unsatisfied_product_changes ?? {}).length) {
+    if (!hasTypedFailure) {
       push(
         issues,
         'unsatisfied_subset',
@@ -1261,7 +1314,7 @@ function verifyUnsatisfiedSubsets(
         'constraint_unsatisfiable requires a machine-readable unsatisfied subset'
       );
     }
-  } else if (result.unsatisfied_constraints?.length || Object.keys(result.unsatisfied_product_changes ?? {}).length) {
+  } else if (hasTypedFailure) {
     push(issues, 'unsatisfied_subset', `${base}.reason_code`, 'typed failures must use constraint_unsatisfiable');
   }
 
@@ -1384,8 +1437,11 @@ const RESULT_KEYS = new Set([
   'reason',
   'unsatisfied_constraints',
   'unsatisfied_product_changes',
+  'unsatisfied_installment_changes',
   'suggestions',
   'targeting_resolution',
+  // Result items are open in the schema; accept the vendor extension point.
+  'ext',
 ]);
 const PRICING_KEYS = new Set([
   'pricing_option_id',

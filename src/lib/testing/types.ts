@@ -8,7 +8,13 @@ import type { WebhookReceiver } from './storyboard/webhook-receiver';
 import type { AdcpVersion } from '../version';
 import type { TransportOptions, VersionEnvelopeMode } from '../protocols';
 import type { AgentRequestSigningConfig } from '../types/adcp';
-import type { RunnerRequestRecord, RunnerResponseRecord, RunnerExtractionRecord } from './storyboard/types';
+import type {
+  RunnerRequestRecord,
+  RunnerResponseRecord,
+  RunnerExtractionRecord,
+  StoryboardVerdictContributor,
+  StoryboardVerdictReason,
+} from './storyboard/types';
 import type { AuthorizationRequirements } from '../auth/oauth/authorization-required';
 
 // Test scenarios that can be run
@@ -131,7 +137,7 @@ export interface TestOptions {
   /**
    * Schema roots for releases the agent may echo in its
    * `get_adcp_capabilities` response, keyed by AdCP version (`'3.2'`,
-   * `'3.2.5'`, `'3.3.0-beta.5'`). Values are schema-data roots in the same
+   * `'3.2.5'`, `'3.3.0-rc.0'`). Values are schema-data roots in the same
    * shape as `schemaRoot`.
    *
    * A 3.0 pin sends only `adcp_major_version`, so an agent may serve and echo
@@ -516,6 +522,16 @@ export interface TestResult {
   tested_at: string;
   // Agent profile discovered during testing
   agent_profile?: AgentProfile;
+  /**
+   * Storyboard-level verdict explanation (adcp#8576). Set only on the
+   * synthetic `<storyboard_id>/storyboard` scenario that `comply()` emits
+   * when a storyboard fails without a counted failed step. Mirrors
+   * `StoryboardResult.verdict_reason` / `verdict_detail` /
+   * `verdict_contributing`.
+   */
+  verdict_reason?: StoryboardVerdictReason;
+  verdict_detail?: string;
+  verdict_contributing?: StoryboardVerdictContributor[];
 }
 
 export interface SuiteResult {

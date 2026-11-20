@@ -77,7 +77,14 @@ test('the direct-buy lifecycle uses only compact purchase, control, and readback
   assert.ok(storyboard);
 
   const businessTasks = tasks(storyboard).filter(task => task !== 'comply_test_controller');
-  assert.deepEqual(businessTasks, ['list_products', 'buy_products', 'control_media_buy', 'get_media_buys']);
+  // rc.0 adds a capability-gated read: a compact seller with a creative library lists assign (adcp#8997).
+  assert.deepEqual(businessTasks, [
+    'list_products',
+    'buy_products',
+    'control_media_buy',
+    'get_media_buys',
+    'get_adcp_capabilities',
+  ]);
   assert.ok(!storyboard.required_tools.includes('get_products'));
   assert.ok(!storyboard.required_tools.includes('create_media_buy'));
   assert.ok(!storyboard.required_tools.includes('update_media_buy'));
@@ -202,7 +209,10 @@ test('the public CLI lists and renders both complete compact lifecycles', () => 
         'get_media_buys',
       ],
     ],
-    [STORYBOARD_IDS[1], ['list_products', 'buy_products', 'control_media_buy', 'get_media_buys']],
+    [
+      STORYBOARD_IDS[1],
+      ['list_products', 'buy_products', 'control_media_buy', 'get_media_buys', 'get_adcp_capabilities'],
+    ],
   ]);
   for (const [id, expected] of expectedTasks) {
     const showResult = runCli(['storyboard', 'show', id, '--json']);

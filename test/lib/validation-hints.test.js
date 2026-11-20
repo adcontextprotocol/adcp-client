@@ -86,10 +86,11 @@ describe('curated validation hints (issue #1309)', () => {
       end_time: '2026-05-31T23:59:59Z',
       packages: [{ buyer_ref: 'p1', product_id: 'p1', budget: 10, pricing_option_id: 'po1' }],
     });
-    const additional = outcome.issues.find(i => i.pointer === '/account' && i.keyword === 'additionalProperties');
-    assert.ok(additional, `expected additionalProperties at /account, got: ${JSON.stringify(outcome.issues)}`);
-    assert.match(additional.hint ?? '', /discriminated union/);
-    assert.match(additional.hint ?? '', /Pick ONE variant/);
+    // The open 3.3.0-beta.6 variants report oneOf on /account (closed ones reported additionalProperties).
+    const merged = outcome.issues.find(i => i.pointer === '/account' && i.keyword === 'oneOf');
+    assert.ok(merged, `expected oneOf at /account, got: ${JSON.stringify(outcome.issues)}`);
+    assert.match(merged.hint ?? '', /discriminated union/);
+    assert.match(merged.hint ?? '', /Pick ONE variant/);
   });
 
   test('budget as object fires the number-not-object hint', () => {

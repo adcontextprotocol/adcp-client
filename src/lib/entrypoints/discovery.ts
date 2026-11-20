@@ -64,6 +64,11 @@ export {
   listAgentPropertyMap,
   getAllProperties,
   canonicalizeAgentUrl,
+  agentUrlMatchesAuthorizedEntry,
+  usesOriginOnlyAgentMatching,
+  resolvePublisherSigningKeyPin,
+  type PublisherSigningKeyPinOptions,
+  type AgentUrlMatchOptions,
   type ResolvedAgentScope,
   type ResolveUnresolvableReason,
 } from '../discovery/resolve-agent-properties';

@@ -17,6 +17,7 @@ import {
   isReportingAdjustmentReceiptEvidence,
   isReportingReceiptEvidence,
   isReportingVerificationEvidence,
+  undeclaredReportingMaterializationMembers,
   createReportingDeliveryHandler,
   createReportingStatusHandler,
   createSyncReportingReceiptsHandler,
@@ -1269,15 +1270,23 @@ export function assertMaterializationOutcome(
   now: string,
   minimumResourceRetentionDays = lease.binding.resource_retention_days
 ): void {
-  const parsed = ReportingMaterializationSchema.safeParse({
+  const materialization = {
     ...lease.materialization,
     status: outcome.status,
     ready_at: now,
     resource: outcome.resource,
     verification: outcome.verification,
-  });
+  };
+  const parsed = ReportingMaterializationSchema.safeParse(materialization);
   if (!parsed.success) {
-    throw new Error(`Managed materialization evidence is invalid: ${parsed.error.issues[0]?.message ?? 'invalid'}`);
+    // The issue code only: Zod messages can quote the adapter's value.
+    throw new Error(`Managed materialization evidence is invalid: ${parsed.error.issues[0]?.code ?? 'invalid'}`);
+  }
+  // The schemas are open from AdCP 3.3.0-beta.6, so the parse above no longer
+  // refuses adapter members it does not declare; they would be stored and served
+  // by get_reporting_status. Refuse them without naming them.
+  if (undeclaredReportingMaterializationMembers(materialization).length > 0) {
+    throw new Error('Managed materialization evidence carries members its schema does not declare');
   }
   if (Buffer.byteLength(JSON.stringify(outcome), 'utf8') > MAX_DESCRIPTOR_BYTES) {
     throw new RangeError('Managed materialization descriptor exceeds 1 MiB');

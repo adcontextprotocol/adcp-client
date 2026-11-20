@@ -89,7 +89,7 @@ const BUYS = {
   'principal-b': [buy('mb-b', 4, 5)],
 };
 
-async function world({ failPolicyFor } = {}) {
+async function world({ failPolicyFor, withPackages = false, omitPackageDimension = false } = {}) {
   const clock = { now: new Date(day(0.5)) };
   const { lifecycle } = createTestPrincipalLifecycle({ clock, reportingSubscriptions: {} });
   let key = 0;
@@ -132,7 +132,26 @@ async function world({ failPolicyFor } = {}) {
     mediaBuyId,
     productBinding: { ...structuredClone(template.productBinding), mediaBuyId, bindingId: `binding-${mediaBuyId}` },
   });
+  const packageConstituent = mediaBuyId => ({
+    constituentId: `constituent-package-${mediaBuyId}`,
+    constituentKind: 'package_item',
+    productId: template.productId,
+    packageId: `${mediaBuyId}-pkg`,
+    productBinding: {
+      bindingKind: 'package_item_product',
+      packageId: `${mediaBuyId}-pkg`,
+      owner: 'caller',
+      bindingId: `package-binding-${mediaBuyId}`,
+      bindingVersion: 1,
+      bindingSha256: 'a'.repeat(64),
+      productId: template.productId,
+    },
+  });
   const sourceOffering = structuredClone(redactedReportingSourceOfferingV1);
+  if (withPackages) {
+    sourceOffering.applicability.constituentKinds.push('package_item');
+    sourceOffering.dimensions.push({ name: 'package_id', support: 'exact' });
+  }
   sourceOffering.cadence = {
     ...sourceOffering.cadence,
     expectedAvailabilityLag: 'PT0S',
@@ -148,15 +167,35 @@ async function world({ failPolicyFor } = {}) {
         sourceOffering,
         deliveryOffering: deliveryOffering(),
         fetchSlice: slice => {
-          fetched.push({ start: slice.start_date, media_buy_ids: [...slice.media_buy_ids] });
+          fetched.push({
+            start: slice.start_date,
+            media_buy_ids: [...slice.media_buy_ids],
+            package_ids: slice.constituents.flatMap(value => (value.package_id ? [value.package_id] : [])),
+          });
           return {
             reporting_period: { start: slice.start_date, end: slice.end_date },
             currency: 'USD',
             reporting_rows: slice.media_buy_ids.map(mediaBuyId => ({
               media_buy_id: mediaBuyId,
+              ...(withPackages ? { package_id: `${mediaBuyId}-pkg` } : {}),
               impressions: 1,
               spend: '1.00',
             })),
+            ...(withPackages
+              ? {
+                  availability_evidence: {
+                    version: '1.0',
+                    cells: slice.constituents.flatMap(value =>
+                      slice.requested_metrics.map(metric => ({
+                        constituent_id: value.constituent_id,
+                        metric,
+                        status: 'present',
+                        data_through: slice.end_date,
+                      }))
+                    ),
+                  },
+                }
+              : {}),
           };
         },
       },
@@ -171,7 +210,20 @@ async function world({ failPolicyFor } = {}) {
     }),
     resolveCurrency: () => 'USD',
     // The host authorizes the account's buys; each obligation freezes the subset it owes.
-    resolveCoverage: () => ({ constituents: ['mb-a', 'mb-a2', 'mb-b'].map(constituent) }),
+    resolveCoverage: () => {
+      const buys = ['mb-a', 'mb-a2', 'mb-b'];
+      return {
+        constituents: [...buys.map(constituent), ...(withPackages ? buys.map(packageConstituent) : [])],
+        ...(withPackages
+          ? {
+              packageBindings: buys.map(mediaBuyId => ({
+                constituentId: `constituent-package-${mediaBuyId}`,
+                mediaBuyId,
+              })),
+            }
+          : {}),
+      };
+    },
     subscriptions: {
       engine,
       resolvePrincipal: context => context.principalScope,
@@ -180,7 +232,10 @@ async function world({ failPolicyFor } = {}) {
         if (failPolicyFor === principal.principalId) throw new Error(`no policy for ${principal.principalId}`);
         return {
           requestedMetrics: request.requestedMetrics,
-          requestedDimensions: request.requestedDimensions,
+          requestedDimensions:
+            withPackages && !omitPackageDimension
+              ? [...request.requestedDimensions, 'package_id']
+              : request.requestedDimensions,
           sourceSettings,
         };
       },
@@ -196,6 +251,54 @@ const read = (service, principal, body) =>
   );
 
 describe('reliable reporting service with subscription obligations', () => {
+  test('freezes each subscription period with only its authorized package bindings', async () => {
+    const { clock, engine, service, store, fetched } = await world({ withPackages: true });
+    clock.now = new Date(day(8));
+    await engine.reconcile(A);
+    await engine.reconcile(B);
+    const cycle = await service.runCycle({ accountId: ACCOUNT, now: new Date(day(8)) });
+    assert.equal(cycle.revisionsCommitted, 5, JSON.stringify(cycle));
+    assert.deepEqual(
+      fetched.map(value => [value.media_buy_ids, value.package_ids]).sort(),
+      [
+        [['mb-a'], ['mb-a-pkg']],
+        [['mb-a'], ['mb-a-pkg']],
+        [
+          ['mb-a', 'mb-a2'],
+          ['mb-a-pkg', 'mb-a2-pkg'],
+        ],
+        [['mb-a2'], ['mb-a2-pkg']],
+        [['mb-b'], ['mb-b-pkg']],
+      ].sort()
+    );
+    const obligations = await store.listObligations(ACCOUNT);
+    for (const obligation of obligations) {
+      assert.deepEqual(obligation.packageBindings.map(value => value.mediaBuyId).sort(), obligation.mediaBuyIds);
+      const [revision] = await store.listRevisions(obligation.reporting_obligation_id);
+      assert.deepEqual(
+        revision.wireRevision.coverage.covered_package_ids,
+        obligation.mediaBuyIds.map(value => `${value}-pkg`).sort()
+      );
+    }
+  });
+
+  test('refuses package subscriptions whose inline source cannot identify package rows', async () => {
+    const { clock, engine, service, store } = await world({ withPackages: true, omitPackageDimension: true });
+    clock.now = new Date(day(8));
+    await engine.reconcile(A);
+    await engine.reconcile(B);
+    await assert.rejects(service.runCycle({ accountId: ACCOUNT, now: new Date(day(8)) }), error => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors.length, 2);
+      assert.equal(
+        error.errors.every(item => /package_id/.test(item.message)),
+        true
+      );
+      return true;
+    });
+    assert.deepEqual(await store.listConfigurations(ACCOUNT), []);
+  });
+
   test('without subscriptions is byte-for-byte unchanged', async () => {
     const golden = require(
       path.join(__dirname, '..', 'fixtures', 'reporting-subscriptions', 'ledger-option-off-golden.json')

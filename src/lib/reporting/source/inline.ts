@@ -33,7 +33,10 @@ export interface InlineReportingDeliveryRequestV1 {
   account: { account_id: string };
   media_buy_ids: string[];
   /** Frozen manifest constituents. Use constituent_id when returning availability evidence. */
-  constituents: Array<Readonly<{ constituent_id: string; media_buy_id: string }>>;
+  constituents: Array<
+    | Readonly<{ constituent_id: string; media_buy_id: string; package_id?: never }>
+    | Readonly<{ constituent_id: string; media_buy_id: string; package_id: string }>
+  >;
   start_date: string;
   end_date: string;
   /** Exact source observation ceiling for snapshot reads within the requested period. */
@@ -420,7 +423,12 @@ function createInlineExecutorWithCapacities(
   }
   const offering = ReportingSourceOfferingV1Schema.parse({
     ...parsedOffering,
-    applicability: { ...parsedOffering.applicability, constituentKinds: ['media_buy'] },
+    applicability: {
+      ...parsedOffering.applicability,
+      constituentKinds: parsedOffering.applicability.constituentKinds.filter(
+        kind => kind === 'media_buy' || kind === 'package_item'
+      ),
+    },
     formats: [format],
     sourceExecution: {
       ...parsedOffering.sourceExecution,
@@ -465,6 +473,16 @@ function createInlineExecutorWithCapacities(
       }
       if (request.sourceRequest.groupIds.length > 0) {
         return failure('UNSUPPORTED_OFFERING', 'terminal', 'Inline reporting does not support source group reads');
+      }
+      if (
+        request.coverage.constituents.some(constituent => constituent.constituentKind === 'package_item') &&
+        (request.coverage.packageBindings === undefined || !request.requestedDimensions.includes('package_id'))
+      ) {
+        return failure(
+          'UNSUPPORTED_OFFERING',
+          'terminal',
+          'Inline package reporting requires bound package items and package_id'
+        );
       }
       let deliveryDates: { start: string; end: string };
       try {
@@ -642,6 +660,9 @@ async function executeAndSeal(
   observer?: InlineCapacityObserverV1,
   clock?: () => Date
 ): Promise<ReportingSourceExecutorResultV1> {
+  const packageMediaBuyByConstituentId = new Map(
+    (request.coverage.packageBindings ?? []).map(binding => [binding.constituentId, binding.mediaBuyId])
+  );
   let fetched: InlineReportingDeliveryResultV1;
   try {
     // Await the owned fetch even after abort. A cooperative handler receives
@@ -650,10 +671,15 @@ async function executeAndSeal(
       {
         account: structuredClone(request.account),
         media_buy_ids: [...request.coverage.mediaBuyIds],
-        constituents: request.coverage.constituents.map(constituent => ({
-          constituent_id: constituent.constituentId,
-          media_buy_id: constituent.mediaBuyId!,
-        })),
+        constituents: request.coverage.constituents.map(constituent =>
+          constituent.constituentKind === 'package_item'
+            ? {
+                constituent_id: constituent.constituentId,
+                media_buy_id: packageMediaBuyByConstituentId.get(constituent.constituentId)!,
+                package_id: constituent.packageId,
+              }
+            : { constituent_id: constituent.constituentId, media_buy_id: constituent.mediaBuyId! }
+        ),
         start_date: deliveryDates.start,
         end_date: deliveryDates.end,
         source_read_cutoff_at: request.period.sourceReadCutoffAt,
@@ -886,6 +912,13 @@ async function executeAndSeal(
       return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is invalid');
     }
   }
+  if (request.coverage.packageIds.length > 0 && availabilityEvidence === undefined) {
+    return failure(
+      'UNSUPPORTED_OFFERING',
+      'terminal',
+      'Package reporting requires an object response with availability_evidence'
+    );
+  }
   // Settle both observation budgets from counts alone, before a single row is read: one
   // identity read plus one read per requested metric and dimension, per row, and the
   // bytes the captured claims will occupy while validation runs.
@@ -991,6 +1024,13 @@ async function executeAndSeal(
   );
   const sourceSnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(sourceSnapshots, admittedMediaBuyIds);
   const auxiliarySnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(auxiliarySnapshots, admittedMediaBuyIds);
+  const admittedPackagePairs = new Set(
+    request.coverage.constituents
+      .filter(constituent => constituent.constituentKind === 'package_item')
+      .map(constituent => packagePairForConstituent(constituent, packageMediaBuyByConstituentId))
+  );
+  const sourceSnapshotsByPackagePair = groupSnapshotsByPackagePair(sourceSnapshots, admittedPackagePairs);
+  const auxiliarySnapshotsByPackagePair = groupSnapshotsByPackagePair(auxiliarySnapshots, admittedPackagePairs);
   if (sourceSnapshots.length > 0) {
     // The auxiliary collection is scope-checked too, including on the legacy path where
     // it is intentionally left unprojected.
@@ -998,9 +1038,30 @@ async function executeAndSeal(
       return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery fetch returned an out-of-scope row');
     }
     if (
+      captureLayout.indexOf.has('package_id') &&
+      allSnapshots.some(snapshot => {
+        if (!snapshot) return false;
+        const packageId = snapshotFieldValue(snapshot, 'package_id');
+        return (
+          packageId !== undefined &&
+          (typeof packageId !== 'string' ||
+            snapshot.mediaBuyId === undefined ||
+            !admittedPackagePairs.has(packagePairKey(snapshot.mediaBuyId, packageId)))
+        );
+      })
+    ) {
+      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery fetch returned an out-of-scope package row');
+    }
+    if (
       request.coverage.constituents.some(constituent => {
-        if (constituent.constituentKind !== 'media_buy' || !constituent.mediaBuyId) return true;
-        const constituentRows = sourceSnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS;
+        const constituentRows =
+          constituent.constituentKind === 'package_item'
+            ? (sourceSnapshotsByPackagePair.get(
+                packagePairForConstituent(constituent, packageMediaBuyByConstituentId)
+              ) ?? NO_SNAPSHOTS)
+            : constituent.mediaBuyId
+              ? (sourceSnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS)
+              : NO_SNAPSHOTS;
         return (
           constituentRows.some(snapshot =>
             request.requestedDimensions.some(dimension => !snapshotHasDimension(snapshot, dimension))
@@ -1024,7 +1085,10 @@ async function executeAndSeal(
     const rowEvidenceFailure = validateSnapshotsAgainstAvailabilityEvidence(
       sourceSnapshotsByMediaBuyId,
       auxiliarySnapshotsByMediaBuyId,
+      sourceSnapshotsByPackagePair,
+      auxiliarySnapshotsByPackagePair,
       request,
+      packageMediaBuyByConstituentId,
       availabilityEvidence.cells
     );
     if (rowEvidenceFailure === 'partial') {
@@ -1091,7 +1155,11 @@ async function executeAndSeal(
   const declaredMetrics = new Map(offering.metrics.map(metric => [metric.name, metric]));
   const constituentIdsWithRows = new Set(
     request.coverage.constituents
-      .filter(constituent => constituent.mediaBuyId && sourceSnapshotsByMediaBuyId.has(constituent.mediaBuyId))
+      .filter(constituent =>
+        constituent.constituentKind === 'package_item'
+          ? sourceSnapshotsByPackagePair.has(packagePairForConstituent(constituent, packageMediaBuyByConstituentId))
+          : constituent.mediaBuyId && sourceSnapshotsByMediaBuyId.has(constituent.mediaBuyId)
+      )
       .map(constituent => constituent.constituentId)
   );
   let projectedAvailability: InlineAvailabilityProjection;
@@ -1771,11 +1839,20 @@ function validationWorkExceedsCap(
   const perConstituentCap = Math.floor(cap / unitsPerVisit);
   const sourceCounts = countSnapshotsByMediaBuyId(sourceSnapshots);
   const auxiliaryCounts = includeAuxiliary ? countSnapshotsByMediaBuyId(auxiliarySnapshots) : undefined;
+  const sourcePackageCounts = countSnapshotsByPackagePair(sourceSnapshots);
+  const auxiliaryPackageCounts = includeAuxiliary ? countSnapshotsByPackagePair(auxiliarySnapshots) : undefined;
+  const packageMediaBuyByConstituentId = new Map(
+    (request.coverage.packageBindings ?? []).map(binding => [binding.constituentId, binding.mediaBuyId])
+  );
   let work = 0;
   for (const constituent of request.coverage.constituents) {
-    if (!constituent.mediaBuyId) continue;
     const visits =
-      (sourceCounts.get(constituent.mediaBuyId) ?? 0) + (auxiliaryCounts?.get(constituent.mediaBuyId) ?? 0);
+      constituent.constituentKind === 'package_item'
+        ? (sourcePackageCounts.get(packagePairForConstituent(constituent, packageMediaBuyByConstituentId)) ?? 0) +
+          (auxiliaryPackageCounts?.get(packagePairForConstituent(constituent, packageMediaBuyByConstituentId)) ?? 0)
+        : constituent.mediaBuyId
+          ? (sourceCounts.get(constituent.mediaBuyId) ?? 0) + (auxiliaryCounts?.get(constituent.mediaBuyId) ?? 0)
+          : 0;
     if (visits > perConstituentCap) return true;
     work += visits * unitsPerVisit;
     if (work > cap) return true;
@@ -1788,6 +1865,47 @@ function countSnapshotsByMediaBuyId(snapshots: readonly (RowSnapshotV1 | undefin
   for (const snapshot of snapshots) {
     if (snapshot?.mediaBuyId === undefined) continue;
     counts.set(snapshot.mediaBuyId, (counts.get(snapshot.mediaBuyId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function packagePairKey(mediaBuyId: string, packageId: string): string {
+  return JSON.stringify([mediaBuyId, packageId]);
+}
+
+function packagePairForConstituent(
+  constituent: ReportingSourceSliceRequestV1['coverage']['constituents'][number],
+  mediaBuyByConstituentId: ReadonlyMap<string, string>
+): string {
+  return packagePairKey(mediaBuyByConstituentId.get(constituent.constituentId)!, constituent.packageId!);
+}
+
+function groupSnapshotsByPackagePair(
+  snapshots: readonly (RowSnapshotV1 | undefined)[],
+  admittedPackagePairs: ReadonlySet<string>
+): Map<string, RowSnapshotV1[]> {
+  const grouped = new Map<string, RowSnapshotV1[]>();
+  for (const snapshot of snapshots) {
+    if (!snapshot) continue;
+    const packageId = snapshotFieldValue(snapshot, 'package_id');
+    if (typeof packageId !== 'string' || snapshot.mediaBuyId === undefined) continue;
+    const pair = packagePairKey(snapshot.mediaBuyId, packageId);
+    if (!admittedPackagePairs.has(pair)) continue;
+    const rows = grouped.get(pair);
+    if (rows) rows.push(snapshot);
+    else grouped.set(pair, [snapshot]);
+  }
+  return grouped;
+}
+
+function countSnapshotsByPackagePair(snapshots: readonly (RowSnapshotV1 | undefined)[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const snapshot of snapshots) {
+    if (!snapshot) continue;
+    const packageId = snapshotFieldValue(snapshot, 'package_id');
+    if (typeof packageId !== 'string' || snapshot.mediaBuyId === undefined) continue;
+    const pair = packagePairKey(snapshot.mediaBuyId, packageId);
+    counts.set(pair, (counts.get(pair) ?? 0) + 1);
   }
   return counts;
 }
@@ -1834,7 +1952,10 @@ function snapshotHasDimension(snapshot: RowSnapshotV1, dimension: string): boole
 function validateSnapshotsAgainstAvailabilityEvidence(
   sourceSnapshotsByMediaBuyId: ReadonlyMap<string, readonly RowSnapshotV1[]>,
   auxiliarySnapshotsByMediaBuyId: ReadonlyMap<string, readonly RowSnapshotV1[]>,
+  sourceSnapshotsByPackagePair: ReadonlyMap<string, readonly RowSnapshotV1[]>,
+  auxiliarySnapshotsByPackagePair: ReadonlyMap<string, readonly RowSnapshotV1[]>,
   request: ReportingSourceSliceRequestV1,
+  packageMediaBuyByConstituentId: ReadonlyMap<string, string>,
   cells: readonly z.output<typeof InlineReportingMetricEvidenceV1Schema>[]
 ): 'partial' | 'integrity' | undefined {
   const cellsByConstituent = new Map<string, Array<(typeof cells)[number]>>();
@@ -1843,12 +1964,21 @@ function validateSnapshotsAgainstAvailabilityEvidence(
 
   let integrity = false;
   for (const constituent of request.coverage.constituents) {
-    const sourceRows = constituent.mediaBuyId
-      ? (sourceSnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS)
-      : NO_SNAPSHOTS;
-    const auxiliaryRows = constituent.mediaBuyId
-      ? (auxiliarySnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS)
-      : NO_SNAPSHOTS;
+    const sourceRows =
+      constituent.constituentKind === 'package_item'
+        ? (sourceSnapshotsByPackagePair.get(packagePairForConstituent(constituent, packageMediaBuyByConstituentId)) ??
+          NO_SNAPSHOTS)
+        : constituent.mediaBuyId
+          ? (sourceSnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS)
+          : NO_SNAPSHOTS;
+    const auxiliaryRows =
+      constituent.constituentKind === 'package_item'
+        ? (auxiliarySnapshotsByPackagePair.get(
+            packagePairForConstituent(constituent, packageMediaBuyByConstituentId)
+          ) ?? NO_SNAPSHOTS)
+        : constituent.mediaBuyId
+          ? (auxiliarySnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS)
+          : NO_SNAPSHOTS;
     for (const cell of cellsByConstituent.get(constituent.constituentId) ?? []) {
       if (cell.status === 'present' && sourceRows.length === 0) return 'partial';
       for (const snapshot of sourceRows) {

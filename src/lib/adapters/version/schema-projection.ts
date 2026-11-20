@@ -180,6 +180,17 @@ function allowedScalars(nodes: SchemaNode[]): unknown[] | undefined {
   return values;
 }
 
+/** The deprecated enum value that `value` supersedes, per the schema's `enumMetadata`. */
+function supersededOriginal(nodes: SchemaNode[], value: unknown): string | undefined {
+  for (const { schema } of nodes) {
+    if (!isObject(schema.enumMetadata)) continue;
+    for (const [original, metadata] of Object.entries(schema.enumMetadata)) {
+      if (isObject(metadata) && Object.is(metadata['x-superseded-by'], value)) return original;
+    }
+  }
+  return undefined;
+}
+
 function hasScalarConstraint(nodes: SchemaNode[]): boolean {
   return nodes.some(({ schema }) => Array.isArray(schema.enum) || Object.hasOwn(schema, 'const'));
 }
@@ -288,6 +299,10 @@ function project(
     // Only remove values the newer release defines. A value neither release
     // allows is the caller's error and is left for validation to report.
     if (sourceAllowed?.some(allowed => Object.is(allowed, value))) {
+      // A replacement for a deprecated value goes to an older release as the
+      // original it supersedes (`pass` for `passed`, adcontextprotocol/adcp#8915).
+      const original = supersededOriginal(sourceNodes, value);
+      if (original !== undefined && targetAllowed.some(allowed => Object.is(allowed, original))) return original;
       dropped.push({ path, kind: 'enum_value' });
       return OMIT;
     }
@@ -378,6 +393,79 @@ export function projectToolPayload<T>(
   const dropped: ProjectionDrop[] = [];
   const projected = project(payload, [source], [target], '', dropped, 0, envelopeKeys(toVersion));
   return { value: (projected === OMIT ? payload : projected) as T, dropped };
+}
+
+function typesObject(schema: Schema): boolean {
+  return schema.type === 'object' || (Array.isArray(schema.type) && schema.type.includes('object'));
+}
+
+function keepDeclared(
+  value: unknown,
+  nodes: SchemaNode[],
+  path: string,
+  dropped: ProjectionDrop[],
+  depth: number
+): unknown {
+  if (depth > MAX_DEPTH) throw new RangeError('Value exceeds the maximum schema projection depth');
+  const expanded = nodes.flatMap(node => expand(node, value, depth).nodes);
+  // An unresolved reference would let its whole subtree through unexamined.
+  if (expanded.some(node => typeof node.schema.$ref === 'string')) {
+    throw new Error('Declared-member projection could not resolve a schema reference');
+  }
+  if (Array.isArray(value)) {
+    const items = expanded.map(node => child(node, node.schema.items)).filter((n): n is SchemaNode => !!n);
+    if (items.length === 0) return value;
+    let changed = false;
+    const out = value.map((item, index) => {
+      const projected = keepDeclared(item, items, `${path}[${index}]`, dropped, depth + 1);
+      if (projected !== item) changed = true;
+      return projected;
+    });
+    return changed ? out : value;
+  }
+  if (!isObject(value)) return value;
+  const index = indexProperties(expanded);
+  // Only a schema that explicitly types the value as an object while declaring
+  // no members is a free-form map, such as `ext`. Any other undeclaring
+  // schema (a scalar type, or none) keeps none of the object's members.
+  if (!index.declares && expanded.some(node => typesObject(node.schema))) return value;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const entryPath = joinPath(path, key);
+    const schemas = schemasForKey(index, key) ?? nonEmpty(index.additional);
+    if (!schemas) {
+      dropped.push({ path: entryPath, kind: 'field' });
+      changed = true;
+      continue;
+    }
+    const projected = keepDeclared(entry, schemas, entryPath, dropped, depth + 1);
+    if (projected !== entry) changed = true;
+    out[key] = projected;
+  }
+  return changed ? out : value;
+}
+
+/**
+ * Remove every member the schema at `schemaRef` does not declare, at any depth.
+ * Declared free-form maps (objects whose schema declares no properties, such as
+ * `ext`) keep their contents, and a typed `additionalProperties` schema
+ * declares its keys; the boolean `additionalProperties: true` of an open object
+ * declares nothing. Used where AdCP 3.3.0-beta.6 opened schemas
+ * (adcontextprotocol/adcp#8866) that the SDK relied on to keep undeclared data
+ * out. Throws when the schema is unavailable or the value is deeper than the
+ * projection bound.
+ */
+export function projectToDeclaredMembers<T>(schemaRef: string, value: T, version?: string): ProjectionResult<T> {
+  const document = getSchemaDocumentByRef(schemaRef, version);
+  if (!document) throw new Error(`Schema unavailable for declared-member projection: ${schemaRef}`);
+  const root = document.schema as Schema;
+  const node: SchemaNode = {
+    schema: root,
+    doc: { root, base: absoluteBase(root.$id), version: version ?? document.resolvedVersion },
+  };
+  const dropped: ProjectionDrop[] = [];
+  return { value: keepDeclared(value, [node], '', dropped, 0) as T, dropped };
 }
 
 const NO_PROTECTED_KEYS: ReadonlySet<string> = new Set();

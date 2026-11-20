@@ -351,6 +351,20 @@ describe('sync_principal reporting_subscriptions (option on)', () => {
     assert.equal(single.result.kind, 'applied', JSON.stringify(single));
   });
 
+  // The coverage engine treats a scope without account_ids as every authorized
+  // account, so a single unknown selector must not pass, even when request
+  // schema validation is off.
+  test('refuses a scope whose only member is an unknown selector', () => {
+    const { validateReportingSubscription } = require('../../dist/lib/server/principal/reporting-subscriptions.js');
+    for (const scope of [{ partner_ids: ['acct_1'] }, { all_authorized_accounts: true, partner_ids: ['acct_1'] }]) {
+      assert.throws(
+        () => validateReportingSubscription(subscription({ scope }), [destination()]),
+        error => error.name === 'ReportingSubscriptionValidationError' && /exactly one/.test(error.message)
+      );
+    }
+    assert.doesNotThrow(() => validateReportingSubscription(subscription(), [destination()]));
+  });
+
   test('refuses duplicates, same-level overlap and ambiguous shared destinations', async () => {
     const { lifecycle } = setup();
     await sync(lifecycle, { reporting_destinations: [destination()] });

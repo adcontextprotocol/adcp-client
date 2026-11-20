@@ -321,6 +321,15 @@ export const ReportingSourceSliceRequestV1Schema = z
       productIds: z.array(ReportingExternalIdV1Schema).min(1).max(10_000),
       mediaBuyIds: z.array(ReportingExternalIdV1Schema).max(10_000),
       packageIds: z.array(ReportingExternalIdV1Schema).max(100_000),
+      packageBindings: z
+        .array(
+          z.strictObject({
+            constituentId: ReportingExternalIdV1Schema,
+            mediaBuyId: ReportingExternalIdV1Schema,
+          })
+        )
+        .max(SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1)
+        .optional(),
       denominatorFingerprint: ReportingFingerprintV1Schema,
     }),
     requestedMetrics: z.array(ReportingMetricOrDimensionNameV1Schema).min(1).max(1_000),
@@ -418,6 +427,22 @@ export const ReportingSourceSliceRequestV1Schema = z
         path: ['coverage'],
         message: 'Coverage summary IDs must exactly project the constituent denominator',
       });
+    const packageBindings = value.coverage.packageBindings;
+    if (packageBindings !== undefined) {
+      const packageConstituents = value.coverage.constituents.filter(item => item.constituentKind === 'package_item');
+      const packageConstituentIds = new Set(packageConstituents.map(item => item.constituentId));
+      if (
+        packageBindings.length !== packageConstituents.length ||
+        new Set(packageBindings.map(item => item.constituentId)).size !== packageBindings.length ||
+        packageBindings.some(item => !packageConstituentIds.has(item.constituentId) || !buys.includes(item.mediaBuyId))
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['coverage', 'packageBindings'],
+          message: 'Package bindings must map each package constituent to one covered media buy',
+        });
+      }
+    }
     for (const [index, constituent] of value.coverage.constituents.entries()) {
       if (
         constituent.constituentKind === 'package_item' &&

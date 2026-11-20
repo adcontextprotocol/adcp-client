@@ -2,6 +2,7 @@
 
 import type {
   AcceptanceContext,
+  CanonicalInstallmentReference,
   CanonicalProposal as GeneratedCanonicalProposal,
   MediaBuyFrequencyCap,
   OutcomeTarget,
@@ -24,6 +25,7 @@ export const PROPOSAL_REFINEMENT_DIMENSIONS = [
   'impressions',
   'flight',
   'product_changes',
+  'installment_changes',
   'alternatives',
   'criteria',
 ] as const;
@@ -72,6 +74,22 @@ export interface ProposalConstraints {
 
 export type ProposalProductChange = 'include' | 'omit';
 export type ProposalProductChanges = Record<string, ProposalProductChange>;
+
+/**
+ * Experimental AdCP 3.3 installment-level refinement entry
+ * (`media_buy.installment_refinement`). Entries are unique by
+ * `(product_id, installment_ref)`.
+ */
+export interface ProposalInstallmentChange {
+  product_id: string;
+  installment_ref: CanonicalInstallmentReference;
+  action: ProposalProductChange;
+}
+
+/** A requested installment change the seller did not satisfy, with its reason. */
+export interface ProposalUnsatisfiedInstallmentChange extends ProposalInstallmentChange {
+  reason: string;
+}
 
 /**
  * AdCP 3.2 structured discovery criteria. Referenced offer/overlay objects
@@ -123,15 +141,21 @@ export interface ReviseProposalRefinement {
   change_kind?: 'amendment' | 'cancellation';
   constraints?: ProposalConstraints;
   product_changes?: ProposalProductChanges;
+  /** Experimental, AdCP 3.3 only (`media_buy.installment_refinement`). */
+  installment_changes?: ProposalInstallmentChange[];
   alternatives?: { count: number };
   ask?: string;
   criteria?: ProposalDiscoveryCriteria;
   remove_media_buy_frequency_cap?: true;
+  /** Vendor extension point; opaque to the protocol. */
+  ext?: Record<string, unknown>;
 }
 
 export interface FinalizeProposalRefinement {
   proposal_id: string;
   action: 'finalize';
+  /** Vendor extension point; opaque to the protocol. */
+  ext?: Record<string, unknown>;
 }
 
 export type ProposalRefinement = ReviseProposalRefinement | FinalizeProposalRefinement;
@@ -148,6 +172,8 @@ export interface RefineProposalsRequest {
   context?: Record<string, unknown>;
   governance_context?: string;
   push_notification_config?: Record<string, unknown>;
+  /** Vendor extension point; opaque to the protocol. */
+  ext?: Record<string, unknown>;
   adcp_version: ProposalRefinementVersion;
   adcp_major_version: 3;
 }
@@ -226,6 +252,7 @@ export interface RefinedProposalResult<TProposal extends CanonicalProposal = Can
   source_proposal_id: string;
   outcome: 'revised';
   proposals: TProposal[];
+  ext?: Record<string, unknown>;
 }
 
 export interface PartialProposalResult<TProposal extends CanonicalProposal = CanonicalProposal> {
@@ -236,8 +263,10 @@ export interface PartialProposalResult<TProposal extends CanonicalProposal = Can
   reason: string;
   unsatisfied_constraints?: string[];
   unsatisfied_product_changes?: ProposalProductChanges;
+  unsatisfied_installment_changes?: ProposalUnsatisfiedInstallmentChange[];
   suggestions?: string[];
   targeting_resolution?: Record<string, unknown>;
+  ext?: Record<string, unknown>;
 }
 
 export interface UnableProposalResult {
@@ -247,13 +276,16 @@ export interface UnableProposalResult {
   reason: string;
   unsatisfied_constraints?: string[];
   unsatisfied_product_changes?: ProposalProductChanges;
+  unsatisfied_installment_changes?: ProposalUnsatisfiedInstallmentChange[];
   suggestions?: string[];
+  ext?: Record<string, unknown>;
 }
 
 export interface FinalizedProposalResult<TProposal extends CanonicalProposal = CanonicalProposal> {
   source_proposal_id: string;
   outcome: 'finalized';
   proposal: TProposal;
+  ext?: Record<string, unknown>;
 }
 
 export type ProposalRefinementResult<TProposal extends CanonicalProposal = CanonicalProposal> =

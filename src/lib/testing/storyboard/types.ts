@@ -31,11 +31,24 @@ export type CapabilityPredicateValue =
   | CapabilityPredicateValue[]
   | { [key: string]: CapabilityPredicateValue };
 
-export type RequiresCapabilityPredicate =
+/** A capability predicate that tests one dotted path with one matcher. */
+export type CapabilityPathPredicate =
   | { path: string; equals: boolean | string | number | null }
   | { path: string; present: boolean }
   | { path: string; contains: CapabilityPredicateValue }
   | { path: string; not_contains: CapabilityPredicateValue };
+
+/**
+ * OR-composition of two or more capability predicates: the gate passes when
+ * at least one entry passes. Entries are path predicates or nested `any_of`
+ * groups. Supported by @adcp/sdk releases after 17.0.0-beta.25; see
+ * `Storyboard.requires_capability` for how older runners treat the key.
+ */
+export interface AnyOfCapabilityPredicate {
+  any_of: RequiresCapabilityPredicate[];
+}
+
+export type RequiresCapabilityPredicate = CapabilityPathPredicate | AnyOfCapabilityPredicate;
 
 export interface Storyboard {
   id: string;
@@ -204,19 +217,51 @@ export interface Storyboard {
    *   response schema declares a default for that exact path and the parent
    *   capability object is present. Like `present:`, absence is otherwise the
    *   load-bearing signal — a seller that doesn't advertise the array hasn't
-   *   opted into the variant this storyboard tests. For
+   *   opted into the variant this storyboard tests. When `V` is an object,
+   *   an array entry matches when it is an object that carries every key of
+   *   `V` with a structurally equal value; the entry MAY carry other keys
+   *   (`contains: { pattern: sync_audiences }` matches
+   *   `{ pattern: "sync_audiences", note: "x" }`). Scalars and arrays still
+   *   match by structural equality. For
    *   `adcp.governance_enforcement.tasks`, an entry matches when its task is
    *   equal and its declared modes include every mode in the predicate;
    *   sellers combine all modes for a task in one entry.
    *
    * - `not_contains: V` — negative array-membership matcher. The value at
-   *   `path` MUST be an array and MUST NOT include `V` (structural JSON equality,
-   *   except governance task-mode predicates match a subset; no coercion).
+   *   `path` MUST be an array and MUST NOT include `V` (the same entry match
+   *   as `contains`: structural JSON equality for scalars and arrays, a key
+   *   subset for objects, governance task-mode predicates match a subset; no
+   *   coercion).
    *   This is useful for rejection scenarios that apply only when
    *   an advertised allowlist omits a value. Missing and non-array values do
    *   not satisfy the predicate; a separate discovery validation should grade
    *   a required capability declaration. Schema defaults are materialized on
    *   the same terms as `contains`.
+   *
+   * In place of `path` and a matcher, a gate MAY declare `any_of`: a list of
+   * two or more predicates (path predicates or nested `any_of` groups). The
+   * gate passes when at least one entry passes, and each entry is evaluated
+   * by its own rules, including schema defaults and the no-raw-capabilities
+   * fallback below. `any_of` cannot be combined with `path` or a matcher on
+   * the same object. Example, "the field is absent, or it lists an entry
+   * whose `pattern` is `sync_audiences`":
+   *
+   * ```yaml
+   * requires_capability:
+   *   any_of:
+   *     - path: media_buy.audience_targeting.supported_activation_methods
+   *       present: false
+   *     - path: media_buy.audience_targeting.supported_activation_methods
+   *       contains: { pattern: sync_audiences }
+   * ```
+   *
+   * `any_of` and object-subset `contains` are supported by @adcp/sdk
+   * releases after 17.0.0-beta.25. A runner without `any_of` support reads a
+   * predicate that has no `path`: with raw capabilities available it throws
+   * while resolving the missing path, and without them it treats the gate as
+   * satisfied. A runner without object-subset `contains` matches object
+   * values by exact structural equality, so an entry with extra keys does
+   * not match. Bundles that use either form need a runner that supports it.
    *
    * When `raw_capabilities` is not available and the discovered profile does
    * not expose `get_adcp_capabilities`, `equals` gates are treated as
@@ -233,7 +278,9 @@ export interface Storyboard {
    * predicate skips the entire storyboard before runtime or tool gates.
    *
    * The loader rejects empty and single-entry arrays; use
-   * `requires_capability` for a singular gate.
+   * `requires_capability` for a singular gate. An entry MAY be an `any_of`
+   * group (see `requires_capability`), which passes when one of its entries
+   * passes.
    *
    * Compound gates fail closed when the raw capabilities payload is
    * unavailable: advertised or auto-registered tools are not capability
@@ -598,7 +645,7 @@ export interface StoryboardPhase {
    * Predicate evaluated against the agent's declared capabilities before this
    * phase is set up or any of its steps are dispatched. Uses the same matcher
    * dialect as `Storyboard.requires_capability` (`equals`, `present`,
-   * `contains`). When false, every step in the phase is emitted as a
+   * `contains`, `not_contains`, `any_of`). When false, every step in the phase is emitted as a
    * `not_applicable` skip and the runner continues with later phases.
    */
   requires_capability?: RequiresCapabilityPredicate;
@@ -3655,6 +3702,94 @@ export interface StoryboardResult {
    * Spec: adcp-client#1367.
    */
   discovery_failures?: Array<{ agent_key: string; url: string; error: string }>;
+  /**
+   * Why `overall_passed` is false (adcp#8576). Present only on a failing
+   * result; absent on a passing one. A storyboard can fail without any
+   * visible failed step: a storyboard-scoped invariant broke, a required
+   * phase never executed (`missing_test_controller`, `prerequisite_failed`,
+   * a capability gate), controller seeding could not run, or the runner
+   * itself could not proceed. This code names the primary cause; the
+   * `verdict_contributing` rows name every cause the runner found.
+   *
+   * Explanatory only. It never changes `overall_passed`, the counts, or any
+   * track or bundle grade.
+   */
+  verdict_reason?: StoryboardVerdictReason;
+  /**
+   * One-line human-readable explanation of `verdict_reason`, bounded to 600
+   * characters. Runner-authored: it names failed steps without quoting their
+   * errors, but quotes skip details and assertion errors, which can echo
+   * observed values.
+   */
+  verdict_detail?: string;
+  /**
+   * The steps, assertions, phases and requirements behind the verdict, in
+   * the order the runner found them. Bounded; `verdict_detail` says when
+   * rows were omitted.
+   */
+  verdict_contributing?: StoryboardVerdictContributor[];
+}
+
+/**
+ * Primary cause of a failing storyboard verdict. See
+ * `StoryboardResult.verdict_reason`.
+ *
+ * - `step_failed` — a step failed and its failure is visible on the step. Usually
+ *   a counted failure; on a storyboard with no required phase it can be a
+ *   failed optional step that `failed_count` does not include.
+ * - `assertion_failed` — a storyboard-scoped invariant failed, or an
+ *   assertion failed on a step that was skipped, so no counted step carries it.
+ * - `controller_prerequisite_unmet` — the storyboard needed
+ *   `comply_test_controller` or controller seeding, and it was absent or
+ *   seeding failed, so required steps never ran.
+ * - `required_phase_not_executed` — a required phase did not pass because its
+ *   steps were skipped (`prerequisite_failed`, `missing_tool`,
+ *   `unsatisfied_contract`, `requirement_unmet`, a capability gate, …).
+ * - `no_executed_steps` — no required phase failed, but none executed a
+ *   passing step either, so the run proves nothing and cannot pass.
+ * - `fixture_error` — fixture resolution or preparation failed before the
+ *   seller behavior under test could run.
+ * - `coverage_unverified` — the storyboard exists to verify coverage (request
+ *   signing) and no probe reached the agent.
+ * - `runner_error` — the runner or host could not proceed (for example a
+ *   prepared-fixture authorization refusal). Not an agent failure.
+ * - `unexplained` — the runner could not attribute the verdict. Report it as
+ *   a runner bug.
+ */
+export type StoryboardVerdictReason =
+  | 'step_failed'
+  | 'assertion_failed'
+  | 'controller_prerequisite_unmet'
+  | 'required_phase_not_executed'
+  | 'no_executed_steps'
+  | 'fixture_error'
+  | 'coverage_unverified'
+  | 'runner_error'
+  | 'unexplained';
+
+/** One cause behind a failing storyboard verdict. */
+export interface StoryboardVerdictContributor {
+  /** What contributed: a step, an assertion or invariant, a phase, or an unmet requirement. */
+  kind: 'step' | 'assertion' | 'phase' | 'requirement';
+  /** Step id, assertion id, phase id, or requirement name. */
+  id: string;
+  /** The cause this row supports. */
+  reason: StoryboardVerdictReason;
+  /** `failed` for an executed failure, `skipped` for an unexecuted step, `not_passed` for a phase. */
+  status: 'failed' | 'skipped' | 'not_passed';
+  phase_id?: string;
+  /** 1-based pass index in multi-pass mode. */
+  pass_index?: number;
+  /** Detailed runner skip reason, when `status === 'skipped'`. */
+  skip_reason?: string;
+  /** Unmet requirement named by the skip, when any. */
+  requirement?: string;
+  /**
+   * Bounded message: the skip detail, assertion error, or step error. A
+   * failed step's error can quote the agent's response, so treat it as
+   * untrusted text when templating it into prompts or HTML.
+   */
+  message?: string;
 }
 
 export interface StrictValidationSummary {
