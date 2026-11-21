@@ -1,5 +1,21 @@
 # Changelog
 
+## 17.0.0-beta.32
+
+### Patch Changes
+
+- c9e8f17: Keep compiled validators and parsed inputs across schema-root re-entries and, opt-in, across processes. With `ADCP_VALIDATOR_CACHE_DIR` unset, empty or relative, only the in-process re-entry change applies and no cache code loads. Validation results, diagnostics, tool lists and loader epochs are the same with the cache off, cold and warm.
+  - Re-entering an unchanged schema root (`withExternalSchemaRoot`, `registerExternalSchemaRoot`) keeps the loader states and generation when every document has the same path, inode, size, mtime and ctime, all older than 3 s. A rewritten, freshly written or other root, or an unregister, starts a fresh epoch as before.
+  - With `ADCP_VALIDATOR_CACHE_DIR` set to an absolute directory, the first process stores each compiled bundled validator as Ajv standalone code, keyed by a digest of the prepared schema, the loader code, the Ajv and ajv-formats versions and the Ajv options; later processes load it instead of compiling. `ADCP_VALIDATOR_CACHE_MAX_MB` caps the directory (default 512). The directory and entries must belong to the current user with no group or other access; entries are written atomically, checked against the SHA-256 in their header, and any doubt falls back to the live compile.
+  - The same directory holds schema-root document identities (a record is used only while the document's stat key is unchanged), parsed storyboard YAML (keyed by the document text, the parser module's code, the `yaml` version and the SDK version; a document with YAML errors or warnings is never stored), and recorded tools/list compiles of modular request schemas (keyed by the root's content, the loader code, the Ajv and engine versions, the bundle key and the tool; only successful compiles are recorded).
+
+- c9e8f17: Do schema and compliance work once, or only when it is needed. Results, thrown errors and their messages are unchanged.
+  - External schema-root checks (`registerExternalSchemaRoot`, `withExternalSchemaRoot`, `withServedReleaseSchemaRoots`) read each document once per call, and reuse what they read from an unchanged on-disk document (same inode, size, mtime and ctime, last changed more than 3 s ago) across calls and across the ESM and CommonJS builds.
+  - The diagnostic hook that runs on every validator function Ajv generates compares character codes instead of matching regular expressions over the source; it takes about a quarter of the time.
+  - The AdCP 3.3 draft identity schemas are registered on the first identity validation instead of at import, so importing `@adcp/sdk`, `@adcp/sdk/server` or `@adcp/sdk/testing` no longer builds an Ajv instance for them.
+  - `createAdcpServer` reads no schema document: it no longer computes an Error-arm inventory it never used. `getErrorArmDescriptor(tool, version)` reads one tool's response schema, once per bundle key, root and generation, and two-layer error emission calls it only when a response carries an error. `getToolsWithErrorArm` stays.
+  - The storyboard index, capability resolution, `resolveBundleOrStoryboard` and `loadSpecialismDetail` share one parse per compliance bundle and one classification per universal file per compliance scope, and return detached copies. Resolution and the single-bundle paths now report the resolved compliance directory for a relative root, as the index already did.
+
 ## 17.0.0-beta.31
 
 ### Patch Changes
