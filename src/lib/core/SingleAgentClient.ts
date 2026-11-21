@@ -421,7 +421,7 @@ import {
   structuredCloneWithLegacyCreativeMetadata,
 } from '../v2/projection/legacy-metadata';
 import { isProjectionProductInput, type V1FormatId, type V1Product } from '../v2/projection/types';
-import { canonicalize as canonicalizeJson } from '../utils/jcs';
+import { canonicalize as canonicalizeJson, canonicalJsonSha256 } from '../utils/jcs';
 
 type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
 type CapabilityProbeRequestOptions = Pick<
@@ -1191,6 +1191,81 @@ export type CanonicalReadTaskOptions = TaskOptions & {
 export type SyncCreativesTaskOptions = CreativeDeliveryTaskOptions & {
   creativeFormatProjection?: SyncCreativeFormatProjection;
 };
+
+export interface SyncAccountsDispatchIdentity {
+  readonly hash_algorithm: 'sync_accounts_arguments_jcs_sha256_v1';
+  readonly request_sha256: string;
+}
+
+export type SyncAccountsTaskOptions = TaskOptions & {
+  /**
+   * Receives the lowercase RFC 8785 SHA-256 digest of the complete prepared sync_accounts tool arguments.
+   * The arguments are frozen after version, context, and webhook fields are applied, then sent unchanged
+   * through MCP or as A2A data.input. The native A2A envelope and later input-required replies are outside
+   * this digest. An explicit public idempotency_key is required; rejection prevents the sync_accounts send.
+   * Persist or compare the digest before resolving. Treat it as sensitive when arguments contain credentials.
+   * Webhook-generated operation IDs and URLs can change the digest across same-key retries; callers must
+   * keep the complete preparation stable or refuse the retry. Registry-owned dispatch does not support this hook.
+   */
+  beforePreparedDispatch?: (identity: SyncAccountsDispatchIdentity) => Promise<void>;
+};
+
+function freezePreparedArguments(
+  value: unknown,
+  visited = new WeakSet<object>(),
+  active = new WeakSet<object>()
+): void {
+  if (typeof value === 'string') {
+    for (let index = 0; index < value.length; index++) {
+      const code = value.charCodeAt(index);
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const next = value.charCodeAt(++index);
+        if (!(next >= 0xdc00 && next <= 0xdfff)) throw new TypeError('Prepared arguments contain a lone surrogate');
+      } else if (code >= 0xdc00 && code <= 0xdfff) {
+        throw new TypeError('Prepared arguments contain a lone surrogate');
+      }
+    }
+    return;
+  }
+  if (value === null || typeof value === 'boolean') return;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))
+      throw new TypeError('Prepared arguments contain a number outside the I-JSON range');
+    return;
+  }
+  if (typeof value !== 'object') throw new TypeError('Prepared arguments contain a non-JSON value');
+  if (active.has(value)) throw new TypeError('Prepared arguments contain a cycle');
+  if (visited.has(value)) return;
+  if (Array.isArray(value)) {
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== value.length + 1) throw new TypeError('Prepared arguments contain a sparse or extended array');
+    active.add(value);
+    for (let index = 0; index < value.length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !('value' in descriptor)) throw new TypeError('Prepared arguments contain a non-JSON array');
+      freezePreparedArguments(descriptor.value, visited, active);
+    }
+    active.delete(value);
+    visited.add(value);
+    Object.freeze(value);
+    return;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null)
+    throw new TypeError('Prepared arguments contain a non-JSON object');
+  active.add(value);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string') throw new TypeError('Prepared arguments contain a symbol key');
+    freezePreparedArguments(key, visited, active);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !('value' in descriptor))
+      throw new TypeError('Prepared arguments contain a non-JSON property');
+    freezePreparedArguments(descriptor.value, visited, active);
+  }
+  active.delete(value);
+  visited.add(value);
+  Object.freeze(value);
+}
 
 function snapshotTaskOptions<T extends TaskOptions | undefined>(options: T): T {
   if (!options) return options;
@@ -5854,7 +5929,8 @@ export class SingleAgentClient {
     transformCompletedResponse?: (data: T) => T,
     legacyFormatConverter?: LegacyFormatConverter,
     canonicalRequest?: unknown,
-    projectionCatalogs?: readonly ProjectionCatalogSnapshot[]
+    projectionCatalogs?: readonly ProjectionCatalogSnapshot[],
+    beforeDispatch?: UnprojectedPreDispatchHook<T>
   ): Promise<TaskResult<T>> {
     const projectionDrifts = getCreativeDeliveryDiagnostics(params);
     const requestParamsSnapshot = structuredClone(params);
@@ -5872,7 +5948,8 @@ export class SingleAgentClient {
         legacyFormatConverter,
         canonicalRequestSnapshot,
         deferredProjectionCatalogs,
-        projectionDrifts
+        projectionDrifts,
+        beforeDispatch
       )
     );
   }
@@ -5887,7 +5964,8 @@ export class SingleAgentClient {
     legacyFormatConverter?: LegacyFormatConverter,
     canonicalRequest?: unknown,
     projectionCatalogs?: readonly ProjectionCatalogSnapshot[],
-    projectionDrifts: ReturnType<typeof getCreativeDeliveryDiagnostics> = []
+    projectionDrifts: ReturnType<typeof getCreativeDeliveryDiagnostics> = [],
+    beforeDispatch?: UnprojectedPreDispatchHook<T>
   ): Promise<TaskResult<T>> {
     throwIfAborted(options?.signal);
     const canonicalCreativeInvocation =
@@ -6089,7 +6167,7 @@ export class SingleAgentClient {
           effectiveOptions,
           serverVersion,
           capabilityDiscoveryContext.capabilities,
-          undefined,
+          beforeDispatch,
           deferredClientContext
         )
     );
@@ -10550,10 +10628,12 @@ export class SingleAgentClient {
   async syncAccounts(
     params: MutatingRequestInput<SyncAccountsRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions,
+    options?: SyncAccountsTaskOptions,
     /** @internal Registry-owned final dispatch boundary. */
     dispatch?: import('./buyer-account-registry').BuyerAccountProvisioningDispatch
   ): Promise<TaskResult<SyncAccountsResponse>> {
+    if (dispatch && options?.beforePreparedDispatch)
+      throw new ConfigurationError('beforePreparedDispatch is unavailable for account registry dispatch.');
     if (dispatch)
       return this.executeTaskUnprojected<SyncAccountsResponse>(
         'sync_accounts',
@@ -10571,13 +10651,44 @@ export class SingleAgentClient {
           { terminalSettlement: 'executor' as const }
         )
       );
-    return this.executeAndHandle<SyncAccountsResponse>(
-      'sync_accounts',
-      'onSyncAccountsStatusChange',
-      params,
-      inputHandler,
-      options
-    );
+    const beforePreparedDispatch = options?.beforePreparedDispatch;
+    const originalIdempotencyKey = params?.idempotency_key;
+    if (beforePreparedDispatch && (typeof originalIdempotencyKey !== 'string' || originalIdempotencyKey.length === 0)) {
+      throw new ConfigurationError('A prepared sync_accounts digest requires an explicit idempotency_key.');
+    }
+    try {
+      return await this.executeAndHandle<SyncAccountsResponse>(
+        'sync_accounts',
+        'onSyncAccountsStatusChange',
+        params,
+        inputHandler,
+        options,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        beforePreparedDispatch
+          ? Object.assign(
+              async (args: Record<string, unknown>) => {
+                freezePreparedArguments(args);
+                if (args.idempotency_key !== originalIdempotencyKey)
+                  throw new ConfigurationError('The prepared sync_accounts idempotency_key changed before dispatch.');
+                await beforePreparedDispatch(
+                  Object.freeze({
+                    hash_algorithm: 'sync_accounts_arguments_jcs_sha256_v1',
+                    request_sha256: canonicalJsonSha256(args),
+                  })
+                );
+                return { action: 'dispatch_ready' as const };
+              },
+              { terminalSettlement: 'executor' as const }
+            )
+          : undefined
+      );
+    } catch (error) {
+      if (error instanceof BeforeProtocolDispatchHookError) throw error.original;
+      throw error;
+    }
   }
 
   /**

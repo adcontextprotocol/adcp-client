@@ -307,6 +307,8 @@ export type {
   SingleAgentClientConfig,
   StatusHandlerErrorContext,
   SyncCreativesTaskOptions,
+  SyncAccountsDispatchIdentity,
+  SyncAccountsTaskOptions,
   VerifyAndParseWebhookOptions,
   WebhookHandlerAdapter,
   WebhookHandlerRequest,
