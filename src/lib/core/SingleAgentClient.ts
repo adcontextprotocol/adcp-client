@@ -1202,7 +1202,9 @@ export type SyncAccountsTaskOptions = TaskOptions & {
    * Receives the lowercase RFC 8785 SHA-256 digest of the complete prepared sync_accounts tool arguments.
    * The arguments are frozen after version, context, and webhook fields are applied, then sent unchanged
    * through MCP or as A2A data.input. The native A2A envelope and later input-required replies are outside
-   * this digest. An explicit public idempotency_key is required; rejection prevents the sync_accounts send.
+   * this digest. An explicit public idempotency_key is required. Rejection prevents the sync_accounts
+   * mutation tool send; capability/version discovery, agent-card/tools preflight, and callback registration
+   * may already have occurred.
    * Persist or compare the digest before resolving. Treat it as sensitive when arguments contain credentials.
    * Webhook-generated operation IDs and URLs can change the digest across same-key retries; callers must
    * keep the complete preparation stable or refuse the retry. Registry-owned dispatch does not support this hook.

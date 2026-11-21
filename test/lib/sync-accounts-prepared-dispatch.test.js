@@ -109,6 +109,50 @@ test('syncAccounts does not send when durable digest storage rejects', async () 
   }
 });
 
+test('syncAccounts keeps the original digest callback while discovery is pending', async () => {
+  const { agent, calls, close } = await seller();
+  const client = agent.client;
+  const originalDiscovery = client.ensureEndpointDiscovered;
+  const saveError = new Error('durable save failed');
+  let releaseDiscovery;
+  let discoveryStarted;
+  const discoveryStartedPromise = new Promise(resolve => {
+    discoveryStarted = resolve;
+  });
+  const discoveryGate = new Promise(resolve => {
+    releaseDiscovery = resolve;
+  });
+  let originalCalls = 0;
+  let replacementCalls = 0;
+  client.ensureEndpointDiscovered = async function (...args) {
+    discoveryStarted();
+    await discoveryGate;
+    return originalDiscovery.apply(this, args);
+  };
+  try {
+    const options = {
+      beforePreparedDispatch: async () => {
+        originalCalls++;
+        throw saveError;
+      },
+    };
+    const pending = client.syncAccounts({ idempotency_key: 'original-key', accounts: [] }, undefined, options);
+    await discoveryStartedPromise;
+    options.beforePreparedDispatch = async () => {
+      replacementCalls++;
+    };
+    releaseDiscovery();
+    await assert.rejects(pending, error => error === saveError);
+    assert.equal(originalCalls, 1);
+    assert.equal(replacementCalls, 0);
+    assert.equal(calls.length, 0);
+  } finally {
+    releaseDiscovery();
+    client.ensureEndpointDiscovered = originalDiscovery;
+    await close();
+  }
+});
+
 test('registry dispatch refuses a prepared digest callback instead of silently skipping it', async () => {
   const { agent, calls, close } = await seller();
   let registryCallbackCalled = false;
