@@ -3350,6 +3350,8 @@ const REFINE_PROPOSALS_INPUT_SHAPE = {
   push_notification_config: SHALLOW_HINT_FIELD_SCHEMA,
   adcp_version: SHALLOW_HINT_FIELD_SCHEMA,
   adcp_major_version: SHALLOW_HINT_FIELD_SCHEMA,
+  // Experimental, AdCP 3.3 only; the request validator refuses it on 3.2.
+  include_collections: SHALLOW_HINT_FIELD_SCHEMA,
   ext: SHALLOW_HINT_FIELD_SCHEMA,
 } as unknown as ZodRawShapeCompat;
 function getToolInputShapes(): ToolInputShapeMap {
@@ -9884,6 +9886,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ...proposalRefinementCapabilities,
       supported_dimensions: [...proposalRefinementCapabilities.supported_dimensions],
     };
+    // The 3.3 capabilities schema requires the feature id alongside the
+    // declaration. Release projection drops both for older callers.
+    if (proposalRefinementCapabilities.hold_extension === true) {
+      const features = new Set<string>(capabilitiesData.experimental_features ?? []);
+      features.add('media_buy.hold_extension');
+      capabilitiesData.experimental_features = [...features] as typeof capabilitiesData.experimental_features;
+    }
   }
 
   const compactLifecycleTools = COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS.filter(tool => registeredToolNames.has(tool));

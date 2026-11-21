@@ -64,6 +64,9 @@ export function defineProposalRefinementCapabilities(
   if (capabilities.max_alternatives !== undefined && !dimensions?.includes('alternatives')) {
     throw new TypeError('proposal_refinement.max_alternatives requires alternatives in supported_dimensions');
   }
+  if (capabilities.hold_extension !== undefined && typeof capabilities.hold_extension !== 'boolean') {
+    throw new TypeError('proposal_refinement.hold_extension must be a boolean');
+  }
   return Object.freeze({
     ...capabilities,
     ...(dimensions && { supported_dimensions: Object.freeze([...dimensions]) }),
@@ -177,6 +180,12 @@ export type ProposalRefinementHandler<TProduct = Record<string, unknown>, TConte
  * Build a seller handler that preflights the entire batch, evaluates without
  * writes, verifies the complete response, and only then stages one atomic
  * transaction. A preflight/evaluation/verification failure performs no write.
+ *
+ * The engine does not implement the experimental AdCP 3.3 `extend_hold`
+ * action yet (adcontextprotocol/adcp-client#3600): it refuses
+ * `hold_extension: true`, so an `extend_hold` request fails with
+ * VALIDATION_ERROR as the spec requires of a seller that does not declare it.
+ * Serve hold extension from a custom `refine_proposals` handler.
  */
 export function createProposalRefinementHandler<
   TProposal extends CanonicalProposal = CanonicalProposal,
@@ -184,6 +193,11 @@ export function createProposalRefinementHandler<
   TContext = unknown,
 >(options: ProposalRefinementHandlerOptions<TProposal, TProduct, TContext>) {
   const capabilities = defineProposalRefinementCapabilities(options.capabilities);
+  if (capabilities.hold_extension === true) {
+    throw new TypeError(
+      'createProposalRefinementHandler does not support extend_hold yet; serve proposal_refinement.hold_extension from a custom refine_proposals handler'
+    );
+  }
   return async (
     request: RefineProposalsRequest,
     context: TContext

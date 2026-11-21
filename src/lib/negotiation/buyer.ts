@@ -50,6 +50,7 @@ export function extractProposalRefinementSupport(source: unknown): ProposalRefin
   const capabilities = Object.freeze({
     supported_dimensions: Object.freeze([...raw.supported_dimensions]),
     ...(raw.max_alternatives !== undefined && { max_alternatives: raw.max_alternatives }),
+    ...(raw.hold_extension !== undefined && { hold_extension: raw.hold_extension }),
   });
   return Object.freeze({ supported, capabilities });
 }
@@ -77,7 +78,9 @@ export class RefineProposalsTaskError extends Error {
 }
 
 export function refinementDimensions(refinement: ProposalRefinement): ProposalRefinementDimension[] {
-  if (refinement.action === 'finalize') return [];
+  // Callers also run this on unvalidated entries, so only the two term-free
+  // actions short-circuit; anything else is treated as a revision.
+  if (refinement.action === 'finalize' || refinement.action === 'extend_hold') return [];
   const dimensions: ProposalRefinementDimension[] = [];
   if (refinement.constraints) {
     if (refinement.constraints.total_budget) dimensions.push('total_budget');
@@ -121,6 +124,13 @@ export function validateRefineProposalsRequest(
   if (request.push_notification_config !== undefined && !isRecord(request.push_notification_config)) {
     fail('push_notification_config must be an object', 'push_notification_config');
   }
+  const is33 = String(request.adcp_version).startsWith('3.3');
+  if (request.include_collections !== undefined) {
+    if (!is33) fail('include_collections requires AdCP 3.3', 'include_collections');
+    if (typeof request.include_collections !== 'boolean') {
+      fail('include_collections must be a boolean', 'include_collections');
+    }
+  }
   if (!isValidIdempotencyKey(request.idempotency_key)) {
     throw new ProposalRefinementValidationError(
       'idempotency_key must be 16-255 characters from A-Z, a-z, 0-9, _, ., :, or -',
@@ -139,6 +149,7 @@ export function validateRefineProposalsRequest(
 
   const ids = new Set<string>();
   const hasFinalize = request.refinements.some(entry => isRecord(entry) && entry.action === 'finalize');
+  const hasExtendHold = request.refinements.some(entry => isRecord(entry) && entry.action === 'extend_hold');
   for (const [index, refinement] of request.refinements.entries()) {
     const base = `refinements[${index}]`;
     if (!isRecord(refinement)) fail('refinement must be an object', base);
@@ -150,11 +161,16 @@ export function validateRefineProposalsRequest(
     }
     ids.add(refinement.proposal_id);
 
-    if (refinement.action !== 'revise' && refinement.action !== 'finalize') {
-      fail('action must be revise or finalize', `${base}.action`);
+    if (refinement.action !== 'revise' && refinement.action !== 'finalize' && refinement.action !== 'extend_hold') {
+      fail('action must be revise, finalize, or extend_hold', `${base}.action`);
+    }
+    if (refinement.action === 'extend_hold' && !is33) {
+      fail('extend_hold requires AdCP 3.3', `${base}.action`);
     }
     if (refinement.action === 'finalize') {
       assertAllowedKeys(refinement, FINALIZE_KEYS, base);
+    } else if (refinement.action === 'extend_hold') {
+      assertAllowedKeys(refinement, EXTEND_HOLD_KEYS, base);
     } else {
       assertAllowedKeys(refinement, REVISE_KEYS, base);
     }
@@ -164,6 +180,17 @@ export function validateRefineProposalsRequest(
         'a batch containing finalize may contain only finalize entries',
         `${base}.action`
       );
+    }
+    if (hasExtendHold && refinement.action !== 'extend_hold') {
+      throw new ProposalRefinementValidationError(
+        'a batch containing extend_hold may contain only extend_hold entries',
+        `${base}.action`
+      );
+    }
+    // The capability is the agent-level gate for the action. A seller that
+    // does not declare it fails the action with VALIDATION_ERROR.
+    if (refinement.action === 'extend_hold' && capabilities !== undefined && capabilities.hold_extension !== true) {
+      fail('seller does not declare proposal_refinement.hold_extension', `${base}.action`);
     }
     if (refinement.action === 'revise') {
       if (
@@ -206,7 +233,7 @@ export function validateRefineProposalsRequest(
       }
       validateConstraints(refinement as Extract<ProposalRefinement, { action: 'revise' }>, base);
       if (refinement.installment_changes !== undefined) {
-        if (!String(request.adcp_version).startsWith('3.3')) {
+        if (!is33) {
           fail('installment_changes requires AdCP 3.3', `${base}.installment_changes`);
         }
         validateInstallmentChanges(refinement.installment_changes, `${base}.installment_changes`);
@@ -449,8 +476,12 @@ const REQUEST_KEYS = withExtensionPoint([
   'push_notification_config',
   'idempotency_key',
   'refinements',
+  // Experimental, AdCP 3.3 only; the validator refuses it on 3.2.
+  'include_collections',
 ]);
 const FINALIZE_KEYS = withExtensionPoint(['proposal_id', 'action']);
+// Experimental, AdCP 3.3 only. Like finalize, extend_hold changes no terms.
+const EXTEND_HOLD_KEYS = withExtensionPoint(['proposal_id', 'action']);
 const REVISE_KEYS = withExtensionPoint([
   'proposal_id',
   'action',
@@ -522,6 +553,9 @@ function validateCapabilities(capabilities: ProposalRefinementCapabilities | und
   }
   if (capabilities.max_alternatives !== undefined && !dimensions.includes('alternatives')) {
     fail('max_alternatives requires alternatives in supported_dimensions', 'capabilities.max_alternatives');
+  }
+  if (capabilities.hold_extension !== undefined && typeof capabilities.hold_extension !== 'boolean') {
+    fail('hold_extension must be a boolean', 'capabilities.hold_extension');
   }
 }
 

@@ -363,8 +363,12 @@ export function isStrictDateTime(value: unknown): value is string {
   );
 }
 
+/** The request fields response verification reads. */
+export type RefineProposalsVerificationRequest = Pick<RefineProposalsRequest, 'refinements'> &
+  Partial<Pick<RefineProposalsRequest, 'adcp_version' | 'include_collections'>>;
+
 export function verifyRefineProposalsResponse(
-  request: Pick<RefineProposalsRequest, 'refinements'> & Partial<Pick<RefineProposalsRequest, 'adcp_version'>>,
+  request: RefineProposalsVerificationRequest,
   response: unknown,
   options: { now?: Date; adcpVersion?: string; servedAdcpVersion?: string } = {}
 ): ProposalVerificationResult {
@@ -385,6 +389,9 @@ export function verifyRefineProposalsResponse(
   if (results.length !== request.refinements.length) {
     push(issues, 'result_count', 'results', 'response must contain exactly one result per refinement');
   }
+  if (response.collections !== undefined && request.include_collections !== true) {
+    push(issues, 'shape', 'collections', 'collections may be returned only when the request sets include_collections');
+  }
 
   const sourceIds = new Set(request.refinements.map(refinement => refinement.proposal_id));
   const successorIds = new Set<string>();
@@ -396,8 +403,14 @@ export function verifyRefineProposalsResponse(
     if (result.source_proposal_id !== refinement.proposal_id) {
       push(issues, 'result_order', `${base}.source_proposal_id`, 'results must preserve source request order');
     }
-    if (refinement.action === 'finalize' && result.outcome !== 'finalized' && result.outcome !== 'unable') {
-      push(issues, 'outcome', `${base}.outcome`, 'finalize may return only finalized or unable');
+    // A successful extend_hold is reported as finalized: a new committed
+    // successor whose parent is the extended source.
+    if (
+      (refinement.action === 'finalize' || refinement.action === 'extend_hold') &&
+      result.outcome !== 'finalized' &&
+      result.outcome !== 'unable'
+    ) {
+      push(issues, 'outcome', `${base}.outcome`, `${refinement.action} may return only finalized or unable`);
     }
     if (refinement.action === 'revise' && result.outcome === 'finalized') {
       push(issues, 'outcome', `${base}.outcome`, 'revise must not return finalized');
@@ -411,18 +424,75 @@ export function verifyRefineProposalsResponse(
 
   const outcomes = new Set(results.map(result => result.outcome));
   if (outcomes.has('finalized') && outcomes.size !== 1) {
-    push(issues, 'outcome', 'results', 'a successful finalize batch must finalize every entry atomically');
+    push(
+      issues,
+      'outcome',
+      'results',
+      'a successful finalize or extend_hold batch must succeed for every entry atomically'
+    );
   }
   return { ok: issues.length === 0, issues };
 }
 
 export function assertRefineProposalsResponse(
-  request: Pick<RefineProposalsRequest, 'refinements'> & Partial<Pick<RefineProposalsRequest, 'adcp_version'>>,
+  request: RefineProposalsVerificationRequest,
   response: unknown,
   options: { now?: Date; adcpVersion?: string; servedAdcpVersion?: string } = {}
 ): asserts response is RefineProposalsCompletedResponse {
   const result = verifyRefineProposalsResponse(request, response, options);
   if (!result.ok) throw new ProposalResponseVerificationError(result.issues);
+}
+
+/**
+ * Check an `extend_hold` successor against the committed source it extends
+ * (experimental, AdCP 3.3 `media_buy.hold_extension`). Response verification
+ * sees only the source's ID, so a caller holding the source proposal runs this
+ * afterwards. The successor must be committed, name the source as its parent,
+ * keep its `terms_digest`, `hold_policy` and `hold_placed_at`, and carry a
+ * later `expires_at`. Bounds against `hold_policy.max_total_duration` are
+ * duration arithmetic and are not checked here.
+ */
+export function verifyHoldExtension(
+  source: CanonicalProposal,
+  successor: CanonicalProposal
+): ProposalVerificationResult {
+  const issues: ProposalVerificationIssue[] = [];
+  if (source.proposal_status !== 'committed') {
+    push(issues, 'proposal_status', 'source.proposal_status', 'extend_hold must target a committed proposal');
+  }
+  if (successor.proposal_status !== 'committed') {
+    push(issues, 'proposal_status', 'proposal.proposal_status', 'an extended hold must be a committed proposal');
+  }
+  if (successor.proposal_id === source.proposal_id) {
+    push(issues, 'proposal_identity', 'proposal.proposal_id', 'an extended hold must be a new proposal');
+  }
+  if (successor.parent_proposal_id !== source.proposal_id) {
+    push(issues, 'lineage', 'proposal.parent_proposal_id', 'parent_proposal_id must equal the extended source');
+  }
+  if (successor.terms_digest !== source.terms_digest) {
+    push(issues, 'terms_digest', 'proposal.terms_digest', 'extend_hold must keep the source terms_digest');
+  }
+  if (successor.hold_placed_at !== source.hold_placed_at) {
+    push(issues, 'hold_extension', 'proposal.hold_placed_at', 'extend_hold must carry hold_placed_at forward');
+  }
+  if (!sameJson(successor.hold_policy, source.hold_policy)) {
+    push(issues, 'hold_extension', 'proposal.hold_policy', 'extend_hold must carry hold_policy forward');
+  }
+  const sourceExpiry = isStrictDateTime(source.expires_at) ? Date.parse(source.expires_at) : Number.NaN;
+  const successorExpiry = isStrictDateTime(successor.expires_at) ? Date.parse(successor.expires_at) : Number.NaN;
+  if (!Number.isFinite(successorExpiry) || (Number.isFinite(sourceExpiry) && successorExpiry <= sourceExpiry)) {
+    push(issues, 'hold_extension', 'proposal.expires_at', 'extend_hold must return a later expires_at');
+  }
+  return { ok: issues.length === 0, issues };
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  try {
+    return canonicalize(left) === canonicalize(right);
+  } catch {
+    return false;
+  }
 }
 
 /** Validate a completed or compact-submitted wire shape using the selected bundle.
@@ -531,7 +601,10 @@ function validateResponseShape(
     push(issues, 'shape', 'response', 'response must be an object');
     return false;
   }
-  let valid = allowedKeys(value, RESPONSE_KEYS, 'response', issues);
+  // The 3.3 response adds collections and expected_confirmation_at. A 3.2
+  // contract keeps rejecting them like any other undeclared key.
+  const selectedIs33 = toReleasePrecisionVersion(adcpVersion).startsWith('3.3');
+  let valid = allowedKeys(value, selectedIs33 ? RESPONSE_KEYS_33 : RESPONSE_KEYS, 'response', issues);
   if (value.adcp_version !== undefined && !isProposalRefinementVersion(value.adcp_version)) {
     valid = shape(
       issues,
@@ -596,10 +669,13 @@ function validateResponseShape(
 
   if (value.status === 'submitted') {
     if (!nonempty(value.task_id)) valid = shape(issues, 'task_id', 'submitted response requires a non-empty task_id');
-    for (const key of ['results', 'products'] as const) {
+    for (const key of ['results', 'products', 'collections'] as const) {
       if (Object.hasOwn(value, key)) {
         valid = shape(issues, key, `${key} is forbidden on a compact submitted response`);
       }
+    }
+    if (value.expected_confirmation_at !== undefined && !isStrictDateTime(value.expected_confirmation_at)) {
+      valid = shape(issues, 'expected_confirmation_at', 'expected_confirmation_at must be an RFC 3339 date-time');
     }
     return valid;
   }
@@ -607,8 +683,17 @@ function validateResponseShape(
   if (value.status !== undefined && value.status !== 'completed') {
     valid = shape(issues, 'status', 'response status must be completed or submitted');
   }
-  if (Object.hasOwn(value, 'task_id')) {
-    valid = shape(issues, 'task_id', 'task_id is forbidden on a completed response');
+  for (const key of ['task_id', 'expected_confirmation_at'] as const) {
+    if (Object.hasOwn(value, key)) {
+      valid = shape(issues, key, `${key} is forbidden on a completed response`);
+    }
+  }
+  if (
+    selectedIs33 &&
+    Object.hasOwn(value, 'collections') &&
+    !validateCollections(value.collections, issues, adcpVersion)
+  ) {
+    valid = false;
   }
   if (!Array.isArray(value.results) || value.results.length === 0) {
     valid = shape(issues, 'results', 'results must be a non-empty array');
@@ -639,6 +724,32 @@ function validateAdvisoryErrors(value: unknown, issues: ProposalVerificationIssu
     if (!isRecord(error) || !nonempty(error.code) || !nonempty(error.message)) {
       valid = shape(issues, `errors[${index}]`, 'error requires non-empty code and message');
     }
+  });
+  return valid;
+}
+
+/**
+ * Experimental AdCP 3.3 `collections` (`media_buy.collection_cards`). Each
+ * entry must satisfy `core/response-collection.json`. A duplicate key or an
+ * entry no returned product references is not a failure: the spec tells
+ * buyers to fall back to adagents.json or ignore it.
+ */
+function validateCollections(value: unknown, issues: ProposalVerificationIssue[], adcpVersion: string): boolean {
+  if (!Array.isArray(value) || value.length === 0) {
+    return shape(issues, 'collections', 'collections must be a non-empty array');
+  }
+  const { validator, error } = getRefinementSchemaValidator('core/response-collection.json', adcpVersion);
+  if (!validator) return shape(issues, 'collections', error!);
+  let valid = true;
+  value.forEach((collection, index) => {
+    if (validator(collection)) return;
+    const first = validator.errors?.[0];
+    const path = `collections[${index}]${first?.instancePath ? first.instancePath.replaceAll('/', '.') : ''}`;
+    valid = shape(
+      issues,
+      path,
+      `collection must satisfy the selected AdCP ${adcpVersion} schema${first?.message ? `: ${first.message}` : ''}`
+    );
   });
   return valid;
 }
@@ -1428,6 +1539,9 @@ const RESPONSE_KEYS = new Set([
   'ext',
   'replayed',
 ]);
+// AdCP 3.3 additions: experimental collections (media_buy.collection_cards)
+// on a completed response, expected_confirmation_at on a submitted one.
+const RESPONSE_KEYS_33 = new Set([...RESPONSE_KEYS, 'collections', 'expected_confirmation_at']);
 const RESULT_KEYS = new Set([
   'source_proposal_id',
   'outcome',

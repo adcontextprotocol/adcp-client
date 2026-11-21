@@ -351,6 +351,153 @@ describe('refine_proposals server integration', () => {
     assert.equal(seen.length, 2);
   });
 
+  describe('AdCP 3.3 extend_hold and include_collections (#3601)', () => {
+    const request33 = (key, refinements, extra = {}) => ({
+      adcp_version: '3.3-rc.0',
+      adcp_major_version: 3,
+      idempotency_key: key,
+      refinements,
+      ...extra,
+    });
+    const holdServer = (onCall, options = {}) =>
+      negotiationServer(onCall, {
+        adcpVersion: '3.3.0-rc.0',
+        serverCapabilities: { supported_versions: ['3.2', '3.3-rc.0'] },
+        capabilities: { supported_dimensions: [], hold_extension: true },
+        ...options,
+      });
+
+    test('passes extend_hold and include_collections through to the handler', async () => {
+      const seen = [];
+      const server = holdServer(undefined, {
+        refineProposals: async params => {
+          seen.push(params);
+          return {
+            status: 'completed',
+            results: [
+              {
+                source_proposal_id: 'held-1',
+                outcome: 'finalized',
+                proposal: committedSuccessor('held-2', 'held-1'),
+              },
+            ],
+            products: [],
+            collections: [{ publisher_domain: 'pub.example', collection_id: 'show-1', name: 'Morning Show' }],
+          };
+        },
+      });
+
+      const response = await call(
+        server,
+        'refine_proposals',
+        request33('extend-hold-key-0001', [{ proposal_id: 'held-1', action: 'extend_hold' }], {
+          include_collections: true,
+        }),
+        'buyer-a'
+      );
+      assert.equal(response.isError, undefined, JSON.stringify(response.structuredContent));
+      assert.equal(response.structuredContent.adcp_version, '3.3-rc.0');
+      assert.equal(response.structuredContent.results[0].outcome, 'finalized');
+      assert.equal(response.structuredContent.results[0].proposal.parent_proposal_id, 'held-1');
+      assert.equal(response.structuredContent.collections.length, 1);
+      assert.equal(seen.length, 1);
+      assert.deepEqual(seen[0].refinements, [{ proposal_id: 'held-1', action: 'extend_hold' }]);
+      assert.equal(seen[0].include_collections, true);
+    });
+
+    test('accepts expected_confirmation_at on a submitted extension', async () => {
+      const server = holdServer(undefined, {
+        refineProposals: async () => ({
+          status: 'submitted',
+          task_id: 'extension-task-1',
+          expected_confirmation_at: '2100-01-01T00:00:00Z',
+        }),
+      });
+      const response = await call(
+        server,
+        'refine_proposals',
+        request33('extend-hold-key-0002', [{ proposal_id: 'held-1', action: 'extend_hold' }]),
+        'buyer-a'
+      );
+      assert.equal(response.isError, undefined, JSON.stringify(response.structuredContent));
+      assert.equal(response.structuredContent.expected_confirmation_at, '2100-01-01T00:00:00Z');
+    });
+
+    test('refuses extend_hold before the handler when the seller does not declare hold_extension', async () => {
+      let calls = 0;
+      const server = holdServer(() => calls++, { capabilities: { supported_dimensions: [] } });
+      const response = await call(
+        server,
+        'refine_proposals',
+        request33('extend-hold-key-0003', [{ proposal_id: 'held-1', action: 'extend_hold' }]),
+        'buyer-a'
+      );
+      assert.equal(response.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      assert.equal(response.structuredContent.adcp_error.field, 'refinements[0].action');
+      assert.equal(calls, 0);
+    });
+
+    test('refuses malformed extensions and the 3.3 fields from an AdCP 3.2 caller', async () => {
+      let calls = 0;
+      const server = holdServer(() => calls++);
+      const cases = [
+        [
+          request33('extend-hold-key-0004', [{ proposal_id: 'held-1', action: 'extend_hold', ask: 'longer' }]),
+          /ask is not allowed/,
+        ],
+        [
+          request33('extend-hold-key-0005', [
+            { proposal_id: 'held-1', action: 'extend_hold' },
+            { proposal_id: 'draft-1', action: 'finalize' },
+          ]),
+          /only (finalize|extend_hold) entries/,
+        ],
+        [
+          {
+            ...request('extend-hold-key-0006', 'held-1'),
+            refinements: [{ proposal_id: 'held-1', action: 'extend_hold' }],
+          },
+          /extend_hold requires AdCP 3\.3/,
+        ],
+        [{ ...request('extend-hold-key-0007'), include_collections: true }, /include_collections requires AdCP 3\.3/],
+      ];
+      for (const [payload, pattern] of cases) {
+        const response = await call(server, 'refine_proposals', payload, 'buyer-a');
+        assert.equal(response.structuredContent.adcp_error?.code, 'VALIDATION_ERROR', JSON.stringify(payload));
+        assert.match(response.structuredContent.adcp_error.message, pattern);
+      }
+      assert.equal(calls, 0);
+    });
+
+    test('projects hold_extension and its feature id to AdCP 3.3 callers only', async () => {
+      const server = holdServer();
+      const modern = await call(server, 'get_adcp_capabilities', { adcp_version: '3.3-rc.0', adcp_major_version: 3 });
+      assert.equal(modern.isError, undefined, JSON.stringify(modern.structuredContent));
+      assert.equal(modern.structuredContent.adcp_version, '3.3-rc.0');
+      assert.deepEqual(modern.structuredContent.media_buy.proposal_refinement, {
+        supported_dimensions: [],
+        hold_extension: true,
+      });
+      // The 3.3 capabilities schema requires the feature id with the declaration.
+      assert.ok(modern.structuredContent.experimental_features.includes('media_buy.hold_extension'));
+
+      const stable = await call(server, 'get_adcp_capabilities', { adcp_version: '3.2', adcp_major_version: 3 });
+      assert.equal(stable.structuredContent.adcp_version, '3.2');
+      assert.deepEqual(stable.structuredContent.media_buy.proposal_refinement, { supported_dimensions: [] });
+      assert.ok(!(stable.structuredContent.experimental_features ?? []).includes('media_buy.hold_extension'));
+
+      const undeclared = await call(
+        holdServer(undefined, { capabilities: { supported_dimensions: [] } }),
+        'get_adcp_capabilities',
+        {
+          adcp_version: '3.3-rc.0',
+          adcp_major_version: 3,
+        }
+      );
+      assert.ok(!(undeclared.structuredContent.experimental_features ?? []).includes('media_buy.hold_extension'));
+    });
+  });
+
   test('accepts the compact submitted response arm in strict mode', async () => {
     const server = negotiationServer(undefined, {
       capabilities: { supported_dimensions: [] },
@@ -399,6 +546,16 @@ function sourceProposal() {
     name: 'Source',
     commercial_terms,
     terms_digest: proposalTermsDigest(commercial_terms),
+  };
+}
+
+function committedSuccessor(proposal_id, parent_proposal_id) {
+  return {
+    ...sourceProposal(),
+    proposal_id,
+    parent_proposal_id,
+    proposal_status: 'committed',
+    expires_at: '2100-01-01T00:00:00Z',
   };
 }
 
