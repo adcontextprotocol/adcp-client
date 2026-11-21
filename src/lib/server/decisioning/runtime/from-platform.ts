@@ -271,7 +271,7 @@ import {
 } from '../../../v2/projection/types';
 import { legacyFormatRefsForDeclaration } from '../../../v2/projection/legacy-metadata';
 import { canonicalizeAgentUrl } from '../../../discovery/resolve-agent-properties';
-import { ADCP_VERSION } from '../../../version';
+import { ADCP_VERSION, LIBRARY_VERSION } from '../../../version';
 
 function supportsCanonicalCreativeCapability(version: unknown): boolean {
   if (typeof version !== 'string') return false;
@@ -995,7 +995,7 @@ function asCanonicalProductResponse<T extends { products?: unknown[] }>(
   legacyFormatConverter: LegacyFormatConverter | undefined
 ): T {
   assertSafeGetProductsResponse(response);
-  validateDualProductFormatDeclarations(response, legacyFormatConverter);
+  response = normalizeDualProductFormatDeclarations(response, legacyFormatConverter);
   const projected = toCanonicalOnlyResponse(response as T & { products?: V1Product[] }, {
     legacyFormatConverter,
     _inferDualEmissionLegacyRefs: false,
@@ -1011,7 +1011,25 @@ function asCanonicalProductResponse<T extends { products?: unknown[] }>(
       suggestion: 'Declare canonical format_options or configure legacyCreativeFormatConverter for the legacy format.',
     });
   }
-  const canonicalResponse = asCanonicalServerResponse(projected.response) as T;
+  let canonicalResponse = asCanonicalServerResponse(projected.response) as T;
+  const projectedErrors = (projected.response as { errors?: unknown }).errors;
+  if (Array.isArray(projectedErrors)) {
+    const divergenceErrors = projectedErrors.filter(error => error?.code === 'FORMAT_DECLARATION_DIVERGENT');
+    if (divergenceErrors.length > 0) {
+      // The advisory contract includes legacy refs as evidence, outside creative routing.
+      const canonicalErrors = (canonicalResponse as { errors?: unknown }).errors;
+      canonicalResponse = {
+        ...canonicalResponse,
+        errors: Array.isArray(canonicalErrors)
+          ? canonicalErrors.map(error => {
+              if (error?.code !== 'FORMAT_DECLARATION_DIVERGENT') return error;
+              const original = divergenceErrors.find(entry => entry.field === error.field);
+              return cloneWireData(original ?? error);
+            })
+          : divergenceErrors.map(cloneWireData),
+      };
+    }
+  }
   const resolvedDropDiagnostics = projected.diagnostics.filter(
     (diagnostic): diagnostic is LegacyDropDiagnostic => diagnostic.code === 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED'
   );
@@ -1619,44 +1637,21 @@ function matchLegacyRefToDeclaration(
   return compare(false) === 'match' ? 'match' : 'unresolved';
 }
 
-function validateLegacyRefNarrowing(
-  declaration: Record<string, unknown>,
-  ref: import('../../../v2/projection/types').V1FormatId,
-  ownerId: string,
-  field: string,
+function normalizeDualProductFormatDeclarations<T>(
+  value: T,
   legacyFormatConverter: LegacyFormatConverter | undefined
-): void {
-  const match = matchLegacyRefToDeclaration(declaration, ref, ownerId, legacyFormatConverter);
-  if (match === 'kind_mismatch') {
-    throw new AdcpError('INVALID_REQUEST', {
-      message: 'get_products returned divergent legacy and canonical format declarations.',
-      field,
-      suggestion: 'Make format_ids and format_options.v1_format_ref describe the same canonical format.',
-    });
-  }
-  if (match === 'params_mismatch') {
-    throw new AdcpError('INVALID_REQUEST', {
-      message: 'get_products returned a canonical declaration that does not narrow its v1_format_ref.',
-      field: `${field}.params`,
-      suggestion: 'Align canonical format parameters with the referenced legacy format requirements.',
-    });
-  }
-}
-
-function validateDualProductFormatDeclarations(
-  value: unknown,
-  legacyFormatConverter: LegacyFormatConverter | undefined
-): void {
-  const seen = new WeakSet<object>();
-  const visit = (current: unknown, path: string): void => {
-    if (current === null || typeof current !== 'object' || seen.has(current)) return;
-    seen.add(current);
+): T {
+  const diagnostics: Record<string, unknown>[] = [];
+  const visit = (current: unknown, path: string, productId?: string): unknown => {
     if (Array.isArray(current)) {
       const entries = ownArrayDataValues(current);
-      for (let index = 0; index < entries.length; index++) visit(entries[index], `${path}[${index}]`);
-      return;
+      const mapped = entries.map((entry, index) => visit(entry, `${path}[${index}]`, productId));
+      return mapped.some((entry, index) => entry !== entries[index]) ? mapped : current;
     }
+    if (current === null || typeof current !== 'object') return current;
     const record = current as Record<string, unknown>;
+    let normalized = record;
+    const enclosingProductId = typeof record.product_id === 'string' ? record.product_id : productId;
     const formatOptions = Array.isArray(record.format_options) ? record.format_options : undefined;
     const ownerId =
       typeof record.product_id === 'string'
@@ -1665,78 +1660,113 @@ function validateDualProductFormatDeclarations(
           ? record.placement_id
           : undefined;
     if (formatOptions && ownerId !== undefined) {
-      const declarationRefs: import('../../../v2/projection/types').V1FormatId[] = [];
+      const reasons = new Set<string>();
+      const declarationRefs: V1FormatId[] = [];
       const declarations = ownArrayDataValues(formatOptions);
-      for (let index = 0; index < declarations.length; index++) {
-        const value = declarations[index];
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+      const normalizedDeclarations = declarations.map((value, index) => {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
         const declaration = value as Record<string, unknown>;
-        const refs = ownArrayDataValues(
-          legacyFormatRefsForDeclaration(declaration)
-        ) as import('../../../v2/projection/types').V1FormatId[];
-        const field = `${path}.format_options[${index}]`;
+        const refs = ownArrayDataValues(legacyFormatRefsForDeclaration(declaration)) as V1FormatId[];
         if (declaration.canonical_formats_only === true && refs.length > 0) {
           throw new AdcpError('INVALID_REQUEST', {
             message: 'get_products returned canonical_formats_only together with v1_format_ref.',
-            field,
+            field: `${path}.format_options[${index}]`,
             suggestion: 'Remove v1_format_ref or set canonical_formats_only to false.',
           });
         }
-        declarationRefs.push(...refs);
-        for (const ref of refs) {
-          validateLegacyRefNarrowing(declaration, ref, ownerId, field, legacyFormatConverter);
-        }
-      }
+        const retained = refs.filter(ref => {
+          const match = matchLegacyRefToDeclaration(declaration, ref, ownerId, legacyFormatConverter);
+          if (match !== 'kind_mismatch' && match !== 'params_mismatch') return true;
+          reasons.add(match);
+          return false;
+        });
+        declarationRefs.push(...retained);
+        if (retained.length === refs.length) return declaration;
+        // Do not transfer private legacy-route metadata from a contradictory declaration.
+        const { v1_format_ref: _discarded, ...canonical } = declaration;
+        void _discarded;
+        return {
+          ...canonical,
+          ...(retained.length > 0
+            ? { v1_format_ref: retained }
+            : declaration.format_kind === 'custom'
+              ? { canonical_formats_only: true }
+              : {}),
+        };
+      });
       if (Array.isArray(record.format_ids)) {
-        const formatIds = ownArrayDataValues(record.format_ids) as import('../../../v2/projection/types').V1FormatId[];
-        const formatIdKeys = new Set<string>();
-        for (const ref of formatIds) {
-          const key = legacyFormatRefKey(ref);
-          if (key !== undefined) formatIdKeys.add(key);
-        }
-        const declarationRefKeys = new Set<string>();
-        for (const ref of declarationRefs) {
-          const key = legacyFormatRefKey(ref);
-          if (key !== undefined) declarationRefKeys.add(key);
-        }
-        let divergent = false;
-        for (const key of declarationRefKeys) {
-          if (!formatIdKeys.has(key)) divergent = true;
-        }
+        const formatIds = ownArrayDataValues(record.format_ids) as V1FormatId[];
+        const formatIdKeys = new Set(formatIds.map(legacyFormatRefKey).filter(key => key !== undefined));
+        const declarationRefKeys = new Set(declarationRefs.map(legacyFormatRefKey).filter(key => key !== undefined));
+        if ([...declarationRefKeys].some(key => !formatIdKeys.has(key))) reasons.add('reference_set_mismatch');
         for (const ref of formatIds) {
           const key = legacyFormatRefKey(ref);
           if (key !== undefined && declarationRefKeys.has(key)) continue;
-          let matched = false;
-          for (const value of declarations) {
-            if (
+          const matched = normalizedDeclarations.some(
+            value =>
               value !== null &&
               typeof value === 'object' &&
               !Array.isArray(value) &&
               (value as Record<string, unknown>).canonical_formats_only !== true &&
               matchLegacyRefToDeclaration(value as Record<string, unknown>, ref, ownerId, legacyFormatConverter) ===
                 'match'
-            ) {
-              matched = true;
-              break;
-            }
-          }
-          if (!matched) divergent = true;
-        }
-        if (divergent) {
-          throw new AdcpError('INVALID_REQUEST', {
-            message: 'get_products returned divergent format_ids and format_options.v1_format_ref values.',
-            field: path,
-            suggestion: 'Dual-emitted product declarations must carry the same legacy format references.',
-          });
+          );
+          if (!matched) reasons.add('reference_set_mismatch');
         }
       }
+      if (reasons.size > 0) {
+        const { format_ids: _discarded, ...canonicalOwner } = record;
+        void _discarded;
+        normalized = { ...canonicalOwner, format_options: normalizedDeclarations };
+        diagnostics.push({
+          code: 'FORMAT_DECLARATION_DIVERGENT',
+          message: 'Legacy and canonical format declarations disagree; format_options is authoritative.',
+          source: 'sdk',
+          sdk_id: `@adcp/sdk@${LIBRARY_VERSION}`,
+          field: path.replace(/^\$\./, ''),
+          details: {
+            product_id: enclosingProductId ?? ownerId,
+            ...(typeof record.placement_id === 'string' ? { placement_id: record.placement_id } : {}),
+            format_ids: cloneWireData(record.format_ids ?? []),
+            format_options_summary: declarations.map(value => {
+              if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+              const declaration = value as Record<string, unknown>;
+              return cloneWireData({ format_kind: declaration.format_kind, params: declaration.params });
+            }),
+            divergence_reason: [...reasons].join(', '),
+          },
+        });
+      }
     }
-    for (const [key, child] of Object.entries(record)) {
-      if (key === 'format_options') continue;
-      visit(child, `${path}.${key}`);
+    let result = normalized;
+    for (const [key, child] of Object.entries(normalized)) {
+      if (key !== 'products' && key !== 'placements') continue;
+      const visited = visit(child, `${path}.${key}`, enclosingProductId);
+      if (visited !== child) {
+        if (result === normalized) result = { ...normalized };
+        result[key] = visited;
+      }
     }
+    return result;
   };
-  visit(value, '$');
+  const normalized = visit(value, '$');
+  if (diagnostics.length === 0) return normalized as T;
+  const response = normalized as Record<string, unknown>;
+  const errors = Array.isArray(response.errors) ? [...response.errors] : [];
+  for (const diagnostic of diagnostics) {
+    if (
+      !errors.some(
+        error =>
+          error !== null &&
+          typeof error === 'object' &&
+          (error as Record<string, unknown>).code === diagnostic.code &&
+          (error as Record<string, unknown>).field === diagnostic.field
+      )
+    ) {
+      errors.push(diagnostic);
+    }
+  }
+  return { ...response, errors } as T;
 }
 
 /**
@@ -1885,14 +1915,30 @@ function asProductResponseForWire<T extends { products?: unknown[] }>(
   if (!Array.isArray(canonicalResponse.products)) return canonicalResponse;
   const products: V1Product[] = [];
   const diagnostics: ProjectionDiagnostic[] = [];
-  for (const product of canonicalResponse.products) {
+  const originalToOutputIndex = new Map<number, number>();
+  for (const [index, product] of canonicalResponse.products.entries()) {
     const projected = projectV2ProductToV1(product as V2Product, { canonicalFormatLegacyResolver });
     diagnostics.push(...projected.diagnostics);
-    if (projected.v1.format_ids.length > 0) products.push(projected.v1);
+    if (projected.v1.format_ids.length > 0) {
+      originalToOutputIndex.set(index, products.length);
+      products.push(projected.v1);
+    }
   }
   const responseErrors = (canonicalResponse as T & { errors?: unknown }).errors;
+  const remapDivergenceAdvisory = (error: unknown): unknown => {
+    if (error === null || typeof error !== 'object' || Array.isArray(error)) return error;
+    const advisory = error as Record<string, unknown>;
+    if (advisory.code !== 'FORMAT_DECLARATION_DIVERGENT' || typeof advisory.field !== 'string') return error;
+    const match = /^products\[(\d+)\](.*)$/.exec(advisory.field);
+    if (!match) return error;
+    const outputIndex = originalToOutputIndex.get(Number(match[1]));
+    return {
+      ...advisory,
+      field: outputIndex === undefined ? 'products' : `products[${outputIndex}]${match[2]}`,
+    };
+  };
   const errors = Array.isArray(responseErrors)
-    ? [...responseErrors, ...diagnostics.map(projectionDiagnosticToError)]
+    ? [...responseErrors.map(remapDivergenceAdvisory), ...diagnostics.map(projectionDiagnosticToError)]
     : responseErrors === undefined
       ? diagnostics.map(projectionDiagnosticToError)
       : responseErrors;

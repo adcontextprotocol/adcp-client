@@ -1177,7 +1177,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.deepStrictEqual(product.placements[0].format_options[0].v1_format_ref, [legacyRef]);
   });
 
-  it('rejects divergent top-level and canonical legacy format references', async () => {
+  it('reports divergent top-level and canonical legacy format references', async () => {
     const base = buildPlatform();
     const server = createAdcpServerFromPlatform(
       buildPlatform({
@@ -1229,12 +1229,13 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       },
     });
 
-    assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-    assert.match(result.structuredContent.adcp_error.message, /divergent format_ids/);
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const divergence = result.structuredContent.errors.find(error => error.code === 'FORMAT_DECLARATION_DIVERGENT');
+    assert.ok(divergence);
+    assert.ok(divergence.details.divergence_reason.includes('reference_set_mismatch'));
   });
 
-  it('rejects a canonical declaration that does not narrow its legacy format reference', async () => {
+  it('reports a canonical declaration that does not narrow its legacy format reference', async () => {
     const base = buildPlatform();
     const legacyRef = {
       agent_url: 'https://creative.adcontextprotocol.org/',
@@ -1280,9 +1281,10 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       },
     });
 
-    assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-    assert.match(result.structuredContent.adcp_error.message, /does not narrow/);
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const divergence = result.structuredContent.errors.find(error => error.code === 'FORMAT_DECLARATION_DIVERGENT');
+    assert.ok(divergence);
+    assert.ok(divergence.details.divergence_reason.includes('params_mismatch'));
   });
 
   describe("a seller's own agent URL owns the meaning of its format ids", () => {
@@ -1400,18 +1402,18 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
         {},
         { legacyCreativeFormatConverter: converter('video_hosted') }
       );
-      assert.strictEqual(contradicting.isError, true);
-      assert.match(contradicting.structuredContent.adcp_error.message, /divergent legacy and canonical/);
+      assert.notStrictEqual(contradicting.isError, true, JSON.stringify(contradicting.structuredContent));
+      assert.ok(contradicting.structuredContent.errors.some(error => error.code === 'FORMAT_DECLARATION_DIVERGENT'));
     });
 
-    it('still rejects a declaration that contradicts a ref under the AAO agent', async () => {
+    it('reports a declaration that contradicts a ref under the AAO agent', async () => {
       const aaoRef = { agent_url: 'https://creative.adcontextprotocol.org/', id: 'video_1080x1920' };
       const result = await getProducts([
         product('aao-contradiction', aaoRef, { format_kind: 'display_tag', params: { width: 1080, height: 1920 } }),
       ]);
 
-      assert.strictEqual(result.isError, true);
-      assert.match(result.structuredContent.adcp_error.message, /divergent legacy and canonical/);
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.ok(result.structuredContent.errors.some(error => error.code === 'FORMAT_DECLARATION_DIVERGENT'));
     });
   });
 
@@ -1514,9 +1516,10 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       },
     });
 
-    assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-    assert.match(result.structuredContent.adcp_error.message, /divergent format_ids/);
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const divergence = result.structuredContent.errors.find(error => error.code === 'FORMAT_DECLARATION_DIVERGENT');
+    assert.ok(divergence);
+    assert.ok(divergence.details.divergence_reason.includes('reference_set_mismatch'));
   });
 
   it('deduplicates dual-emitted format_ids without aliasing nested references', async () => {
