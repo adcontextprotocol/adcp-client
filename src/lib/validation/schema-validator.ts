@@ -12,6 +12,7 @@ import {
   getRegisteredSchemaIds,
   type Direction,
   type ResponseVariant,
+  getValidatorRootSchemaId,
 } from './schema-loader';
 import { findHint } from './hints';
 import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
@@ -761,15 +762,13 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
   const validator = getValidator(toolName, 'request', version);
   if (!validator) return OK;
   const valid = validator(payload) as boolean;
-  const rootSchema = (validator as { schema?: unknown }).schema;
-  const rootSchemaId =
-    rootSchema && typeof rootSchema === 'object' && typeof (rootSchema as { $id?: unknown }).$id === 'string'
-      ? ((rootSchema as { $id: string }).$id as string)
-      : undefined;
+  // The root $id comes from the loader so a cached validator need not build
+  // its schema object on the success path.
+  const rootSchemaId = getValidatorRootSchemaId(validator);
   if (valid) return { valid: true, issues: [], variant: 'request', ...(rootSchemaId && { schemaId: rootSchemaId }) };
   const registeredIds = getRegisteredSchemaIds(version);
   const ctx: FormatContext = {
-    rootSchema,
+    rootSchema: (validator as { schema?: unknown }).schema,
     rootSchemaId,
     registeredIds,
     toolName,
@@ -824,7 +823,6 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
   // in-band marker without a dedicated variant schema.
   const effective = validator ?? (variant !== 'sync' ? getValidator(toolName, 'sync', version) : undefined);
   if (!effective) return OK;
-  const rootSchema = (effective as { schema?: unknown }).schema;
   const normalizedPayload = compatPayload;
   const valid = effective(normalizedPayload) as boolean;
   const usedVariant: Direction = validator ? variant : 'sync';
@@ -832,10 +830,7 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
   const fallbackFields: Pick<ValidationOutcome, 'variant_fallback_applied' | 'requested_variant'> = variantFallback
     ? { variant_fallback_applied: true, requested_variant: variant }
     : {};
-  const rootSchemaId =
-    rootSchema && typeof rootSchema === 'object' && typeof (rootSchema as { $id?: unknown }).$id === 'string'
-      ? ((rootSchema as { $id: string }).$id as string)
-      : undefined;
+  const rootSchemaId = getValidatorRootSchemaId(effective);
   if (valid) {
     return {
       valid: true,
@@ -847,7 +842,7 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
   }
   const registeredIds = getRegisteredSchemaIds(version);
   const ctx: FormatContext = {
-    rootSchema,
+    rootSchema: (effective as { schema?: unknown }).schema,
     rootSchemaId,
     registeredIds,
     toolName,

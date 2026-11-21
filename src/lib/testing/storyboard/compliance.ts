@@ -9,9 +9,9 @@
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
-import { parse as parseYaml } from 'yaml';
 import { basename, dirname, join, resolve } from 'path';
 import { loadStoryboardFile } from './loader';
+import { parseStoryboardYaml } from './yaml-cache';
 import { ADCP_VERSION } from '../../version';
 import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
@@ -578,7 +578,7 @@ function annotateStoryboardVersion(
 function isUniversalMetadataFile(path: string): boolean {
   try {
     const source = readFileSync(path, 'utf8');
-    const document: unknown = parseYaml(source);
+    const document: unknown = parseStoryboardYaml(source);
     // The published storyboard-schema guide consists entirely of comments.
     // Keep genuinely empty or malformed files visible as missing coverage.
     if (document === null && /^\s*#/m.test(source) && source.split(/\r?\n/).every(line => /^\s*(?:#.*)?$/.test(line)))
@@ -659,12 +659,14 @@ function withSynthesisErrorPhase(storyboard: Storyboard, err: unknown): Storyboa
 
 /** Enumerate every bundle present in the cache (universal + protocols + specialisms). */
 export function listBundles(options: ResolveOptions = {}): BundleRef[] {
-  const dir = getComplianceCacheDir(options);
-  const index = loadComplianceIndex(options);
-  const bundles: BundleRef[] = [];
+  return scopeBundles(complianceScope(options), loadComplianceIndex(options), getComplianceCacheDir(options));
+}
 
+/** The index's bundles, with paths under `dir`; universal files are classified once per scope. */
+function scopeBundles(scope: ComplianceScope, index: ComplianceIndex, dir: string): BundleRef[] {
+  const bundles: BundleRef[] = [];
   for (const name of index.universal) {
-    if (isUniversalMetadataFile(join(dir, 'universal', `${name}.yaml`))) continue;
+    if (scopedUniversalMetadata(scope, name)) continue;
     bundles.push({
       kind: 'universal',
       id: name,
@@ -692,10 +694,25 @@ export function listBundles(options: ResolveOptions = {}): BundleRef[] {
   return bundles;
 }
 
-// Published versioned bundles are immutable. Keep a bounded per-authority
-// index, and return detached records so caller edits cannot poison later runs.
+// Published versioned bundles are immutable. Keep a bounded number of
+// compliance scopes (one per authority: compliance root, release, schema
+// root, hosted alias and, for custom roots, a stat inventory), and parse each
+// bundle and classify each universal file once per scope. Every public entry
+// point returns detached records so caller edits cannot poison later runs.
 const STORYBOARD_INDEX_CACHE_LIMIT = 8;
-const storyboardIndexes = new Map<string, ReadonlyMap<string, Storyboard>>();
+
+interface ComplianceScope {
+  /** Resolved compliance directory. */
+  dir: string;
+  /** Parsed storyboards per bundle, keyed `kind:id`. */
+  bundles: Map<string, Storyboard[]>;
+  /** Universal file name -> is a metadata document, not a storyboard bundle. */
+  universalMetadata: Map<string, boolean>;
+  /** Storyboards by id in bundle order, first id wins; built on first index use. */
+  byId?: ReadonlyMap<string, Storyboard>;
+}
+
+const complianceScopes = new Map<string, ComplianceScope>();
 
 /** Custom authoring roots can change without their published index changing. */
 function customComplianceInventory(dir: string): string {
@@ -715,7 +732,7 @@ function customComplianceInventory(dir: string): string {
   return JSON.stringify(entries);
 }
 
-function complianceStoryboardIndex(options: ResolveOptions): ReadonlyMap<string, Storyboard> {
+function complianceScope(options: ResolveOptions): ComplianceScope {
   const dir = resolve(getComplianceCacheDir(options));
   const indexPath = join(dir, 'index.json');
   const stamp = existsSync(indexPath) ? statSync(indexPath) : undefined;
@@ -734,24 +751,61 @@ function complianceStoryboardIndex(options: ResolveOptions): ReadonlyMap<string,
     stamp?.size ?? null,
     inventory,
   ]);
-  const cached = storyboardIndexes.get(key);
+  const cached = complianceScopes.get(key);
   if (cached) {
-    storyboardIndexes.delete(key);
-    storyboardIndexes.set(key, cached);
+    complianceScopes.delete(key);
+    complianceScopes.set(key, cached);
     return cached;
   }
+  // A changed custom root may carry new signing vectors for synthesis.
   if (customRoot) invalidateRequestSigningVectorCache(dir);
+  const scope: ComplianceScope = { dir, bundles: new Map(), universalMetadata: new Map() };
+  complianceScopes.set(key, scope);
+  while (complianceScopes.size > STORYBOARD_INDEX_CACHE_LIMIT) {
+    const oldest = complianceScopes.keys().next().value;
+    if (oldest !== undefined) complianceScopes.delete(oldest);
+  }
+  return scope;
+}
+
+function scopedUniversalMetadata(scope: ComplianceScope, name: string): boolean {
+  let metadata = scope.universalMetadata.get(name);
+  if (metadata === undefined) {
+    metadata = isUniversalMetadataFile(join(scope.dir, 'universal', `${name}.yaml`));
+    scope.universalMetadata.set(name, metadata);
+  }
+  return metadata;
+}
+
+function bundlePath(dir: string, ref: Pick<BundleRef, 'kind' | 'id'>): string {
+  if (ref.kind === 'universal') return join(dir, 'universal', `${ref.id}.yaml`);
+  return join(dir, ref.kind === 'protocol' ? 'protocols' : 'specialisms', ref.id);
+}
+
+/** The scope's shared parse of one bundle; callers clone before handing records out. */
+function scopedBundleStoryboards(
+  scope: ComplianceScope,
+  ref: Pick<BundleRef, 'kind' | 'id' | 'adcp_version'>
+): Storyboard[] {
+  const key = `${ref.kind}:${ref.id}`;
+  let storyboards = scope.bundles.get(key);
+  if (!storyboards) {
+    storyboards = loadBundleStoryboards({ ...ref, path: bundlePath(scope.dir, ref) });
+    scope.bundles.set(key, storyboards);
+  }
+  return storyboards;
+}
+
+function complianceStoryboardIndex(options: ResolveOptions): ReadonlyMap<string, Storyboard> {
+  const scope = complianceScope(options);
+  if (scope.byId) return scope.byId;
   const indexed = new Map<string, Storyboard>();
-  for (const ref of listBundles({ ...options, complianceDir: dir })) {
-    for (const storyboard of loadBundleStoryboards(ref)) {
+  for (const ref of scopeBundles(scope, loadComplianceIndex(options), scope.dir)) {
+    for (const storyboard of scopedBundleStoryboards(scope, ref)) {
       if (!indexed.has(storyboard.id)) indexed.set(storyboard.id, storyboard);
     }
   }
-  storyboardIndexes.set(key, indexed);
-  while (storyboardIndexes.size > STORYBOARD_INDEX_CACHE_LIMIT) {
-    const oldest = storyboardIndexes.keys().next().value;
-    if (oldest !== undefined) storyboardIndexes.delete(oldest);
-  }
+  scope.byId = indexed;
   return indexed;
 }
 
@@ -810,12 +864,11 @@ export function loadSpecialismDetail(slug: string, options: ResolveOptions = {})
     throw new Error(`Unknown specialism "${slug}". Known specialisms: ${known}`);
   }
 
-  const bundleStoryboards = loadBundleStoryboards({
+  const bundleStoryboards = scopedBundleStoryboards(complianceScope(options), {
     kind: 'specialism',
     id: slug,
-    path: join(getComplianceCacheDir(options), 'specialisms', slug),
     adcp_version: index.adcp_version,
-  });
+  }).map(cloneComplianceStoryboard);
   const storyboard = bundleStoryboards.find(sb => sb.category === entry.id.replace(/-/g, '_')) ?? bundleStoryboards[0];
   if (!storyboard) {
     throw new Error(
@@ -873,7 +926,7 @@ export function listSpecialisms(options: ResolveOptions = {}): ComplianceIndexSp
  */
 export function resolveBundleOrStoryboard(id: string, options: ResolveOptions = {}): Storyboard[] {
   const bundle = findBundleById(id, options);
-  if (bundle) return loadBundleStoryboards(bundle);
+  if (bundle) return scopedBundleStoryboards(complianceScope(options), bundle).map(cloneComplianceStoryboard);
   const sb = getComplianceStoryboardById(id, options);
   return sb ? [sb] : [];
 }
@@ -903,14 +956,17 @@ export function resolveStoryboardsForCapabilities(
 ): ResolvedStoryboards {
   const index = loadComplianceIndex(options);
   assertSupportedComplianceVersion(index.adcp_version, caps.supported_versions, options);
-  const cacheDir = getComplianceCacheDir(options);
+  // Bundles come from the scope's shared parse (one per process for a
+  // published root), cloned once per bundle; paths are the resolved root's.
+  const scope = complianceScope(options);
+  const cacheDir = scope.dir;
   const bundles: ResolvedBundle[] = [];
   const storyboards: Storyboard[] = [];
   const notApplicable: NotApplicableStoryboard[] = [];
   const seenStoryboards = new Set<string>();
 
   const push = (ref: BundleRef) => {
-    const sbs = loadBundleStoryboards(ref);
+    const sbs = scopedBundleStoryboards(scope, ref).map(cloneComplianceStoryboard);
     bundles.push({ ref, storyboards: sbs });
     for (const sb of sbs) {
       if (seenStoryboards.has(sb.id)) continue;
@@ -931,7 +987,7 @@ export function resolveStoryboardsForCapabilities(
   };
 
   for (const name of index.universal) {
-    if (isUniversalMetadataFile(join(cacheDir, 'universal', `${name}.yaml`))) continue;
+    if (scopedUniversalMetadata(scope, name)) continue;
     push({
       kind: 'universal',
       id: name,

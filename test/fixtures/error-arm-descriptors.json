@@ -1,0 +1,102 @@
+{
+  "3.0": {
+    "activate_signal": {},
+    "build_creative": {},
+    "calibrate_content": {},
+    "create_content_standards": {},
+    "create_media_buy": {},
+    "get_content_standards": {},
+    "get_creative_features": {},
+    "get_media_buy_artifacts": {},
+    "list_content_standards": {},
+    "log_event": {},
+    "provide_performance_feedback": {},
+    "sync_audiences": {},
+    "sync_catalogs": {},
+    "sync_creatives": {},
+    "sync_event_sources": {},
+    "update_content_standards": {
+      "success": false
+    },
+    "update_media_buy": {},
+    "validate_content_delivery": {}
+  },
+  "3.1": {
+    "activate_signal": {},
+    "build_creative": {},
+    "calibrate_content": {},
+    "create_content_standards": {},
+    "create_media_buy": {},
+    "get_content_standards": {},
+    "get_creative_features": {},
+    "get_media_buy_artifacts": {},
+    "list_content_standards": {},
+    "log_event": {},
+    "provide_performance_feedback": {},
+    "sync_audiences": {},
+    "sync_catalogs": {},
+    "sync_creatives": {},
+    "sync_event_sources": {},
+    "update_content_standards": {
+      "success": false
+    },
+    "update_media_buy": {},
+    "validate_content_delivery": {}
+  },
+  "3.2": {
+    "activate_signal": {},
+    "build_creative": {},
+    "calibrate_content": {},
+    "control_media_buy": {
+      "status": "failed"
+    },
+    "create_content_standards": {},
+    "create_media_buy": {},
+    "get_content_standards": {},
+    "get_creative_features": {},
+    "get_media_buy_artifacts": {},
+    "list_content_standards": {},
+    "log_event": {},
+    "provide_performance_feedback": {},
+    "sync_audiences": {},
+    "sync_catalogs": {},
+    "sync_creatives": {},
+    "sync_event_sources": {},
+    "update_content_standards": {
+      "success": false
+    },
+    "update_media_buy": {},
+    "validate_content_delivery": {}
+  },
+  "3.3.0-rc.0": {
+    "activate_signal": {},
+    "build_creative": {},
+    "calibrate_content": {},
+    "control_media_buy": {
+      "status": "failed"
+    },
+    "create_content_standards": {},
+    "create_media_buy": {},
+    "get_content_standards": {},
+    "get_creative_features": {},
+    "get_media_buy_artifacts": {},
+    "get_media_buy_issue": {
+      "outcome": "failed"
+    },
+    "list_content_standards": {},
+    "log_event": {},
+    "provide_performance_feedback": {},
+    "report_media_buy_issue": {
+      "outcome": "failed"
+    },
+    "sync_audiences": {},
+    "sync_catalogs": {},
+    "sync_creatives": {},
+    "sync_event_sources": {},
+    "update_content_standards": {
+      "success": false
+    },
+    "update_media_buy": {},
+    "validate_content_delivery": {}
+  }
+}

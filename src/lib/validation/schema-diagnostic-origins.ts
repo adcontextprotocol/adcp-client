@@ -22,47 +22,104 @@ function object(value: unknown): value is SchemaObject {
   return value !== null && typeof value === 'object';
 }
 
+/** Exactly the code units the RegExp class `\s` matches. */
+function isWhitespace(code: number): boolean {
+  return (
+    code === 0x20 ||
+    (code >= 0x09 && code <= 0x0d) ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+/** `[A-Za-z_$]` */
+function isIdentifierStart(code: number): boolean {
+  return (code >= 0x61 && code <= 0x7a) || (code >= 0x41 && code <= 0x5a) || code === 0x5f || code === 0x24;
+}
+
+/** `[\w$]` */
+function isIdentifierPart(code: number): boolean {
+  return isIdentifierStart(code) || (code >= 0x30 && code <= 0x39);
+}
+
 /**
  * Locate static schemaPath property values without matching text inside strings
  * or comments. Unknown code spellings fail closed: validation is unchanged and
  * that function does not acquire an origin used for diagnostic enrichment.
+ *
+ * This runs over every function AJV generates (megabytes for one bundled
+ * response schema), so it compares char codes and looks backwards from a `/`
+ * instead of matching regular expressions against the source prefix.
  */
 function schemaPathLiterals(source: string): Array<{ start: number; end: number; value: string }> | undefined {
   const paths: Array<{ start: number; end: number; value: string }> = [];
+  const length = source.length;
   const stringEnd = (start: number): number => {
-    const quote = source[start];
-    for (let index = start + 1; index < source.length; index++) {
-      if (source[index] === '\\') index++;
-      else if (source[index] === quote) return index + 1;
+    const quote = source.charCodeAt(start);
+    for (let index = start + 1; index < length; index++) {
+      const code = source.charCodeAt(index);
+      if (code === 0x5c) index++;
+      else if (code === quote) return index + 1;
     }
     return -1;
   };
-  for (let index = 0; index < source.length; ) {
+  /** The text before `end` matches `/\.replace\(\s*$/`. */
+  const followsReplaceCall = (end: number): boolean => {
+    let cursor = end - 1;
+    while (cursor >= 0 && isWhitespace(source.charCodeAt(cursor))) cursor--;
+    return cursor >= 8 && source.startsWith('.replace(', cursor - 8);
+  };
+  /** The text before `end` matches `/(?:^|[^\w$])(data\d*)\s*$/`. */
+  const followsDataVariable = (end: number): boolean => {
+    let cursor = end - 1;
+    while (cursor >= 0 && isWhitespace(source.charCodeAt(cursor))) cursor--;
+    while (cursor >= 0 && source.charCodeAt(cursor) >= 0x30 && source.charCodeAt(cursor) <= 0x39) cursor--;
+    if (cursor < 3 || !source.startsWith('data', cursor - 3)) return false;
+    return cursor === 3 || !isIdentifierPart(source.charCodeAt(cursor - 4));
+  };
+  for (let index = 0; index < length; ) {
     const start = index;
-    let key: string | undefined;
-    if (source[index] === '"' || source[index] === "'") {
+    const code = source.charCodeAt(index);
+    let isSchemaPathKey = false;
+    if (code === 0x22 || code === 0x27) {
       index = stringEnd(index);
       if (index < 0) return undefined;
-      try {
-        key = JSON.parse(source.slice(start, index));
-      } catch {
-        /* Single-quoted non-property text. */
+      // Only a double-quoted JSON string can spell the key; single-quoted
+      // text is non-property text. Escapes need the JSON decoder.
+      if (code === 0x22) {
+        const literal = source.slice(start, index);
+        if (literal === '"schemaPath"') isSchemaPathKey = true;
+        else if (literal.includes('\\')) {
+          try {
+            isSchemaPathKey = JSON.parse(literal) === 'schemaPath';
+          } catch {
+            /* Not a JSON string. */
+          }
+        }
       }
-    } else if (/[A-Za-z_$]/.test(source[index]!)) {
-      while (index < source.length && /[\w$]/.test(source[index]!)) index++;
-      key = source.slice(start, index);
-    } else if (source.startsWith('//', index)) {
+    } else if (isIdentifierStart(code)) {
+      index++;
+      while (index < length && isIdentifierPart(source.charCodeAt(index))) index++;
+      isSchemaPathKey = index - start === 10 && source.startsWith('schemaPath', start);
+    } else if (code === 0x2f && source.charCodeAt(index + 1) === 0x2f) {
       index = source.indexOf('\n', index + 2);
       if (index < 0) break;
-    } else if (source.startsWith('/*', index)) {
+    } else if (code === 0x2f && source.charCodeAt(index + 1) === 0x2a) {
       index = source.indexOf('*/', index + 2);
       if (index < 0) return undefined;
       index += 2;
     } else {
       // AJV's supported generator emits JSON strings and hoisted patterns.
       // Do not guess at template/regex literals from unknown custom code.
-      if (source[index] === '`') return undefined;
-      if (source[index] === '/') {
+      if (code === 0x60) return undefined;
+      if (code === 0x2f) {
         // AJV escapes dynamic record keys with these two exact regexes.
         // Recognize only their complete literal spelling in .replace(...).
         const pointerEscape = source.startsWith('/~/g', index)
@@ -70,25 +127,24 @@ function schemaPathLiterals(source: string): Array<{ start: number; end: number;
           : source.startsWith('/\\//g', index)
             ? '/\\//g'
             : undefined;
-        if (pointerEscape && /\.replace\(\s*$/.test(source.slice(0, index))) {
+        if (pointerEscape && followsReplaceCall(index)) {
           index += pointerEscape.length;
           continue;
         }
         // AJV multipleOf divides a data/dataN variable by the schema value.
         // Accept only that known expression token. return/throw/control-flow
         // regex literals remain unsupported and leave the function untouched.
-        const previous = source.slice(0, index).match(/(?:^|[^\w$])(data\d*)\s*$/);
-        if (!previous) return undefined;
+        if (!followsDataVariable(index)) return undefined;
       }
       index++;
     }
-    if (key !== 'schemaPath') continue;
+    if (!isSchemaPathKey) continue;
     let valueStart = index;
-    while (/\s/.test(source[valueStart] ?? '') && valueStart < source.length) valueStart++;
-    if (source[valueStart] !== ':') continue;
+    while (valueStart < length && isWhitespace(source.charCodeAt(valueStart))) valueStart++;
+    if (source.charCodeAt(valueStart) !== 0x3a) continue;
     valueStart++;
-    while (/\s/.test(source[valueStart] ?? '') && valueStart < source.length) valueStart++;
-    if (source[valueStart] !== '"') return undefined;
+    while (valueStart < length && isWhitespace(source.charCodeAt(valueStart))) valueStart++;
+    if (source.charCodeAt(valueStart) !== 0x22) return undefined;
     const end = stringEnd(valueStart);
     if (end < 0) return undefined;
     let value: unknown;

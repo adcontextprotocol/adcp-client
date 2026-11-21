@@ -10,11 +10,11 @@
  * response schema doesn't define it would add a key the schema
  * doesn't expect.
  *
- * Derived from the active schema-loader authority. Bundle inventories are
- * memoised by bundle key and resolved root, with loader-epoch invalidation
- * so scoped or re-registered candidate bundles cannot leak.
- * Raw external roots use the loader's response index when no bundled
- * store exists.
+ * Derived from the active schema-loader authority, one tool at a time: a
+ * lookup reads only that tool's response schema, and results are memoised
+ * by bundle key and resolved root, with loader-epoch invalidation so scoped
+ * or re-registered candidate bundles cannot leak. Raw external roots use the
+ * loader's response index when no bundled store exists.
  *
  * Spec basis: `error-code.json#GOVERNANCE_DENIED` and
  * `#GOVERNANCE_UNAVAILABLE` both prescribe "populate `errors[].code` in
@@ -111,104 +111,176 @@ function describeErrorArm(branch: unknown, rootSchema: Record<string, unknown>):
 }
 
 /**
- * Read bundled responses, or indexed responses for raw external roots,
- * and return a tool-name → descriptor map for tools whose top-level
- * `oneOf`/`anyOf` declares an Error arm.
- *
- * Tool names are derived from the filename stem (`create-media-buy` →
- * `create_media_buy`) to match the dispatcher's `toolName` key.
+ * What one (bundle key, resolved root) offers for Error-arm lookups, built
+ * on the first lookup and kept for the loader generation: the manifest's
+ * tool set and, for a bundled store, every `*-response.json` grouped by the
+ * tool name its filename stem gives (`create-media-buy` → `create_media_buy`),
+ * in the store's listing order. Raw external roots without a bundled store
+ * read responses through the loader's response index instead.
  */
-function scanForErrorArmTools(root: string, version: string): Map<string, ErrorArmDescriptor> {
-  const bundledRoot = path.join(root, 'bundled');
-  const map = new Map<string, ErrorArmDescriptor>();
-  let manifestTools: ReadonlySet<string> | undefined;
+interface RootIndex {
+  root: string;
+  version: string;
+  manifestTools: ReadonlySet<string> | undefined;
+  responseFiles: ReadonlyMap<string, readonly string[]> | undefined;
+  descriptors: Map<string, ErrorArmDescriptor | null>;
+  inventory?: ReadonlyMap<string, ErrorArmDescriptor>;
+}
+
+function readManifestTools(root: string): ReadonlySet<string> | undefined {
   try {
     const manifest = JSON.parse(readFileSync(path.join(root, 'manifest.json'), 'utf-8')) as {
       tools?: Record<string, unknown>;
     };
-    if (manifest.tools) manifestTools = new Set(Object.keys(manifest.tools));
+    return manifest.tools ? new Set(Object.keys(manifest.tools)) : undefined;
   } catch {
     // Older bundles may not carry a manifest. Preserve the filename-driven
     // fallback for those versions; current bundles always take the stricter
-    // manifest path below.
+    // manifest path.
+    return undefined;
   }
-  const bundled = hasBundledSchemaStore(bundledRoot);
-  // Preserve the packaged bundle's existing inventory. Raw external roots
-  // use the same domain/response selection as runtime validation.
-  const responses = bundled
-    ? listBundledSchemaFiles(bundledRoot)
-        .filter(file => file.endsWith('-response.json'))
-        .map(file => ({ toolName: path.basename(file, '-response.json').replace(/-/g, '_'), file }))
-    : listValidatorKeys(version)
-        .filter(key => key.endsWith('::sync'))
-        .map(key => ({ toolName: key.slice(0, -'::sync'.length), file: undefined }));
+}
 
-  for (const { toolName, file } of responses) {
-    let schema: Record<string, unknown>;
+function listResponseFiles(root: string): ReadonlyMap<string, readonly string[]> | undefined {
+  const bundledRoot = path.join(root, 'bundled');
+  if (!hasBundledSchemaStore(bundledRoot)) return undefined;
+  const byTool = new Map<string, string[]>();
+  for (const file of listBundledSchemaFiles(bundledRoot)) {
+    if (!file.endsWith('-response.json')) continue;
+    const toolName = path.basename(file, '-response.json').replace(/-/g, '_');
+    const files = byTool.get(toolName);
+    if (files) files.push(file);
+    else byTool.set(toolName, [file]);
+  }
+  return byTool;
+}
+
+function describeResponse(schema: Record<string, unknown>): ErrorArmDescriptor | undefined {
+  const branches = (schema.oneOf ?? schema.anyOf) as unknown[] | undefined;
+  if (!Array.isArray(branches)) return undefined;
+  for (const branch of branches) {
+    const candidate = describeErrorArm(branch, schema);
+    if (candidate) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * Read only `toolName`'s response schema(s). When a bundle ships two
+ * response files for one tool name (`list_creative_formats` lives in both
+ * `creative/` and `media-buy/`), the last file in listing order that
+ * declares an Error arm wins, as the whole-root inventory always resolved it.
+ * Bundles contain helper response schemas (for example
+ * media-buy-commitment-response.json) that are not dispatchable tools, so
+ * a manifest, when present, must declare the tool.
+ */
+function resolveDescriptor(index: RootIndex, toolName: string): ErrorArmDescriptor | undefined {
+  if (index.manifestTools && !index.manifestTools.has(toolName)) return undefined;
+  if (!index.responseFiles) {
     try {
-      const loaded = file ? loadBundledSchemaFile(file) : getToolSchemaDocument(toolName, 'sync', version)?.schema;
-      if (!loaded) continue;
-      schema = loaded;
+      const schema = getToolSchemaDocument(toolName, 'sync', index.version)?.schema;
+      return schema ? describeResponse(schema) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  let descriptor: ErrorArmDescriptor | undefined;
+  for (const file of index.responseFiles.get(toolName) ?? []) {
+    let schema: Record<string, unknown> | undefined;
+    try {
+      schema = loadBundledSchemaFile(file);
     } catch {
       continue;
     }
-    const branches = (schema.oneOf ?? schema.anyOf) as unknown[] | undefined;
-    if (!Array.isArray(branches)) continue;
-    let descriptor: ErrorArmDescriptor | undefined;
-    for (const branch of branches) {
-      const candidate = describeErrorArm(branch, schema);
-      if (candidate) {
-        descriptor = candidate;
-        break;
-      }
-    }
-    if (!descriptor) continue;
-    // Bundles contain helper response schemas (for example
-    // media-buy-commitment-response.json) that are not dispatchable tools.
-    // Only manifest-declared tools belong in the runtime wrapping registry.
-    if (manifestTools && !manifestTools.has(toolName)) continue;
-    map.set(toolName, descriptor);
+    const candidate = schema ? describeResponse(schema) : undefined;
+    if (candidate) descriptor = candidate;
   }
-  return map;
+  return descriptor;
 }
 
-/** Memoised active bundle results, isolated by version, root and loader epoch. */
+/** Root indexes of the active schema authority, isolated by version, root and loader epoch. */
 let cachedGeneration = -1;
-const cachedMaps = new Map<string, ReadonlyMap<string, ErrorArmDescriptor>>();
+const cachedIndexes = new Map<string, RootIndex>();
 
-/**
- * Per-tool descriptors for tools whose response schema (at `version`)
- * declares a top-level Error arm requiring `errors[]`. Dispatcher-side
- * gate for two-layer auto-emission, plus the per-arm constants the
- * dispatcher needs to set when synthesising the wrap.
- *
- * Scans the active schema authority lazily. Missing roots return an empty map
- * without caching, so later external registration takes effect. Re-registering
- * or entering another schema scope invalidates cached inventories, including
- * replacements of candidate bundles at the same path.
- */
-export function getToolsWithErrorArm(version: string = ADCP_VERSION): ReadonlyMap<string, ErrorArmDescriptor> {
+function activeRootIndex(version: string): RootIndex | undefined {
   const bundleKey = resolveBundleKey(version);
   let root: string;
   try {
     root = resolveSchemaRoot(version);
   } catch {
-    return new Map();
+    return undefined;
   }
   const generation = getSchemaLoaderGeneration();
   if (cachedGeneration !== generation) {
-    cachedMaps.clear();
+    cachedIndexes.clear();
     cachedGeneration = generation;
   }
   const key = `${bundleKey}\0${path.resolve(root)}`;
-  const cached = cachedMaps.get(key);
-  if (cached) return cached;
-  const map = scanForErrorArmTools(root, version);
-  cachedMaps.set(key, map);
+  let index = cachedIndexes.get(key);
+  if (!index) {
+    index = {
+      root,
+      version,
+      manifestTools: readManifestTools(root),
+      responseFiles: listResponseFiles(root),
+      descriptors: new Map(),
+    };
+    cachedIndexes.set(key, index);
+  }
+  return index;
+}
+
+/**
+ * Error-arm descriptor of `toolName`'s response schema at `version`, or
+ * undefined when the response declares no top-level Error arm requiring
+ * `errors[]`. Dispatcher-side gate for two-layer auto-emission, plus the
+ * per-arm constants the dispatcher sets when synthesising the wrap.
+ *
+ * Reads only that tool's response schema, once per loader generation.
+ * Missing roots return undefined without caching, so later external
+ * registration takes effect. Re-registering or entering another schema
+ * scope starts a new generation, including replacements of candidate
+ * bundles at the same path.
+ */
+export function getErrorArmDescriptor(
+  toolName: string,
+  version: string = ADCP_VERSION
+): ErrorArmDescriptor | undefined {
+  const index = activeRootIndex(version);
+  if (!index) return undefined;
+  const cached = index.descriptors.get(toolName);
+  if (cached !== undefined) return cached ?? undefined;
+  const descriptor = resolveDescriptor(index, toolName);
+  index.descriptors.set(toolName, descriptor ?? null);
+  return descriptor;
+}
+
+/**
+ * Every tool at `version` whose response declares an Error arm, built from
+ * the same per-tool lookups and cache as {@link getErrorArmDescriptor}. Tool
+ * names come from the bundled store's response files, or from the loader's
+ * response index for raw external roots. For audits and tests; the
+ * dispatcher looks tools up one at a time.
+ */
+export function getToolsWithErrorArm(version: string = ADCP_VERSION): ReadonlyMap<string, ErrorArmDescriptor> {
+  const index = activeRootIndex(version);
+  if (!index) return new Map();
+  if (index.inventory) return index.inventory;
+  const names = index.responseFiles
+    ? [...index.responseFiles.keys()]
+    : listValidatorKeys(version)
+        .filter(key => key.endsWith('::sync'))
+        .map(key => key.slice(0, -'::sync'.length));
+  const map = new Map<string, ErrorArmDescriptor>();
+  for (const toolName of names) {
+    const descriptor = getErrorArmDescriptor(toolName, version);
+    if (descriptor) map.set(toolName, descriptor);
+  }
+  index.inventory = map;
   return map;
 }
 
-/** Test hook: clear cached error-arm inventories. */
+/** Test hook: clear cached error-arm lookups. */
 export function _resetErrorArmToolsCache(): void {
-  cachedMaps.clear();
+  cachedIndexes.clear();
 }

@@ -10,7 +10,7 @@ const {
   unregisterExternalSchemaRoot,
   getValidator,
 } = require('../../dist/lib/validation/schema-loader');
-const { getToolsWithErrorArm } = require('../../dist/lib/server/error-arm-tools');
+const { getErrorArmDescriptor, getToolsWithErrorArm } = require('../../dist/lib/server/error-arm-tools');
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server');
 const { adcpError } = require('../../dist/lib/server/errors');
 
@@ -99,10 +99,15 @@ async function withRoots(fn) {
   }
 }
 
+// The dispatcher's per-tool lookup and the inventory share one cache, so
+// every scenario checks that both agree.
 function status() {
   const map = getToolsWithErrorArm(WIRE);
   assert.equal(map.size, 1, 'only manifest-declared control_media_buy is dispatchable');
-  return map.get('control_media_buy').extraRequired.status;
+  assert.equal(getErrorArmDescriptor('helper', WIRE), undefined, 'helper schemas are not tools');
+  const descriptor = getErrorArmDescriptor('control_media_buy', WIRE);
+  assert.strictEqual(descriptor, map.get('control_media_buy'));
+  return descriptor.extraRequired.status;
 }
 
 test('error-arm lookup observes registration after a missing lookup and restores after unregister', () =>
