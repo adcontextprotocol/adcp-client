@@ -105,6 +105,37 @@ function canProduceTimezone(offering: ReportingDeliveryOffering, timezone: strin
 }
 
 /**
+ * `core/reporting-dimension-systems.json` (adcontextprotocol/adcp#9049, 3.3.0-rc.3). The pinned
+ * bundle predates it, so the generated selector and offering types don't carry the field yet;
+ * this narrow shape moves to the generated type once `ADCP_VERSION` includes #9049.
+ */
+interface ReportingDimensionSystems {
+  metro?: string;
+  postal_area?: ReadonlyArray<{ country: string; system: string }>;
+}
+
+/**
+ * Whether an offering reports in the systems a selector names
+ * (`core/reporting-subscription.json` `selector.dimension_systems`): its `metro` equals the
+ * selector's, and its `postal_area` includes every selector entry. A key the selector omits
+ * accepts any system.
+ */
+function systemsMatch(
+  wanted: ReportingDimensionSystems | undefined,
+  offered: ReportingDimensionSystems | undefined
+): boolean {
+  if (wanted === undefined) return true;
+  if (wanted.metro !== undefined && offered?.metro !== wanted.metro) return false;
+  if (wanted.postal_area !== undefined) {
+    const has = offered?.postal_area ?? [];
+    return wanted.postal_area.every(entry =>
+      has.some(own => own.country === entry.country && own.system === entry.system)
+    );
+  }
+  return true;
+}
+
+/**
  * Candidate filter from `x-adcp-validation.selection`, before `match` applies.
  *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
@@ -134,6 +165,14 @@ export function isReportingSubscriptionCandidateV1(
     }
   }
   if (!canProduceTimezone(offering, selector.period_timezone)) return false;
+  if (
+    !systemsMatch(
+      (selector as { dimension_systems?: ReportingDimensionSystems }).dimension_systems,
+      (offering as { dimension_systems?: ReportingDimensionSystems }).dimension_systems
+    )
+  ) {
+    return false;
+  }
   if (input.at !== undefined) {
     if (offering.available_from !== undefined && Date.parse(offering.available_from) > input.at) return false;
     if (offering.withdrawn_at !== undefined && Date.parse(offering.withdrawn_at) <= input.at) return false;
