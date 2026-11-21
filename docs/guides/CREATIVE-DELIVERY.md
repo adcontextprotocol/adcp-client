@@ -554,3 +554,13 @@ selector must resolve to exactly one format ID; product declarations may
 resolve to multiple IDs. Invalid, throwing, or ambiguous output fails closed.
 `canonical_formats_only: true` is an absolute opt-out and is never overridden
 by the resolver.
+
+
+### AdCP 3.1 accepts direct package selectors.
+
+A proven AdCP 3.1 seller can receive `format_kind` and `params` directly in
+`create_media_buy.packages` and `update_media_buy.new_packages` when no single
+legacy mapping exists. The SDK uses the existing `supported_versions` release
+gate. Explicit legacy mappings still take precedence. AdCP 3.0, unproven peers
+and existing-package updates keep their refusal behavior. A direct selector
+with ambiguous explicit `format_ids` is still refused.
