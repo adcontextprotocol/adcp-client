@@ -507,7 +507,7 @@ describe('PropertyCrawler — origin-only matching follows the negotiated or tar
   }
 
   test('targeting 3.3 attributes the origin-only entry to an agent at /mcp', async () => {
-    assert.deepStrictEqual(await crawledProperties(crawlerFor({ adcpVersion: '3.3.0-rc.0' })), ['home']);
+    assert.deepStrictEqual(await crawledProperties(crawlerFor({ adcpVersion: '3.3.0-rc.3' })), ['home']);
   });
 
   test('targeting 3.2 does not', async () => {
@@ -519,7 +519,7 @@ describe('PropertyCrawler — origin-only matching follows the negotiated or tar
   });
 
   test('a 3.3 release negotiated with the agent overrides a 3.2 target', async () => {
-    assert.deepStrictEqual(await crawledProperties(crawlerFor({ adcpVersion: '3.2' }, '3.3-rc.0')), ['home']);
+    assert.deepStrictEqual(await crawledProperties(crawlerFor({ adcpVersion: '3.2' }, '3.3-rc.3')), ['home']);
   });
 
   test('at 3.3 an agent matched by an exact and an origin-only entry is attributed their union', async () => {
@@ -531,7 +531,7 @@ describe('PropertyCrawler — origin-only matching follows the negotiated or tar
       ],
     };
     assert.deepStrictEqual(
-      (await crawledProperties(crawlerFor({ adcpVersion: '3.3.0-rc.0' }, undefined, file))).sort(),
+      (await crawledProperties(crawlerFor({ adcpVersion: '3.3.0-rc.3' }, undefined, file))).sort(),
       ['home', 'news']
     );
     assert.deepStrictEqual(await crawledProperties(crawlerFor({ adcpVersion: '3.2' }, undefined, file)), ['news']);

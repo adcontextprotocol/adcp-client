@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.3.0-rc.0
-// Generated at: 2026-11-17T01:53:15.545Z
+// Generated AdCP core types from official schemas v3.3.0-rc.3
+// Generated at: 2026-11-22T21:02:30.636Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -1038,6 +1038,7 @@ export type ErrorCode =
   | 'PRODUCT_EXPIRED'
   | 'PROPOSAL_NOT_COMMITTED'
   | 'PROPOSAL_NOT_FOUND'
+  | 'PROPOSAL_TERMS_CHANGED'
   | 'MULTI_FINALIZE_UNSUPPORTED'
   | 'IO_REQUIRED'
   | 'TERMS_REJECTED'
@@ -1375,6 +1376,12 @@ export type ImpairmentReasonCode =
   | 'source_private'
   | 'source_offline'
   | 'property_depublished';
+
+// IMPRESSIONESTIMATIONBASIS CANONICAL ENUM
+/**
+ * Methodology tier of a DOOH audience figure: what kind of number `impressions` is when it is `plays × audience multiplier`. Tier, not provider and not instrument: the currency or seller model is named by `measurement_source`, the instrument by the vendor metric that `basis_metric` points to. A row whose plays were estimated on different tiers does not pick one of them, nor `hybrid`: it reports `impression_basis_breakdown` instead. Tiers are different units with no exchange rate: a sensor counts the people in its zone, a currency usually publishes a visibility-adjusted 'likely to see' figure, and a seller model is traffic-based. Compare impressions within a tier, and for `sensor_measured` within the same `basis_metric`, since a sensor counting people in front of a screen and a turnstile counting entries are different units too. Across tiers, compare plays and spend. Values MAY be added in later minor releases; a client on an older schema version SHOULD treat a value it does not recognize like `seller_modeled`.
+ */
+export type ImpressionEstimationBasis = 'currency_measured' | 'seller_modeled' | 'sensor_measured' | 'hybrid';
 
 // INDICATORTYPE CANONICAL ENUM
 /**
@@ -1794,7 +1801,7 @@ export type PerformanceBaseline =
 
 // PERFORMANCESTANDARDMETRIC CANONICAL ENUM
 /**
- * Performance metrics that support rate thresholds on media buys — the verification subset of the broader metric vocabulary. Each metric specifies whether its threshold is a floor (must exceed) or ceiling (must not exceed). Shared values with `available-metric.json` mirror the delivery vocabulary (`viewability` → `viewable_rate` family, `completion_rate` → same name); verification-only values (`ivt`, `brand_safety`, `attention_score`) are typically vendor-attested and do not appear in `available-metric.json` because they're not seller-reportable scalars — they flow through `vendor_metric_values` or vendor-scope `committed_metrics` entries. `performance_standard.vendor` anchors vendor identity and `performance_standard.metric_id` names which of that vendor's metrics is judged; without it a party MUST NOT infer one.
+ * Performance metrics that support rate thresholds on media buys — the verification subset of the broader metric vocabulary. Each metric specifies whether its threshold is a floor (must exceed) or ceiling (must not exceed). Shared values with `available-metric.json` mirror the delivery vocabulary (`viewability` → `viewable_rate` family, `completion_rate` → same name); verification-only values (`ivt`, `brand_safety`, `attention_score`) are typically vendor-attested and do not appear in `available-metric.json` because they're not seller-reportable scalars — they flow through `vendor_metric_values` or vendor-scope `committed_metrics` entries with the matching `performance_standard.vendor` BrandRef anchoring identity.
  */
 export type PerformanceStandardMetric = 'viewability' | 'ivt' | 'completion_rate' | 'brand_safety' | 'attention_score';
 
@@ -2008,7 +2015,7 @@ export type ReportingDestinationSetupState = 'validating' | 'ready' | 'action_re
 /**
  * Standard breakdown vocabulary that reporting subscriptions select by, stable across sellers (experimental, media_buy.reporting_subscriptions). Sellers map each report definition's native dimensions onto these values. Receivers MUST accept unknown values; a selector naming a value the seller does not map matches no offering.
  */
-export type ReportingDimension = 'package' | 'creative' | 'country' | 'region' | 'metro';
+export type ReportingDimension = 'package' | 'creative' | 'country' | 'region' | 'metro' | 'postal_area';
 
 // REPORTINGFINALITY CANONICAL ENUM
 /**
@@ -3896,6 +3903,16 @@ export interface ForecastPoint {
   product_id?: string;
   dimensions?: ForecastPointDimensions;
   availability_status?: AvailabilityStatus;
+  impression_basis?: ImpressionEstimationBasis;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). The planning multiplier of a single-tier DOOH point: `metrics.impressions.mid / metrics.plays.mid`, rounded. The impressions are authoritative: a receiver MUST NOT reject a multiplier that differs from that ratio only by rounding. A point that reports `impression_basis_breakdown` SHOULD omit it and give each entry's planning multiplier instead: a multiplier blended across tiers mixes different units and misleads. A declaration, not a forecastable metric, so it sits outside `metrics`.
+   * @minimum 0
+   */
+  audience_multiplier?: number;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). For a DOOH point covering plays expected on different tiers, one entry per tier with the expected plays and impressions behind the point's midpoints: at least two entries, whose tiers MUST be distinct and whose `plays` and `impressions` MUST sum exactly to `metrics.plays.mid` and `metrics.impressions.mid`, which a point carrying a breakdown therefore carries. It SHOULD include the fallback the seller expects: the plays sensor-equipped screens are expected to estimate on `seller_modeled` while their sensor is not reporting. A point never carries both this and `impression_basis`. Tiers are different units with no exchange rate, so compare impressions within a tier (and for `sensor_measured`, within the same metric), and plays and spend across tiers.
+   */
+  impression_basis_breakdown?: ImpressionBasisBreakdownEntry[];
   /**
    * Forecasted metric values. Keys are forecastable-metric enum values for delivery/engagement or event-type enum values for outcomes; vendor metrics use vendor_metric_values. Values are ForecastRange objects (low/mid/high). Use { "mid": value } for point estimates. When budget is present, these are the expected metrics at that spend level. When budget is omitted, these represent total available inventory — use spend to express the estimated cost. Additional keys beyond the documented properties are allowed for event-type values (purchase, lead, app_install, etc.).
    */
@@ -4048,6 +4065,25 @@ export interface TimeForecastDimension {
    * Exclusive window end (RFC 3339 date-time with timezone offset). MUST be after start_time.
    */
   end_time: string;
+}
+/**
+ * Experimental (media_buy.dooh_impression_basis). The plays of a DOOH row, or of a forecast point, whose audience was estimated on one tier, and the impressions they produced. A row that aggregates plays estimated on different tiers (sensor-equipped screens and screens without a sensor, or one screen whose sensor stopped reporting for part of the flight) lists one entry per tier instead of a row-level `impression_basis`: at least two entries, at most one per tier. In a delivery row the entries' `plays` and `impressions` sum exactly to the row's `plays` and `impressions`; in a forecast point they are the expected values behind the point's midpoints. Entries of different tiers are different units with no exchange rate.
+ */
+export interface ImpressionBasisBreakdownEntry {
+  impression_basis: ImpressionEstimationBasis;
+  /**
+   * Plays whose audience was estimated on this tier. A number like the row's `plays`, so that a forecast's fractional expected values can sum exactly.
+   */
+  plays: number;
+  /**
+   * Impressions those plays produced. Authoritative: `audience_multiplier` is derived from it, not the other way round.
+   */
+  impressions: number;
+  /**
+   * `impressions / plays` of these plays, rounded. A receiver MUST NOT reject a multiplier that differs from `impressions / plays` only by rounding. Optional on `currency_measured` entries.
+   */
+  audience_multiplier?: number;
+  ext?: ExtensionObject;
 }
 /**
  * A forecasted value for a vendor-defined metric, emitted on ForecastPoint.vendor_metric_values parallel to delivery-metrics vendor_metric_values. The envelope mirrors VendorMetricValue but uses ForecastRange for value and the coverage denominators (measurable_impressions, measurable_plays, measurable_play_seconds) because forecasts may carry low/mid/high bounds instead of actual delivered values.
@@ -4366,6 +4402,24 @@ export interface DeliveryMetrics {
      * Per-row supplementary methodology notes for DOOH impression calculation (e.g., 'rotation-based; 6-second slot weighted by 70% audience overlap'). Free-form prose for context that doesn't fit the structured measurement-vendor surface. Canonical methodology declarations belong on the measurement vendor's `get_adcp_capabilities.measurement.metrics[]` block where they're discoverable once and inherited across delivery rows; this field is for row-specific context (a particular daypart's calculation, a venue-mix exception) rather than the seller's general methodology.
      */
     calculation_notes?: string;
+    impression_basis?: ImpressionEstimationBasis;
+    /**
+     * Experimental (media_buy.dooh_impression_basis). The row's `impressions / plays`, rounded, so a buyer can compare rows. `impressions` is authoritative: a receiver MUST NOT reject a multiplier that differs from `impressions / plays` only by rounding. On `sensor_measured` and `hybrid` rows sellers SHOULD include it, and it is the realised ratio for the period, which varies by row. On `currency_measured` rows it is optional. A row that reports `impression_basis_breakdown` SHOULD omit it and give each entry's multiplier instead: a multiplier blended across tiers mixes different units and misleads.
+     * @minimum 0
+     */
+    audience_multiplier?: number;
+    /**
+     * Experimental (media_buy.dooh_impression_basis). On rows whose impressions are, wholly or through an `impression_basis_breakdown` entry, `sensor_measured` or `hybrid`, the `vendor_metric_values[]` row the sensor audience derives from, joined on `(vendor, metric_id, qualifier)`. That row carries the coverage (`measurable_plays`) and the seller–vendor relationship, and the vendor catalog the methodology. When `basis_metric` is present, a matching row MUST be present in the `vendor_metric_values[]` of the delivery row that carries this `dooh_metrics`. Totals and package rows MAY omit it when the rows below them carry it.
+     */
+    basis_metric?: {
+      vendor: BrandReference;
+      metric_id: VendorMetricID;
+      qualifier?: Qualifier;
+    };
+    /**
+     * Experimental (media_buy.dooh_impression_basis). For a row that aggregates plays estimated on different tiers — a product mixing sensor-equipped screens and screens without a sensor, or a sensor-equipped screen whose fallback plays, estimated while its sensor was not reporting, are `seller_modeled` — one entry per tier present: at least two entries, whose tiers MUST be distinct and whose `plays` and `impressions` MUST sum exactly to the row's. Each entry of a parent row (totals, a package) MUST equal the sum of its child rows' entries for that tier, a single-tier child counting as one entry. A row never carries both this and `impression_basis`. Tiers are different units with no exchange rate, so compare impressions within a tier (and for `sensor_measured`, within the same `basis_metric`), and plays and spend across tiers. Billing is unchanged: a CPM bills the row's total `impressions`, all tiers together. Sellers that emit it MUST list `media_buy.dooh_impression_basis` in `experimental_features`.
+     */
+    impression_basis_breakdown?: ImpressionBasisBreakdownEntry[];
     /**
      * Per-venue performance breakdown
      */
@@ -4400,6 +4454,12 @@ export interface DeliveryMetrics {
        * @format int
        */
       screens_used?: number;
+      impression_basis?: ImpressionEstimationBasis;
+      /**
+       * Experimental (media_buy.dooh_impression_basis). Plays at this venue, counted like the delivery row's `plays`: raw plays before any impression multiplier, not `loop_plays`. Each screen that played the spot counts one play, so a spot shown at once on three synchronized screens is three plays. A venue row carries no multiplier; its audience per play is `impressions / plays`.
+       * @minimum 0
+       */
+      plays?: number;
     }[];
   };
   /**
@@ -4683,6 +4743,16 @@ export interface DeliveryMetrics {
   vendor_metric_provenance?: VendorMetricProvenance[];
 }
 /**
+ * The row's `qualifier`, repeated verbatim when the row carries one. Omit when the row has none.
+ */
+export interface Qualifier {
+  viewability_standard?: ViewabilityStandard;
+  completion_source?: CompletionSource;
+  attribution_methodology?: AttributionMethodology;
+  attribution_window?: Duration;
+  lift_dimension?: LiftDimension;
+}
+/**
  * Evidence artifact for this event (completion photograph); capture time and location ride the artifact
  */
 export interface PlacementEvidence {
@@ -4769,18 +4839,6 @@ export interface VendorMetricProvenance {
   deduplicated?: boolean;
   ext?: ExtensionObject;
 }
-/**
- * The row's `qualifier`, repeated verbatim when the row carries one, so provenance joins on `(vendor, metric_id, qualifier)`. Omit when the row has none.
- */
-export interface Qualifier {
-  viewability_standard?: ViewabilityStandard;
-  completion_source?: CompletionSource;
-  attribution_methodology?: AttributionMethodology;
-  attribution_window?: Duration;
-  lift_dimension?: LiftDimension;
-}
-
-// MEASUREMENTTERMS PRIORITY CANONICAL SCHEMA
 /**
  * Billing measurement and makegood terms for media buys. Declares who counts the billing metric and what remedies apply when thresholds are breached. Appears on products (seller defaults), package requests (buyer proposals), and confirmed packages (agreed terms). All fields are optional — presence indicates the term is declared or proposed.
  */
@@ -6223,6 +6281,7 @@ export interface PlatformDistribution {
    */
   bind_expiry_days?: number;
 }
+// REPORTINGDELIVERYMETHOD PRIORITY CANONICAL SCHEMA
 /**
  * Provider-neutral durable reporting delivery method. The caller may request protocol-managed provisioning or reuse an existing seller-issued binding. Transport names are open so new platforms do not require an AdCP enum change. Credentials, bearer profiles, and private keys MUST NOT appear. For every pattern the seller authenticates as itself, through the producer_identity it advertises, and MUST NOT hold, request, or store a caller-issued secret to deliver, directly or through a processor acting for it. Sellers implementing this schema MUST advertise media_buy.reporting_delivery in experimental_features.
  */
@@ -7211,7 +7270,7 @@ export type FormatOptionReference = PublisherCatalogFormatOptionReference | Prod
  */
 export type CreativeRevisionID = string;
 /**
- * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ * Deprecated in 3.3, removed in 4.0. The single-value form: send a one-item array instead when the release in use with the counterparty is 3.1 or later. 3.0 accepts only the single value.
  */
 export type AssetVariant =
   | ImageAsset
@@ -18466,29 +18525,6 @@ export type DemographicPredicate = {
   gender?: DemographicGender;
 };
 /**
- * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
- */
-export type PerformanceStandard = {
-} & {
-  metric: PerformanceStandardMetric;
-  /**
-   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
-   */
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandReference;
-  metric_id?: VendorMetricID;
-} & {
-  metric: PerformanceStandardMetric;
-  /**
-   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
-   */
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandReference;
-  metric_id?: VendorMetricID;
-};
-/**
  * One metric in a package's binding reporting contract. Each entry uses `scope` as the discriminator and identifies a standard or vendor-defined metric that the seller has committed to populate in delivery reports.
  */
 export type CommittedMetric =
@@ -19233,6 +19269,18 @@ export interface PriceBreakdown {
 export interface PackageTargetingResolution {
   demographics: DemographicTargetingResolution;
   ext?: ExtensionObject;
+}
+/**
+ * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
+ */
+export interface PerformanceStandard {
+  metric: PerformanceStandardMetric;
+  /**
+   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
+   */
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandReference;
 }
 export interface ImageFormatDeclaration {
   format_kind: 'image';
@@ -20328,6 +20376,11 @@ export interface ProductDOOHPlacementAttributes {
   screen_resolution?: ProductDOOHScreenResolution;
   motion?: DOOHMotionType;
   location?: ProductDOOHLocation;
+  impression_basis?: ImpressionEstimationBasis;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). Planning audience per play for this placement: the `impressions / plays` the seller's forecasts use. Optional on `currency_measured` placements.
+   */
+  audience_multiplier?: number;
 }
 /**
  * Physical screen resolution in pixels. Canonical format dimensions remain authoritative for creative acceptance and may describe a smaller content region within the physical screen.
@@ -22280,35 +22333,6 @@ export type ProductPurchaseAudienceEvidenceRequirements = {
    */
   accepted_attestation_claim_types?: [string, ...string[]];
   ext?: ExtensionObject;
-};
-/**
- * Compact committed metric threshold with resolvable vendor identity and no creative or brand-asset graph. metric_id has the semantics of performance-standard.json metric_id.
- */
-export type CanonicalPerformanceStandard = {
-} & {
-  metric: PerformanceStandardMetric;
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandKey;
-  metric_id?: VendorMetricID;
-} & {
-  metric: PerformanceStandardMetric;
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandKey;
-  metric_id?: VendorMetricID;
-} & {
-  metric: PerformanceStandardMetric;
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandKey;
-  metric_id?: VendorMetricID;
-} & {
-  metric: PerformanceStandardMetric;
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandKey;
-  metric_id?: VendorMetricID;
 };
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
@@ -24528,6 +24552,15 @@ export interface ProductPurchaseMeasurementTerms {
   };
 }
 /**
+ * Compact committed metric threshold with resolvable vendor identity and no creative or brand-asset graph.
+ */
+export interface CanonicalPerformanceStandard {
+  metric: PerformanceStandardMetric;
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandKey;
+}
+/**
  * Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.
  */
 export interface CanonicalMetricQualifier {
@@ -24602,6 +24635,21 @@ export interface CanonicalForecastPoint {
   product_id?: string;
   dimensions?: ForecastPointDimensions;
   availability_status?: AvailabilityStatus;
+  impression_basis?: ImpressionEstimationBasis;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). The planning multiplier of a single-tier DOOH point: `metrics.impressions.mid / metrics.plays.mid`, rounded. The impressions are authoritative: a receiver MUST NOT reject a multiplier that differs from that ratio only by rounding. A point that reports `impression_basis_breakdown` SHOULD omit it and give each entry's planning multiplier instead: a multiplier blended across tiers mixes different units and misleads. A declaration, not a forecastable metric, so it sits outside `metrics`.
+   */
+  audience_multiplier?: number;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). For a DOOH point covering plays expected on different tiers, one entry per tier with the expected plays and impressions behind the point's midpoints: at least two entries, whose tiers MUST be distinct and whose `plays` and `impressions` MUST sum exactly to `metrics.plays.mid` and `metrics.impressions.mid`, which a point carrying a breakdown therefore carries. It SHOULD include the fallback the seller expects: the plays sensor-equipped screens are expected to estimate on `seller_modeled` while their sensor is not reporting. A point never carries both this and `impression_basis`. Tiers are different units with no exchange rate, so compare impressions within a tier (and for `sensor_measured`, within the same metric), and plays and spend across tiers.
+   *
+   * @minItems 2
+   */
+  impression_basis_breakdown?: [
+    ImpressionBasisBreakdownEntry,
+    ImpressionBasisBreakdownEntry,
+    ...ImpressionBasisBreakdownEntry[]
+  ];
   metrics: {
     coverage_rate?: ForecastRateRange;
     [k: string]: ForecastRange | undefined;
@@ -24640,6 +24688,11 @@ export interface CanonicalDOOHPlacementAttributes {
   screen_resolution?: CanonicalDOOHScreenResolution;
   motion?: DOOHMotionType;
   location?: CanonicalDOOHLocation;
+  impression_basis?: ImpressionEstimationBasis;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). Planning audience per play for this placement: the `impressions / plays` the seller's forecasts use. Optional on `currency_measured` placements.
+   */
+  audience_multiplier?: number;
 }
 /**
  * Physical screen resolution in pixels. Canonical format dimensions remain authoritative for creative acceptance.
@@ -29243,7 +29296,7 @@ export interface PolicyEntry {
   category?: PolicyCategory;
   enforcement: PolicyEnforcementLevel;
   /**
-   * When true, plans subject to this policy MUST set plan.human_review_required = true. Use for policies that mandate human oversight of decisions affecting data subjects — e.g., GDPR Article 22 (solely automated decisions with legal or similarly significant effects) and EU AI Act Annex III high-risk categories (credit, insurance pricing, recruitment, housing allocation). Governance agents MUST escalate any plan action whose resolved policies include requires_human_review: true. Unlike `enforcement`, this flag applies as soon as the policy is resolved — it is NOT gated by `effective_date`. Art 22 GDPR and similar foundational obligations may predate an AI-Act-specific effective date; the human-review requirement fires regardless.
+   * When true, the governance agent MUST set plan.human_review_required = true on plans subject to this policy. Use for policies that mandate human oversight of decisions affecting data subjects — e.g., GDPR Article 22 (solely automated decisions with legal or similarly significant effects) and EU AI Act Annex III high-risk categories (credit, insurance pricing, recruitment, housing allocation). Governance agents MUST escalate any plan action whose resolved policies include requires_human_review: true. Unlike `enforcement`, this flag applies as soon as the policy is resolved — it is NOT gated by `effective_date`. Art 22 GDPR and similar foundational obligations may predate an AI-Act-specific effective date; the human-review requirement fires regardless.
    */
   requires_human_review?: boolean;
   /**
@@ -31848,7 +31901,7 @@ export type CreativeItem =
 
 // core/creative-localization-readback.json
 /**
- * An asset inside a materialized creative locale variant. Text and markdown assets may omit language when they make no language claim. When language is present, it MUST use the shared AdCP BCP 47 wire profile; conformance additionally requires exact equality with the enclosing variant locale.
+ * Deprecated in 3.3, removed in 4.0. The single-value form: send a one-item array instead.
  */
 export type LocalizedCreativeAsset = AssetVariant & {
 };
@@ -35997,6 +36050,8 @@ export type ReportingSubscription = {
 } & {
 } & {
 } & {
+} & {
+} & {
   /**
    * Caller-selected stable key, unique within the authenticated principal and not equal to any delivery_config_id the caller uses on any account with this seller. Never . or .., because it may appear in a destination path.
    */
@@ -36063,6 +36118,7 @@ export type ReportingSubscription = {
      * exact selects the offering whose dimension set equals dimensions; native dimensions that do not map to the vocabulary count as distinct, so package by device does not equal package. finest selects the single offering with the most mapped dimensions among those including every selector dimension. Ties under exact and finest go to the lowest offering_id in byte order. all selects every offering including every selector dimension, each with its own obligations. Defaults to exact when dimensions is present and finest when it is absent. With match exact and no dimensions, every candidate qualifies and the lowest offering_id wins. Matching reads each offering's standard_dimensions and unmapped_dimensions. Billing subscriptions MUST use exact with dimensions, so a billing feed's breakdown never depends on which offerings happen to exist.
      */
     match?: 'exact' | 'finest' | 'all';
+    dimension_systems?: ReportingDimensionSystems;
     /**
      * IANA timezone override for period boundaries. Only valid when scope.account_ids names exactly one account. An account_timezone offering matches and uses this zone in place of the account's. A utc offering matches only when this is exactly UTC or Etc/UTC; other names that tzdata links to UTC, such as Etc/GMT, GMT, Etc/Universal, or Zulu, do not match. A source_timezone or fixed billing_cycle offering matches only when its published period_timezone equals this one. A billing_cycle offering whose anchor the buyer configures never matches a subscription, which has no way to supply the anchor.
      */
@@ -36163,6 +36219,20 @@ export interface ReportingSubscriptionPriorVersion {
    */
   superseded_at: string;
   configuration?: ReportingSubscription;
+}
+/**
+ * Optional. Narrows a metro or postal_area breakdown to the systems named here: an offering matches only when its dimension_systems.metro equals this metro, and its dimension_systems.postal_area includes every entry here. A metro key requires metro in dimensions, and a postal_area key requires postal_area in dimensions. Omit a key to accept any system for that dimension.
+ */
+export interface ReportingDimensionSystems {
+  metro?: MetroAreaSystem;
+  /**
+   * Countries and their postal systems in the postal_area breakdown, each a valid country-local pairing from postal-country-system.json, the same pairing geo-delivery-metrics.json and postal targeting use. Required on an offering whose standard_dimensions include postal_area.
+   *
+   * @minItems 1
+   * @maxItems 16
+   */
+  postal_area?:
+    PostalCountrySystem[];
 }
 export interface ReportingSubscriptionAccountExceptions {
   account_id: string;
@@ -36723,7 +36793,6 @@ export interface ProductOfferFilters {
     threshold: number;
     standard?: ViewabilityStandard;
     vendor: BrandKey;
-    metric_id?: VendorMetricID;
   }[];
   required_metrics?: AvailableMetric[];
   required_vendor_metrics?: {
@@ -37975,7 +38044,7 @@ export type ReportingDeliveryOffering = {
    */
   report_definition_id: string;
   /**
-   * Experimental (media_buy.reporting_subscriptions). The offering's breakdown mapped onto the standard reporting dimension vocabulary, so a buyer can resolve a subscription selector's match from the wire. Empty for an offering that reports totals only. Sellers advertising media_buy.reporting_subscriptions MUST include it on every offering.
+   * Experimental (media_buy.reporting_subscriptions). The offering's breakdown mapped onto the standard reporting dimension vocabulary, so a buyer can resolve a subscription selector's match from the wire. Empty for an offering that reports totals only. Sellers advertising media_buy.reporting_subscriptions MUST include it on every offering. A contract_version 1.2 report definition names each geography dimension it maps with its standard name and fills it with codes, never display names (reporting-report-definition.json dimensions).
    *
    * @maxItems 16
    */
@@ -37988,6 +38057,7 @@ export type ReportingDeliveryOffering = {
    */
   unmapped_dimensions?:
     string[];
+  dimension_systems?: ReportingDimensionSystems;
   /**
    * Experimental (media_buy.reporting_subscriptions). When this offering became, or becomes, available. Before it the offering is not a candidate for subscription resolution or configuration. Absent: available since before any retained obligation.
    */
@@ -38998,7 +39068,7 @@ export interface ReportingReportDefinition {
     unit?: string;
   }[];
   /**
-   * Native row dimensions. media_buy_id and package_id name the AdCP media buy and package a row reports. At contract_version 1.2, a definition whose rows are scoped to a media buy MUST name that dimension media_buy_id, not a seller-native name, and a definition whose dimensions include media_buy_id MUST include package_id, so every row carries the buyer-visible package. A definition whose rows are not scoped to a media buy, such as an account-level summary, declares no media_buy_id and is exempt. Reporting subscription selectors and offering standard_dimensions name a 1.2 definition's package_id dimension as package.
+   * Native row dimensions. media_buy_id and package_id name the AdCP media buy and package a row reports. At contract_version 1.2, a definition whose rows are scoped to a media buy MUST name that dimension media_buy_id, not a seller-native name, and a definition whose dimensions include media_buy_id MUST include package_id, so every row carries the buyer-visible package. A definition whose rows are not scoped to a media buy, such as an account-level summary, declares no media_buy_id and is exempt. Reporting subscription selectors and offering standard_dimensions name a 1.2 definition's package_id dimension as package. At contract_version 1.2, a definition that breaks rows down by geography names each geography dimension with its standard name, country, region, metro or postal_area, and each row carries a code in it, never a display name: an ISO 3166-1 alpha-2 code for country, an ISO 3166-2 code for region, a code in the offering's dimension_systems.metro system for metro, and a code in one of its dimension_systems.postal_area systems for postal_area, the same values geo-delivery-metrics.json uses for geo_code. A native geography dimension that does not follow this rule is unmapped.
    */
   dimensions: string[];
   restatement_policy: {
@@ -41881,6 +41951,7 @@ export type XEntityTypes =
   | 'creative_locale_variant'
   | 'creative_format'
   | 'transformer'
+  | 'evaluator'
   | 'creative_evaluation'
   | 'build_variant'
   | 'served_variant'
@@ -43209,7 +43280,7 @@ export interface PolicyCategoryDefinition {
    */
   restricted_attributes?: RestrictedAttribute[];
   /**
-   * When true, any plan declaring this category MUST set plan.human_review_required = true. Use for regulatory regimes that mandate human oversight under GDPR Art 22 or EU AI Act Annex III — fair_housing, fair_lending, fair_employment, pharmaceutical_advertising, and similar high-risk categories. Category-level setting applies to all policies and plans referencing it; policies can override on policy-entry.requires_human_review. Effective immediately regardless of individual policy `effective_date` fields.
+   * When true, the governance agent MUST set plan.human_review_required = true on any plan declaring this category. Use for regulatory regimes that mandate human oversight under GDPR Art 22 or EU AI Act Annex III — fair_housing, fair_lending, fair_employment, pharmaceutical_advertising, and similar high-risk categories. Category-level setting applies to all policies and plans referencing it. A policy's own `requires_human_review: true` adds the requirement to plans that resolve that policy; no policy removes a category's requirement. Effective immediately regardless of individual policy `effective_date` fields.
    */
   requires_human_review?: boolean;
   /**

@@ -608,7 +608,7 @@ async function callAsEstablishedPrincipal(actionSchema, args, via = 'mcp') {
   const server = createAdcpServer({
     name: 'auth-order',
     version: '1.0.0',
-    adcpVersion: '3.3.0-rc.0',
+    adcpVersion: '3.3.0-rc.3',
     mcpToolProfile: 'all',
     identity33: { authorize },
     validation: { requests: 'off', responses: 'off' },
@@ -687,8 +687,8 @@ describe('release selection reads the PARSED value', () => {
     return createAdcpServer({
       name: 'versions',
       version: '1.0.0',
-      adcpVersion: '3.3.0-rc.0',
-      capabilities: { supported_versions: ['3.1.31', '3.3.0-rc.0'] },
+      adcpVersion: '3.3.0-rc.3',
+      capabilities: { supported_versions: ['3.1.31', '3.3.0-rc.3'] },
       toolVersions: { probe: { max: '3.1' } },
       customTools: {
         probe: {
@@ -730,7 +730,7 @@ describe('release selection reads the PARSED value', () => {
     const client = await connect(versionServer({ adcp_version: z.string().optional(), value: z.string() }, seen));
     const result = await client.callTool({
       name: 'probe',
-      arguments: { adcp_version: '3.3-rc.0', value: 'ok', context: { trace: 'u' } },
+      arguments: { adcp_version: '3.3-rc.3', value: 'ok', context: { trace: 'u' } },
     });
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
@@ -747,7 +747,7 @@ describe('release selection reads the PARSED value', () => {
       arguments: { adcp_version: '3.1', value: 'ok', context: { trace: 'x' } },
     });
     // Documented behavior: the stripped field never selects a release, so the
-    // server default (3.3.0-rc.0, outside probe's max 3.1) applies.
+    // server default (3.3.0-rc.3, outside probe's max 3.1) applies.
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
     assert.deepEqual(result.structuredContent.context, { trace: 'x' });
@@ -775,8 +775,8 @@ describe('every custom-tool rejection echoes context, even when the schema strip
   const server = createAdcpServer({
     name: 'rejections',
     version: '1.0.0',
-    adcpVersion: '3.3.0-rc.0',
-    capabilities: { supported_versions: ['3.1.31', '3.3.0-rc.0'] },
+    adcpVersion: '3.3.0-rc.3',
+    capabilities: { supported_versions: ['3.1.31', '3.3.0-rc.3'] },
     toolVersions: { restricted: { max: '3.1' } },
     validation: { requests: 'off', responses: 'off' },
     customTools: {
@@ -825,7 +825,7 @@ describe('every custom-tool rejection echoes context, even when the schema strip
     const identityServer = createAdcpServer({
       name: 'identity-reject',
       version: '1.0.0',
-      adcpVersion: '3.3.0-rc.0',
+      adcpVersion: '3.3.0-rc.3',
       identity33: {
         authorize: async () => {
           throw new IdentityAuthorizationError();

@@ -353,7 +353,7 @@ describe('refine_proposals server integration', () => {
 
   describe('AdCP 3.3 extend_hold and include_collections (#3601)', () => {
     const request33 = (key, refinements, extra = {}) => ({
-      adcp_version: '3.3-rc.0',
+      adcp_version: '3.3-rc.3',
       adcp_major_version: 3,
       idempotency_key: key,
       refinements,
@@ -361,8 +361,8 @@ describe('refine_proposals server integration', () => {
     });
     const holdServer = (onCall, options = {}) =>
       negotiationServer(onCall, {
-        adcpVersion: '3.3.0-rc.0',
-        serverCapabilities: { supported_versions: ['3.2', '3.3-rc.0'] },
+        adcpVersion: '3.3.0-rc.3',
+        serverCapabilities: { supported_versions: ['3.2', '3.3-rc.3'] },
         capabilities: { supported_dimensions: [], hold_extension: true },
         ...options,
       });
@@ -396,7 +396,7 @@ describe('refine_proposals server integration', () => {
         'buyer-a'
       );
       assert.equal(response.isError, undefined, JSON.stringify(response.structuredContent));
-      assert.equal(response.structuredContent.adcp_version, '3.3-rc.0');
+      assert.equal(response.structuredContent.adcp_version, '3.3-rc.3');
       assert.equal(response.structuredContent.results[0].outcome, 'finalized');
       assert.equal(response.structuredContent.results[0].proposal.parent_proposal_id, 'held-1');
       assert.equal(response.structuredContent.collections.length, 1);
@@ -471,9 +471,9 @@ describe('refine_proposals server integration', () => {
 
     test('projects hold_extension and its feature id to AdCP 3.3 callers only', async () => {
       const server = holdServer();
-      const modern = await call(server, 'get_adcp_capabilities', { adcp_version: '3.3-rc.0', adcp_major_version: 3 });
+      const modern = await call(server, 'get_adcp_capabilities', { adcp_version: '3.3-rc.3', adcp_major_version: 3 });
       assert.equal(modern.isError, undefined, JSON.stringify(modern.structuredContent));
-      assert.equal(modern.structuredContent.adcp_version, '3.3-rc.0');
+      assert.equal(modern.structuredContent.adcp_version, '3.3-rc.3');
       assert.deepEqual(modern.structuredContent.media_buy.proposal_refinement, {
         supported_dimensions: [],
         hold_extension: true,
@@ -490,7 +490,7 @@ describe('refine_proposals server integration', () => {
         holdServer(undefined, { capabilities: { supported_dimensions: [] } }),
         'get_adcp_capabilities',
         {
-          adcp_version: '3.3-rc.0',
+          adcp_version: '3.3-rc.3',
           adcp_major_version: 3,
         }
       );

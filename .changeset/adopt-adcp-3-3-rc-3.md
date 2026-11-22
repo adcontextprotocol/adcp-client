@@ -1,0 +1,13 @@
+---
+'@adcp/sdk': patch
+---
+
+**Beta-channel break for rc.0 pins:** this SDK advertises and negotiates only the AdCP `3.3-rc.3` preview and no longer packages or advertises `3.3-rc.0`. A buyer or seller still on rc.0 will not select the 3.3 preview with this release; the pair negotiates a shared stable release (3.2.8, 3.1.31 or 3.0.25) instead. Upgrade both sides together to keep exercising 3.3 preview features. An explicit `adcpVersion: '3.3.0-rc.0'` (or `'3.3-rc.0'`) pin now fails with a configuration error.
+
+Adopt the signed AdCP 3.3.0-rc.3 bundle (tag commit c5f39849d5be, sha256 9c0f4b2b61be..., cosign-verified), replacing 3.3.0-rc.0. The SDK never packaged rc.1 (withdrawn before publication) or rc.2. Public types, Zod schemas, tool metadata and the packaged compliance corpus are regenerated from the rc.3 release.
+
+- **`metric_id` withdrawn from performance standards (adcontextprotocol/adcp#8501):** `PerformanceStandard`, `CanonicalPerformanceStandard` and `required_performance_standards` entries no longer declare it; it is planned for 4.0. Code that set it on rc.0 no longer type-checks. The `evaluator` `x-entity` value returns as deprecated.
+- **`PROPOSAL_TERMS_CHANGED` (adcp#9168):** the new standard error code for an `accept_proposal` whose `proposal_terms_digest` does not match the committed proposal's current `terms_digest`. It is in `STANDARD_ERROR_CODES` (`recovery: 'correctable'`), and the buyer retry policy treats it as a re-quote. The `compact_product_lifecycle` storyboard now attempts acceptance with a mismatched digest first; any refusal passes.
+- **Additions:** the `postal_area` reporting dimension and `dimension_systems` on reporting offerings, selectors and report definitions (adcp#9049; selector matching shipped in 17.0.0-beta.33); the experimental DOOH impression basis (`impression_basis`, `audience_multiplier`, `impression_basis_breakdown`, new `ImpressionEstimationBasis`).
+- **Clarifications:** the single-value form of 17 scalar-or-list unions is deprecated (adcp#8477); payloads that two `oneOf` branches both matched now validate (adcp#9051), among them property IDs in property feature results and an `adagents.json` carrying both `authoritative_location` and inline `authorized_agents`. Campaign-governance rule changes change no wire field.
+- The proposal-terms review table, canonical storyboard fixtures and reporting-subscription vectors are unchanged from rc.0 and are re-pinned to v3.3.0-rc.3.

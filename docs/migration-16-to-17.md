@@ -1,6 +1,6 @@
 # Migrating from SDK 16 to 17
 
-SDK 17 beta pins the signed AdCP `3.3.0-rc.0` release. Use the beta in
+SDK 17 beta pins the signed AdCP `3.3.0-rc.3` release. Use the beta in
 development and staging; production remains on SDK 16 and AdCP 3.2.
 
 ## Companion packages
@@ -106,7 +106,7 @@ request release. Existing cursor, account identity, and acknowledgement checks
 still apply.
 
 A `3.3.0` or `3.3` configuration pin does not select a beta. Use the exact
-`3.3.0-rc.0` bundle (wire alias `3.3-rc.0`); unavailable pins now produce a
+`3.3.0-rc.3` bundle (wire alias `3.3-rc.3`); unavailable pins now produce a
 short list of bundled release lines instead of every compatible patch.
 
 ## pnpm peer resolution
@@ -140,7 +140,7 @@ and [peer-dependency settings](https://pnpm.io/settings#dedupepeerdependents).
 
 The SDK packages the exact 3.3 beta schema and compliance bundle alongside
 maintained AdCP 3.2.8, 3.1.31 and 3.0.25 bundles. A seller must advertise
-`3.3-rc.0` (or its full bundle version, `3.3.0-rc.0`) before the buyer
+`3.3-rc.3` (or its full bundle version, `3.3.0-rc.3`) before the buyer
 selects that preview. A different beta, a moving `3.3-beta` alias, or a
 served-version echo alone does not establish support. The buyer can negotiate
 an older stable release the seller advertises. Missing or synthetic capability
@@ -279,7 +279,7 @@ the MCP SDK's bare `-32602` text result, with no `structuredContent` and no
   },
   "context": { "trace": "tr-1" },
   "status": "failed",
-  "adcp_version": "3.3-rc.0"
+  "adcp_version": "3.3-rc.3"
 }
 ```
 
@@ -329,10 +329,58 @@ Rejections on these tools echo the caller's `context` even when the schema
 strips it: validation, version, authorization, and errors your handler returns
 or throws.
 
+## AdCP 3.3.0-rc.3
+
+SDK 17 now pins AdCP `3.3.0-rc.3` and no longer packages or advertises
+`3.3.0-rc.0`. It never packaged rc.1, which was withdrawn before publication,
+or rc.2. Preview negotiation is exact, so an rc.0 peer and an rc.3 peer settle
+on a stable release they share, and an explicit `adcpVersion: '3.3.0-rc.0'` pin
+fails with a configuration error.
+
+- **`metric_id` leaves performance standards (adcontextprotocol/adcp#8501).**
+  `PerformanceStandard`, `CanonicalPerformanceStandard` and the
+  `required_performance_standards` filter entries no longer declare `metric_id`;
+  the field is planned for 4.0. **Code that set it on rc.0 no longer
+  type-checks**, and the closed canonical performance standard rejects it. The
+  `evaluator` `x-entity` value returns as deprecated.
+- **`PROPOSAL_TERMS_CHANGED` (adcp#9168).** A seller refuses an
+  `accept_proposal` whose `proposal_terms_digest` does not match the committed
+  proposal's current `terms_digest`, including a proposal already accepted
+  under a different digest, and accepts nothing. It SHOULD use the new code
+  with `error.field: 'proposal_terms_digest'`. The code is in
+  `STANDARD_ERROR_CODES` (`recovery: 'correctable'`), and the buyer retry
+  policy treats it as a re-quote: re-read the proposal, then accept its current
+  digest with a fresh `idempotency_key` or find the existing MediaBuy. The
+  `media_buy_seller/compact_product_lifecycle` storyboard now sends a
+  mismatched digest before the real acceptance. Any refusal passes; the code
+  and field are advisory.
+- **Reporting geography (adcp#9049, experimental reporting subscriptions).**
+  The `postal_area` reporting dimension and `dimension_systems` on offerings,
+  selectors and report definitions. Offering selection already honours
+  `selector.dimension_systems` (17.0.0-beta.33).
+- **DOOH impression basis (experimental `media_buy.dooh_impression_basis`).**
+  `impression_basis`, `audience_multiplier` and `impression_basis_breakdown`
+  on DOOH delivery, forecast points and placements, with the new
+  `ImpressionEstimationBasis` type.
+- **Deprecated single values (adcp#8477).** The single-value form of 17
+  scalar-or-list unions (brand colors, the creative asset maps,
+  `status_filter` on `get_media_buys` and `get_media_buy_delivery`, and
+  others) is deprecated. Send a one-item array; receivers keep accepting the
+  single value through 3.x. No payload validates differently.
+- **Overlapping `oneOf` branches resolve (adcp#9051).** Payloads two branches
+  both matched now validate: property IDs in property feature results,
+  content-standards successes that also list `errors`, an `adagents.json` with
+  both `authoritative_location` and inline `authorized_agents` (it is the URL
+  reference), and calibration exemplars that carry `type` and `value`.
+- **Unchanged.** The proposal-terms review table, the canonical storyboard
+  fixtures and the reporting-subscription vectors are the same as rc.0.
+  Campaign-governance rule changes in rc.1 change no wire field.
+
 ## AdCP 3.3.0-rc.0
 
-SDK 17 now pins AdCP `3.3.0-rc.0`, the first 3.3 release candidate, and no
-longer packages or advertises `3.3.0-beta.6`. Preview negotiation is exact, so a
+From 17.0.0-beta.29 to 17.0.0-beta.34, SDK 17 pinned AdCP `3.3.0-rc.0`, the
+first 3.3 release candidate, and no longer packaged or advertised
+`3.3.0-beta.6`. Preview negotiation is exact, so a
 beta.6 peer and an rc.0 peer settle on a stable release they share, and an
 explicit `adcpVersion: '3.3.0-beta.6'` pin fails with a configuration error.
 

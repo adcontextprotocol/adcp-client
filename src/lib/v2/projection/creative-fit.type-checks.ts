@@ -12,7 +12,7 @@ const result = fitCreativeToPackages(
     },
   ],
   {
-    adcpVersion: '3.3.0-rc.0',
+    adcpVersion: '3.3.0-rc.3',
     primaryAssetFacts: { channels: 'stereo', codec: 'aac' },
   }
 );
