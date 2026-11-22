@@ -395,6 +395,39 @@ export function projectToolPayload<T>(
   return { value: (projected === OMIT ? payload : projected) as T, dropped };
 }
 
+function refRoot(schemaRef: string, version: string): SchemaNode | undefined {
+  let document;
+  try {
+    document = getSchemaDocumentByRef(schemaRef, version);
+  } catch {
+    return undefined;
+  }
+  if (!document) return undefined;
+  const root = document.schema as Schema;
+  return { schema: root, doc: { root, base: absoluteBase(root.$id), version } };
+}
+
+/**
+ * Project a payload whose shape is a shared schema rather than a tool's
+ * (`core/error.json` for an error, say) from the `fromVersion` schema to the
+ * `toVersion` schema, with the same diff as {@link projectToolPayload}.
+ * Returns the original reference unchanged when nothing needs removing or when
+ * either release has no such schema.
+ */
+export function projectSchemaPayload<T>(
+  schemaRef: string,
+  payload: T,
+  fromVersion: string,
+  toVersion: string
+): ProjectionResult<T> {
+  const source = refRoot(schemaRef, fromVersion);
+  const target = refRoot(schemaRef, toVersion);
+  if (!source || !target || !isObject(payload)) return { value: payload, dropped: [] };
+  const dropped: ProjectionDrop[] = [];
+  const projected = project(payload, [source], [target], '', dropped, 0);
+  return { value: (projected === OMIT ? payload : projected) as T, dropped };
+}
+
 function typesObject(schema: Schema): boolean {
   return schema.type === 'object' || (Array.isArray(schema.type) && schema.type.includes('object'));
 }

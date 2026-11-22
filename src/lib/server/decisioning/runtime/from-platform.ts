@@ -133,6 +133,8 @@ import { resolveCredentialPolicyForTool, scanArgsForCredentials, type Credential
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import { validateSpecialismRequiredTools, formatSpecialismIssue } from '../validate-specialisms';
 import type { AdcpLogger } from '../../create-adcp-server';
+import { downgradeResponse } from '../../../adapters/version';
+import { projectErrorsForRelease } from '../../error-release-projection';
 import {
   _armTaskHandoffPreflight,
   buildExternalHandoffContext,
@@ -3401,6 +3403,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const taskPushOptions = {
     allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
     autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
+    // Handler results are in this release; task webhooks convert them to the served one.
+    serverAdcpVersion: configuredAdcpVersion,
   };
   const platformProposalNegotiation = buildProposalNegotiationHandlers(
     platform,
@@ -5287,6 +5291,8 @@ interface DispatchHitlOpts {
   pushNotificationSigningProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   pushNotificationOperationId?: string;
   servedAdcpVersion?: string;
+  /** The server's release, which the task's result is in. The terminal webhook converts it to `servedAdcpVersion`. */
+  serverAdcpVersion?: string;
   emitWebhook?: HandlerContext<Account>['emitWebhook'];
   observability?: DecisioningObservabilityHooks;
   logger: AdcpLogger;
@@ -5882,16 +5888,35 @@ function buildTaskWebhookPayload(
   // rejected it is the terminal artifact; for failed it carries
   // `errors: AdcpStructuredError[]` alongside the empty success shape.
   if ((status === 'completed' || status === 'rejected') && artifact.result !== undefined) {
-    payload.result = webhookResultForRelease(opts, artifact.result, status);
+    payload.result = webhookResultForRelease(opts, resultForServedRelease(opts, artifact.result), status);
   }
   if (status === 'rejected' && artifact.message !== undefined) {
     payload.message = artifact.message;
   }
   if (status === 'failed' && artifact.error !== undefined) {
-    payload.result = artifact.result ?? { errors: [artifact.error] };
+    payload.result = resultForServedRelease(opts, artifact.result ?? { errors: [artifact.error] });
     payload.message = artifact.error.message;
   }
   return payload;
+}
+
+/**
+ * A task's result is in the server's release. The webhook carries it in the release the request was
+ * served at, as the synchronous response and a `get_task_status` poll do (DR-0024). The errors of a
+ * failed or rejected result also go through `core/error.json`, which covers a task type whose schema
+ * has no Error arm. The stored result is never mutated.
+ */
+function resultForServedRelease(opts: DispatchHitlOpts, result: unknown): unknown {
+  const served = opts.servedAdcpVersion;
+  if (served === undefined || opts.serverAdcpVersion === undefined) return result;
+  const range = { fromVersion: opts.serverAdcpVersion, toVersion: served };
+  const converted = downgradeResponse(opts.tool, result, range);
+  const errors = projectErrorsForRelease(converted.data, { toolName: opts.tool, ...range });
+  const drifts = [...converted.drifts, ...errors.drifts];
+  if (drifts.length > 0) {
+    opts.logger.info(`Converted ${opts.tool} task webhook result down to AdCP ${served}`, { tool: opts.tool, drifts });
+  }
+  return errors.data;
 }
 
 const WEBHOOK_MEDIA_BUY_RESULT_TOOLS = new Set(['create_media_buy', 'update_media_buy', 'cancel_media_buy']);
@@ -6891,6 +6916,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
   pushOpts: {
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
+    serverAdcpVersion: string;
   },
   ctxFor: CtxForFn
 ): ProposalNegotiationHandlers<Account> | undefined {
@@ -6940,6 +6966,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
             servedAdcpVersion: ctx.servedAdcpVersion,
             emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
             autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+            serverAdcpVersion: pushOpts.serverAdcpVersion,
             observability,
             logger,
           };
@@ -6962,6 +6989,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   pushOpts: {
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
+    serverAdcpVersion: string;
   },
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined,
@@ -7029,6 +7057,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           servedAdcpVersion: ctx.servedAdcpVersion,
           emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
           autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+          serverAdcpVersion: pushOpts.serverAdcpVersion,
           observability,
           logger,
         };
@@ -7161,6 +7190,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           servedAdcpVersion: ctx.servedAdcpVersion,
           emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
           autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+          serverAdcpVersion: pushOpts.serverAdcpVersion,
           observability,
           logger,
         } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -7371,6 +7401,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           servedAdcpVersion: ctx.servedAdcpVersion,
           emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
           autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+          serverAdcpVersion: pushOpts.serverAdcpVersion,
           observability,
           logger,
         } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -7571,6 +7602,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               servedAdcpVersion: ctx.servedAdcpVersion,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+              serverAdcpVersion: pushOpts.serverAdcpVersion,
               observability,
               logger,
             } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -7632,6 +7664,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               servedAdcpVersion: ctx.servedAdcpVersion,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+              serverAdcpVersion: pushOpts.serverAdcpVersion,
               observability,
               logger,
             } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -7956,6 +7989,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   pushOpts: {
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
+    serverAdcpVersion: string;
   },
   ctxFor: CtxForFn,
   legacyFormatConverter: LegacyFormatConverter | undefined,
@@ -8059,6 +8093,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
               servedAdcpVersion: ctx.servedAdcpVersion,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+              serverAdcpVersion: pushOpts.serverAdcpVersion,
               observability,
               logger,
             } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -8223,6 +8258,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
   pushOpts: {
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
+    serverAdcpVersion: string;
   },
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined
@@ -8257,6 +8293,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
             servedAdcpVersion: ctx.servedAdcpVersion,
             emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
             autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+            serverAdcpVersion: pushOpts.serverAdcpVersion,
             observability,
             logger,
           } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;

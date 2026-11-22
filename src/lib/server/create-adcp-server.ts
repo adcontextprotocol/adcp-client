@@ -17,6 +17,8 @@ import {
   projectCapabilitiesForRelease,
   projectExperimentalFeaturesForRelease,
 } from './capabilities-release-projection';
+import { projectErrorsForRelease } from './error-release-projection';
+import { convertErrorToRelease } from '../adapters/version/translate';
 import { validateAgentOnboarding } from '../identity-3.3/lifecycle';
 import { isIdentity33UnboundContext } from '../identity-3.3/server';
 import {
@@ -4204,7 +4206,7 @@ function sanitizePayloadError(value: unknown): unknown {
     message: typeof safe.message === 'string' ? safe.message : 'operation failed',
     recovery: STANDARD_ERROR_CODES[code].recovery,
   };
-  for (const key of ['field', 'suggestion', 'retry_after', 'issues', 'buyer_reason']) {
+  for (const key of ['field', 'suggestion', 'retry_after', 'issues', 'buyer_reason', 'mutation_outcome']) {
     if (safe[key] !== undefined) projected[key] = safe[key];
   }
   if (safe.details !== undefined) {
@@ -4322,6 +4324,7 @@ const PAYLOAD_ERROR_FIELDS: ReadonlySet<string> = new Set([
   'issues',
   'details',
   'buyer_reason',
+  'mutation_outcome',
 ]);
 
 function projectEnvelopeToPayloadError(envelope: Record<string, unknown>): Record<string, unknown> {
@@ -6204,6 +6207,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const selected = selectServedAdcpRelease(releaseArgs, capConfig, adcpVersion, defaultAdcpVersion);
       served = isMcpToolResponse(selected) ? defaultErrorRelease : selected;
     }
+    response = downgradeResponseErrors(response, toolName, served.validationVersion);
     injectEnvelopeStatusIntoResponse(response, toolName, served.validationVersion);
     injectContextIntoResponse(response, rejection.context);
     injectVersionIntoResponse(response, served.wireVersion);
@@ -6284,34 +6288,48 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   /**
    * A task's stored result is in the server's release. Convert it down by its
-   * task type for a buyer polling `get_task_status` on an older release.
+   * task type for a buyer polling `get_task_status` (or `tasks_get`) on an
+   * older release. A failed or rejected task's result is converted too: its
+   * `errors[]` go through `core/error.json`, which covers a task type whose
+   * schema has no Error arm, as does the failed task's `error` summary.
    */
   const downgradeTaskStatusResult = (
-    toolName: 'get_task_status' | 'list_tasks',
+    toolName: string,
     response: McpToolResponse,
     servedVersion: string
   ): McpToolResponse => {
-    if (toolName !== 'get_task_status') return response;
+    if (toolName !== 'get_task_status' && toolName !== 'tasks_get') return response;
+    if (response.isError === true) return response;
     if (translationSteps(adcpVersion, servedVersion).length === 0) return response;
     const body = response.structuredContent as Record<string, unknown> | undefined;
-    if (!body || typeof body.task_type !== 'string' || !body.result || typeof body.result !== 'object') return response;
-    const downgraded = downgradeResponse(body.task_type, body.result, {
-      fromVersion: adcpVersion,
-      toVersion: servedVersion,
-    });
-    if (downgraded.drifts.length > 0) {
+    if (!body || typeof body.task_type !== 'string') return response;
+    const range = { fromVersion: adcpVersion, toVersion: servedVersion };
+    const drifts: VersionDrift[] = [];
+    const changes: Record<string, unknown> = {};
+    if (body.result && typeof body.result === 'object') {
+      const converted = downgradeResponse(body.task_type, body.result, range);
+      const errors = projectErrorsForRelease(converted.data, { toolName: body.task_type, ...range });
+      drifts.push(...converted.drifts, ...errors.drifts);
+      if (errors.data !== body.result) changes.result = errors.data;
+    }
+    if (isPlainObject(body.error)) {
+      const converted = convertErrorToRelease(body.task_type, body.error, range);
+      drifts.push(...converted.drifts);
+      if (converted.data !== body.error) changes.error = converted.data;
+    }
+    if (drifts.length > 0) {
       reportVersionTranslation({
         tool: body.task_type,
         direction: 'response',
         fromVersion: adcpVersion,
         toVersion: servedVersion,
-        drifts: downgraded.drifts,
+        drifts,
       });
     }
-    if (downgraded.data === body.result) return response;
+    if (Object.keys(changes).length === 0) return response;
     const mirrors = contentTextMirrorsStructuredContent(response, body);
     const next = cloneFormattedResponse(response);
-    const nextBody = { ...(next.structuredContent as Record<string, unknown>), result: downgraded.data };
+    const nextBody = { ...(next.structuredContent as Record<string, unknown>), ...changes };
     next.structuredContent = nextBody;
     syncContentJsonText(next, nextBody, mirrors);
     return next;
@@ -6327,6 +6345,39 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  };
+
+  /**
+   * Convert a response's errors (`adcp_error` and `errors[]`) from the server's
+   * release down to the served release. Every finishing seam runs this, so a
+   * framework-built error (validation, version, idempotency, account) and a
+   * handler's error reach an older buyer in that buyer's error shape. A
+   * changed response is a copy: a handler may return a cached error object.
+   */
+  const downgradeResponseErrors = (
+    response: McpToolResponse,
+    toolName: string,
+    servedVersion: string
+  ): McpToolResponse => {
+    const body = response.structuredContent as Record<string, unknown> | undefined;
+    if (!body || typeof body !== 'object') return response;
+    if (translationSteps(adcpVersion, servedVersion).length === 0) return response;
+    const projected = projectErrorsForRelease(body, { toolName, fromVersion: adcpVersion, toVersion: servedVersion });
+    if (projected.drifts.length > 0) {
+      reportVersionTranslation({
+        tool: toolName,
+        direction: 'response',
+        fromVersion: adcpVersion,
+        toVersion: servedVersion,
+        drifts: projected.drifts,
+      });
+    }
+    if (projected.data === body) return response;
+    const mirrors = contentTextMirrorsStructuredContent(response, body);
+    const next = cloneFormattedResponse(response);
+    next.structuredContent = projected.data;
+    syncContentJsonText(next, projected.data, mirrors);
+    return next;
   };
 
   // A release defines a tool when its request schema for the tool compiles.
@@ -6351,9 +6402,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ...(servedAdcpVersion !== undefined && { wireVersion: servedAdcpVersion }),
     };
     sanitizeAdcpErrorEnvelope(response);
+    response = downgradeResponseErrors(response, toolName, release.validationVersion);
     enrichErrorTwoLayer(response, toolName, release.validationVersion);
+    // A failed or rejected task's poll is error-classified by its status, and
+    // its result still needs the served release's shape.
+    response = downgradeTaskStatusResult(toolName, response, release.validationVersion);
     if (!isErrorResponse(response)) {
-      response = downgradeTaskStatusResult(toolName, response, release.validationVersion);
       normalizeMediaBuyStatusCollision(response, toolName, release.validationVersion);
       injectEnvelopeStatusIntoResponse(response, toolName, release.validationVersion);
       const validationError = protocolTaskResponseValidationError(toolName, response, params);
@@ -6843,6 +6897,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // { adcp_error: ... } }` would otherwise ship unfiltered.
         const finalizeProtocolEnvelope = (response: McpToolResponse): McpToolResponse => {
           sanitizeAdcpErrorEnvelope(response);
+          // Errors reach an older buyer in that release's error shape (DR-0024),
+          // before the two-layer mirror copies one layer into the other.
+          response = downgradeResponseErrors(response, toolName, requestRelease.validationVersion);
           // Two-layer error emission: when the tool's response schema
           // declares an Error arm (`errors: [...]` required), mirror
           // `adcp_error` ↔ `errors[]` so both spec-mandated layers are
@@ -8814,7 +8871,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
           // Convert the handler's response down to the served release before
           // validating it against that release. Every removed field is logged.
-          if (translatesRelease && !isErrorResponse(formatted) && formatted.structuredContent) {
+          // Error-classified bodies (an `errors[]` arm, a failed, rejected or
+          // canceled status) are converted too; the envelope `adcp_error` is
+          // left to `finalize`, which converts every error the same way.
+          if (translatesRelease && formatted.structuredContent) {
             const downgraded = downgradeResponse(toolName, formatted.structuredContent, {
               fromVersion: adcpVersion,
               toVersion: requestRelease.validationVersion,
@@ -9516,6 +9576,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const rawHandler = handler as (...args: unknown[]) => Promise<McpToolResponse> | McpToolResponse;
       const finalizeCustomResponse = (response: McpToolResponse, taskRelease?: ServedAdcpRelease): McpToolResponse => {
         if (customName === 'tasks_get') {
+          // The framework's own polling tool: its stored result and errors
+          // are in the server's release, like `get_task_status`'s.
+          if (taskRelease !== undefined) {
+            response = downgradeResponseErrors(response, customName, taskRelease.validationVersion);
+            response = downgradeTaskStatusResult(customName, response, taskRelease.validationVersion);
+          }
           injectVersionIntoResponse(response, taskRelease?.wireVersion ?? servedAdcpVersion);
         }
         return applyResponseEnhancer(
