@@ -1,9 +1,13 @@
+import { fullFormats } from 'ajv-formats/dist/formats.js';
 import { parse as parseTld } from 'tldts';
 
 import { ssrfSafeFetch, type SsrfFetchOptions, type SsrfFetchResult } from '../net/ssrf-fetch';
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const uriFormat = fullFormats.uri;
+const isUriFormat = (value: string): boolean =>
+  typeof uriFormat === 'function' ? uriFormat(value) : uriFormat instanceof RegExp && uriFormat.test(value);
 const DEFAULT_WELL_KNOWN_REDIRECT_HOPS = 3;
 
 export type AdAgentsRedirectRefusalCode =
@@ -112,8 +116,10 @@ export async function ssrfSafeFetchAdAgents(
  * `authorized_agents` is still the reference when its location is a valid HTTPS URL: the schema's
  * inline variant refuses a valid URL reference (AdCP 3.3, adcontextprotocol/adcp#9051), and
  * adagents.mdx has validators follow `authoritative_location`. Only an invalid location leaves
- * such a file the inline variant. `allowHttp` admits an `http://` location for a caller that
- * already follows one under the internal-probes opt-in (loopback tests).
+ * such a file the inline variant. A valid location matches the schema's `format: uri` (the same
+ * ajv-formats check) and parses as a URL, so a location the schema rejects, such as one containing
+ * whitespace, never displaces valid inline authorization. `allowHttp` admits an `http://` location
+ * for a caller that already follows one under the internal-probes opt-in (loopback tests).
  */
 export function isAdAgentsUrlReference(
   data: { authoritative_location?: unknown; authorized_agents?: unknown },
@@ -124,6 +130,7 @@ export function isAdAgentsUrlReference(
   if (!data.authorized_agents) return true;
   if (typeof location !== 'string') return false;
   if (!location.startsWith('https://') && !(options.allowHttp && location.startsWith('http://'))) return false;
+  if (!isUriFormat(location)) return false;
   try {
     new URL(location);
     return true;

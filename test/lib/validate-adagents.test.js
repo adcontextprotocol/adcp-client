@@ -426,6 +426,7 @@ describe('validateAdAgents — discovery_method', () => {
   for (const [label, location] of [
     ['non-http(s) scheme', 'ftp://x/adagents.json'],
     ['non-URL string', 'not a url'],
+    ['space in a loopback URL', 'http://127.0.0.1:1/with space.json'],
   ]) {
     test(`authoritative_location + inline authorized_agents with ${label} → inline used, discovery_method 'direct'`, async () => {
       const publisher = await startRoutedServer({
@@ -495,6 +496,17 @@ describe('validateAdAgents — discovery_method', () => {
       false,
       'unparseable https string + inline → inline'
     );
+    for (const [label, location, expected] of [
+      ['space in path', 'https://central.example.com/with space.json', false],
+      ['trailing newline', 'https://central.example.com/x\n', false],
+      ['well-formed https URI', 'https://central.example.com/adagents.json', true],
+    ]) {
+      assert.strictEqual(
+        isAdAgentsUrlReference({ authoritative_location: location, authorized_agents: agents }),
+        expected,
+        `${label} + inline → ${expected}`
+      );
+    }
     assert.strictEqual(
       isAdAgentsUrlReference({ authoritative_location: 42, authorized_agents: agents }),
       false,

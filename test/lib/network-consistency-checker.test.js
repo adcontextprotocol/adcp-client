@@ -145,6 +145,58 @@ describe('NetworkConsistencyChecker', () => {
     });
   });
 
+  describe('domains-only discovery uses the authoritative_location precedence rule', () => {
+    const FIRST = 'first.example.com';
+    const FIRST_URL = `https://${FIRST}/.well-known/adagents.json`;
+
+    // Both fetches are HTTPS, which a loopback server cannot serve, so
+    // `fetchJsonWithUrl` is stubbed per URL and records every call.
+    function stubFetches(checker, responses) {
+      const fetched = [];
+      checker['fetchJsonWithUrl'] = url => {
+        fetched.push(url);
+        if (!(url in responses)) return Promise.reject(new Error(`unexpected fetch: ${url}`));
+        return Promise.resolve({ url, data: responses[url] });
+      };
+      return fetched;
+    }
+
+    test('first-domain file with inline agents and an invalid location → inline file used, location not fetched', async () => {
+      const inline = { ...makeAuthoritativeFile(), authoritative_location: 'not a url' };
+      const checker = new NetworkConsistencyChecker({ domains: [FIRST], logLevel: 'silent' });
+      const fetched = stubFetches(checker, { [FIRST_URL]: inline });
+      const report = { schemaErrors: [] };
+
+      const { url, data } = await checker['fetchAuthoritative'](report);
+
+      assert.deepStrictEqual(fetched, [FIRST_URL]);
+      assert.strictEqual(url, FIRST_URL);
+      assert.strictEqual(data, inline);
+      assert.deepStrictEqual(report.schemaErrors, []);
+    });
+
+    test('first-domain mixed file with a valid HTTPS location → location followed, inline ignored', async () => {
+      const targetUrl = 'https://central.example.com/adagents.json';
+      const stale = makeAuthoritativeFile(undefined, [
+        { url: 'https://stale.example.com/mcp', authorized_for: 'Stale' },
+      ]);
+      const central = makeAuthoritativeFile();
+      const checker = new NetworkConsistencyChecker({ domains: [FIRST], logLevel: 'silent' });
+      const fetched = stubFetches(checker, {
+        [FIRST_URL]: { ...stale, authoritative_location: targetUrl },
+        [targetUrl]: central,
+      });
+      const report = { schemaErrors: [] };
+
+      const { url, data } = await checker['fetchAuthoritative'](report);
+
+      assert.deepStrictEqual(fetched, [FIRST_URL, targetUrl]);
+      assert.strictEqual(url, targetUrl);
+      assert.strictEqual(data, central);
+      assert.deepStrictEqual(report.schemaErrors, []);
+    });
+  });
+
   describe('core checks', () => {
     test('clean network — all pointers valid, 100% coverage', async () => {
       // `check()` is exercised piecewise: the authoritative file is fetched

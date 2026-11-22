@@ -250,8 +250,8 @@ export class NetworkConsistencyChecker {
           originUrl: pointerUrl,
         });
         const pointerData = pointer.data;
-        if (pointerData.authoritative_location) {
-          url = pointerData.authoritative_location;
+        if (isAdAgentsUrlReference(pointerData)) {
+          url = pointerData.authoritative_location!;
         } else {
           return { url: pointer.url, data: pointerData };
         }
