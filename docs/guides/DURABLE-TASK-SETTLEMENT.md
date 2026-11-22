@@ -136,6 +136,13 @@ the webhook recovery worker delivers the checkpoint with the emitter's RFC 9421
 signing, retries and idempotency key. Retrying a settlement is idempotent and
 produces at most one terminal webhook.
 
+Pass the worker's result in the server's AdCP release, as a handler returns it.
+The binding records that release and the release the request was served at, so
+the webhook result (and its `errors[]`) reaches a buyer pinned to an older
+release in that release's shape, exactly as a framework-settled task's webhook
+does. The task row keeps the result in the server's release; a
+`get_task_status` poll converts it on read.
+
 ### What a worker cannot do
 
 - **Supply a destination or token.** The bound helpers take no route.

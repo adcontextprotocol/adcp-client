@@ -43,6 +43,7 @@ import {
   type PgTransactionalPool,
 } from './postgres-task-registry';
 import { sanitizeTaskResultForWire, type ScopedTaskRef, type TaskRegistry, type TaskStatus } from './task-registry';
+import { projectTaskResultForRelease } from './task-result-release';
 
 export interface TaskPushSettlementConfig {
   /** Validated destination from the original push_notification_config. */
@@ -138,6 +139,16 @@ export class TaskPushBindingMismatchError extends TaskPushSettlementConfiguratio
 }
 
 /**
+ * A route the framework binds at handoff. `serverAdcpVersion` is the server's
+ * release, which the worker's result is in; a bound settlement converts the
+ * webhook result from it to `servedAdcpVersion`, as the in-process task
+ * webhook does.
+ *
+ * @internal
+ */
+export type TaskPushBindingRoute = TaskPushSettlementConfig & { serverAdcpVersion?: string };
+
+/**
  * Internal capability the framework uses to bind a buyer push route to an
  * externally settled task, and the bound helpers use to settle it. Not part
  * of the public coordinator interface: only the SDK's handoff path creates a
@@ -155,7 +166,7 @@ export interface TaskPushBindingSupport {
    * fails without leaving an orphaned `has_webhook` task.
    */
   ensureReady(): Promise<void>;
-  bind(ref: ScopedTaskRef, push: TaskPushSettlementConfig): Promise<void>;
+  bind(ref: ScopedTaskRef, push: TaskPushBindingRoute): Promise<void>;
   settleBound(ref: ScopedTaskRef, terminal: TerminalSettlement): Promise<TaskPushSettlementOutcome>;
 }
 
@@ -178,6 +189,8 @@ interface StoredTaskPushBinding {
   url: string;
   operationId?: string;
   servedAdcpVersion?: string;
+  /** The server's release at handoff, which the worker's result is in. */
+  serverAdcpVersion?: string;
   signingProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   token?: { protectedValue: unknown; fingerprint: string };
   fingerprint?: string;
@@ -285,10 +298,7 @@ export function createPostgresTaskSettlementCoordinator(
   };
 
   /** Verify and resolve a stored binding. Throws rather than ever returning a partial route. */
-  const resolveBinding = async (
-    ref: ScopedTaskRef,
-    stored: StoredTaskPushBinding
-  ): Promise<TaskPushSettlementConfig> => {
+  const resolveBinding = async (ref: ScopedTaskRef, stored: StoredTaskPushBinding): Promise<TaskPushBindingRoute> => {
     if (
       stored === null ||
       typeof stored !== 'object' ||
@@ -298,10 +308,11 @@ export function createPostgresTaskSettlementCoordinator(
     ) {
       throw new TaskPushSettlementConfigurationError('Task push binding failed its consistency check');
     }
-    const route: TaskPushSettlementConfig = {
+    const route: TaskPushBindingRoute = {
       url: stored.url,
       ...(stored.operationId !== undefined && { operationId: stored.operationId }),
       ...(stored.servedAdcpVersion !== undefined && { servedAdcpVersion: stored.servedAdcpVersion }),
+      ...(stored.serverAdcpVersion !== undefined && { serverAdcpVersion: stored.serverAdcpVersion }),
       ...(stored.signingProfile !== undefined && { signingProfile: stored.signingProfile }),
     };
     if (stored.token !== undefined) {
@@ -353,12 +364,12 @@ export function createPostgresTaskSettlementCoordinator(
    * in the task row under its row lock. Immutable once written: only an
    * exact retry of the same route succeeds.
    */
-  const bind = async (ref: ScopedTaskRef, push: TaskPushSettlementConfig): Promise<void> => {
+  const bind = async (ref: ScopedTaskRef, push: TaskPushBindingRoute): Promise<void> => {
     const settlementRef = snapshotSettlementRef(ref);
     if (settlementRef.registryId !== registryId) {
       throw new TaskPushSettlementConfigurationError('Task push binding ref belongs to a different registry');
     }
-    let route: TaskPushSettlementConfig;
+    let route: TaskPushBindingRoute;
     try {
       route = structuredClone(push);
     } catch (cause) {
@@ -368,10 +379,16 @@ export function createPostgresTaskSettlementCoordinator(
     if (route.authentication !== undefined && route.authentication !== null) {
       throw new TaskPushSettlementConfigurationError('Task push bindings do not carry legacy transport authentication');
     }
+    if (route.serverAdcpVersion !== undefined && !isValidAdcpVersion(route.serverAdcpVersion)) {
+      throw new TaskPushSettlementConfigurationError(
+        'Task push binding serverAdcpVersion must be a valid AdCP version'
+      );
+    }
     const stored: StoredTaskPushBinding = {
       url: route.url,
       ...(route.operationId !== undefined && { operationId: route.operationId }),
       ...(route.servedAdcpVersion !== undefined && { servedAdcpVersion: route.servedAdcpVersion }),
+      ...(route.serverAdcpVersion !== undefined && { serverAdcpVersion: route.serverAdcpVersion }),
       ...(route.signingProfile !== undefined && { signingProfile: route.signingProfile }),
     };
     if (route.token !== undefined) {
@@ -535,10 +552,12 @@ export function createPostgresTaskSettlementCoordinator(
     // read or resolved, settlement fails; it never falls back to the caller.
     const observedBinding = observed.push_binding ?? null;
     let clonedPush: TaskPushSettlementConfig;
+    let resultAdcpVersion: string | undefined;
     if (observedBinding !== null) {
-      const boundRoute = await resolveBinding(settlementRef, observedBinding);
+      const { serverAdcpVersion, ...boundRoute } = await resolveBinding(settlementRef, observedBinding);
       if (callerRoute !== undefined) assertMatchesBinding(callerRoute, boundRoute);
       clonedPush = boundRoute;
+      resultAdcpVersion = serverAdcpVersion;
     } else {
       if (callerRoute === undefined) {
         throw new TaskPushSettlementConfigurationError(
@@ -548,6 +567,26 @@ export function createPostgresTaskSettlementCoordinator(
         );
       }
       clonedPush = callerRoute;
+    }
+
+    // A bound task's result is in the server's release recorded at handoff.
+    // Its webhook carries it in the release the request was served at,
+    // converted exactly as the in-process task webhook converts it (DR-0024).
+    // The task row keeps the server-release result, which a poll converts on
+    // read.
+    let webhookResult = result;
+    if (resultAdcpVersion !== undefined && clonedPush.servedAdcpVersion !== undefined) {
+      try {
+        webhookResult = projectTaskResultForRelease(observed.tool, result, {
+          fromVersion: resultAdcpVersion,
+          toVersion: clonedPush.servedAdcpVersion,
+        }).data;
+      } catch (cause) {
+        throw new TaskPushSettlementConfigurationError(
+          'Task terminal result could not be converted to the served AdCP release',
+          { cause }
+        );
+      }
     }
 
     let observedOutbox: OutboxRow | undefined;
@@ -571,7 +610,7 @@ export function createPostgresTaskSettlementCoordinator(
       status: clonedTerminal.status,
       timestamp: typeof existingTimestamp === 'string' ? existingTimestamp : new Date().toISOString(),
       protocol: protocolForTool(observed.tool),
-      result,
+      result: webhookResult,
       ...(clonedPush.token !== undefined && { token: clonedPush.token }),
       ...(clonedTerminal.status === 'failed' && { message: error!.message }),
       ...(clonedTerminal.status === 'rejected' && reason !== undefined && { message: reason }),
@@ -1084,6 +1123,7 @@ function bindingTokenContext(key: TaskPushBindingKey, stored: StoredTaskPushBind
     url: stored.url,
     ...(stored.operationId !== undefined && { operationId: stored.operationId }),
     ...(stored.servedAdcpVersion !== undefined && { servedAdcpVersion: stored.servedAdcpVersion }),
+    ...(stored.serverAdcpVersion !== undefined && { serverAdcpVersion: stored.serverAdcpVersion }),
     ...(stored.signingProfile !== undefined && { signingProfile: stored.signingProfile }),
   };
   return {
@@ -1099,6 +1139,7 @@ function bindingFingerprint(stored: StoredTaskPushBinding): string {
     url: stored.url,
     ...(stored.operationId !== undefined && { operationId: stored.operationId }),
     ...(stored.servedAdcpVersion !== undefined && { servedAdcpVersion: stored.servedAdcpVersion }),
+    ...(stored.serverAdcpVersion !== undefined && { serverAdcpVersion: stored.serverAdcpVersion }),
     ...(stored.signingProfile !== undefined && { signingProfile: stored.signingProfile }),
     ...(stored.token !== undefined && { tokenFingerprint: stored.token.fingerprint }),
   });

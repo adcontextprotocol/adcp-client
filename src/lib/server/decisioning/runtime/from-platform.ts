@@ -133,8 +133,7 @@ import { resolveCredentialPolicyForTool, scanArgsForCredentials, type Credential
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import { validateSpecialismRequiredTools, formatSpecialismIssue } from '../validate-specialisms';
 import type { AdcpLogger } from '../../create-adcp-server';
-import { downgradeResponse } from '../../../adapters/version';
-import { projectErrorsForRelease } from '../../error-release-projection';
+import { projectTaskResultForRelease } from './task-result-release';
 import {
   _armTaskHandoffPreflight,
   buildExternalHandoffContext,
@@ -5833,6 +5832,8 @@ async function dispatchHitl<TResult>(
           url: opts.pushNotificationUrl!,
           ...(opts.pushNotificationOperationId !== undefined && { operationId: opts.pushNotificationOperationId }),
           ...(opts.servedAdcpVersion !== undefined && { servedAdcpVersion: opts.servedAdcpVersion }),
+          // The worker's result is in this release; its webhook is converted to the served one.
+          ...(opts.serverAdcpVersion !== undefined && { serverAdcpVersion: opts.serverAdcpVersion }),
           ...(opts.pushNotificationToken !== undefined && { token: opts.pushNotificationToken }),
           ...(opts.pushNotificationSigningProfile !== undefined && {
             signingProfile: opts.pushNotificationSigningProfile,
@@ -6049,21 +6050,21 @@ function buildTaskWebhookPayload(
 
 /**
  * A task's result is in the server's release. The webhook carries it in the release the request was
- * served at, as the synchronous response and a `get_task_status` poll do (DR-0024). The errors of a
- * failed or rejected result also go through `core/error.json`, which covers a task type whose schema
- * has no Error arm. The stored result is never mutated.
+ * served at, as the synchronous response and a `get_task_status` poll do (DR-0024). A bound
+ * external push settlement converts its result with the same `projectTaskResultForRelease`. The
+ * stored result is never mutated.
  */
 function resultForServedRelease(opts: DispatchHitlOpts, result: unknown): unknown {
   const served = opts.servedAdcpVersion;
   if (served === undefined || opts.serverAdcpVersion === undefined) return result;
-  const range = { fromVersion: opts.serverAdcpVersion, toVersion: served };
-  const converted = downgradeResponse(opts.tool, result, range);
-  const errors = projectErrorsForRelease(converted.data, { toolName: opts.tool, ...range });
-  const drifts = [...converted.drifts, ...errors.drifts];
+  const { data, drifts } = projectTaskResultForRelease(opts.tool, result, {
+    fromVersion: opts.serverAdcpVersion,
+    toVersion: served,
+  });
   if (drifts.length > 0) {
     opts.logger.info(`Converted ${opts.tool} task webhook result down to AdCP ${served}`, { tool: opts.tool, drifts });
   }
-  return errors.data;
+  return data;
 }
 
 const WEBHOOK_MEDIA_BUY_RESULT_TOOLS = new Set(['create_media_buy', 'update_media_buy', 'cancel_media_buy']);
