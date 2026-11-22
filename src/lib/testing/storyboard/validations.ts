@@ -817,7 +817,14 @@ function computeStrictVerdict(
   ) {
     return undefined;
   }
-  const payloadForValidation = prepareResponseForSchemaValidation(taskName, payload, responseAdcpVersion);
+  // Prepare the payload for the schema that judges it: the served release's
+  // JSON Schema, not the SDK pin's Zod view (adcp-client#3751).
+  const payloadForValidation = prepareResponseForSchemaValidation(
+    taskName,
+    payload,
+    responseAdcpVersion,
+    validationVersion
+  );
   const outcome = validateResponse(taskName, payloadForValidation, validationVersion);
   // `variant: 'skipped'` means no AJV validator compiled for this task (no
   // strictness signal to emit); treat the same as "no AJV schema available".

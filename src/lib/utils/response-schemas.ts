@@ -24,10 +24,16 @@ function declaresLegacy30xPayload(response: Record<string, unknown>): boolean {
   return response.adcp_major_version === 3;
 }
 
+/**
+ * A validation-only view of a seller response. `schemaVersion` is the release
+ * whose schema will judge the result: the SDK's own pin for the generated Zod
+ * schemas (the default), or the served release for a JSON Schema check.
+ */
 export function prepareResponseForSchemaValidation(
   toolName: string,
   data: unknown,
-  responseAdcpVersion?: string
+  responseAdcpVersion?: string,
+  schemaVersion: string = ADCP_VERSION
 ): unknown {
   if (data == null || typeof data !== 'object' || Array.isArray(data)) return data;
 
@@ -39,17 +45,19 @@ export function prepareResponseForSchemaValidation(
   if (typeof response.adcp_version === 'string' && /^3\.0\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(response.adcp_version)) {
     return { ...response, adcp_version: toReleasePrecisionVersion(response.adcp_version) };
   }
-  // The generated Zod schemas follow the SDK's own pin. When that pin composes
-  // the envelope, `status` is required there, but a seller serving a release
-  // whose schema has no `status` on these arms (3.2.x `list_products` /
-  // `decline_proposals`) is conforming without it. Show the Zod schema the
-  // completed status that release implies. This is a validation-only view: the
-  // unwrapper returns the seller's payload as sent, and a response from a
-  // release that does compose the envelope still fails when it omits `status`.
+  // When the judging schema composes the envelope, `status` is required there,
+  // but a seller serving a release whose schema has no `status` on these arms
+  // (3.2.x `list_products` / `decline_proposals`) is conforming without it.
+  // Show the judging schema the completed status that release implies. Only
+  // when the two releases differ: judged by the served release's own schema,
+  // which may forbid `status` (3.2.x `decline_proposals`), the payload stays
+  // as sent (adcp-client#3751). This is a validation-only view: the unwrapper
+  // returns the seller's payload as sent, and a response from a release that
+  // does compose the envelope still fails when it omits `status`.
   if (
     response.status === undefined &&
     omitsEnvelopeStatusForRelease(toolName, responseAdcpVersion) &&
-    !omitsEnvelopeStatusForRelease(toolName, ADCP_VERSION)
+    !omitsEnvelopeStatusForRelease(toolName, schemaVersion)
   ) {
     return { ...response, status: 'completed' };
   }
