@@ -5570,7 +5570,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
       let thrown;
       let remoteCalled = false;
       let producerCalled = false;
-      const taskRegistry = countingDurableRegistry('call-time-external-refusal');
+      const taskRegistry = countingDurableRegistry();
       const emitter = okEmitter();
       const server = createAdcpServerFromPlatform(
         buildHitlPlatform({
@@ -5626,7 +5626,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     it('ctx.canHandoffToTask returns the same refusal without creating a handoff', async () => {
       const seen = [];
       let remoteCalled = false;
-      const taskRegistry = countingDurableRegistry('can-handoff-probe');
+      const taskRegistry = countingDurableRegistry();
       const server = createAdcpServerFromPlatform(
         buildHitlPlatform({
           createMediaBuy: async (_req, ctx) => {
@@ -5724,8 +5724,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
           createMediaBuy: async (_req, ctx) => {
             try {
               ctx.canHandoffToTask({ settlement: 'external' });
-            } catch {
-              probeThrew = true;
+            } catch (error) {
+              probeThrew = error.message;
             }
             const handoff = ctx.handoffToTask(async () => {}, { settlement: 'external' });
             remoteCalled = true;
@@ -5740,7 +5740,11 @@ describe('HITL dual-method dispatch — *Task variants', () => {
         }
       );
       const result = await dispatchCreate(server);
-      assert.strictEqual(probeThrew, true, 'a server misconfiguration is thrown, not reported as ok: false');
+      assert.match(
+        String(probeThrew),
+        /durable task registry/,
+        'a misconfiguration is thrown, not reported as ok: false'
+      );
       assert.strictEqual(remoteCalled, false);
       assert.strictEqual(result.isError, true);
       assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
@@ -5763,13 +5767,152 @@ describe('HITL dual-method dispatch — *Task variants', () => {
         name: 'signals-call-time-refusal',
         version: '0.0.1',
         validation: { requests: 'off', responses: 'off' },
-        taskRegistry: countingDurableRegistry('signals-call-time-refusal'),
+        taskRegistry: countingDurableRegistry(),
       });
       const result = await dispatchGetSignals(server, { push_notification_config: PUSH });
       assert.strictEqual(remoteCalled, false);
       assert.strictEqual(result.isError, true);
       assert.strictEqual(result.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
       assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config');
+    });
+
+    it('reaches a forwarded or spread ctx', async () => {
+      const seen = [];
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            const spread = { ...ctx };
+            const forward = c => c;
+            seen.push(spread.canHandoffToTask({ settlement: 'external' }));
+            assert.throws(
+              () => forward(spread).handoffToTask(async () => {}, { settlement: 'external' }),
+              err => err instanceof AdcpError && err.code === 'UNSUPPORTED_FEATURE'
+            );
+            return { media_buy_id: 'mb_sync' };
+          },
+        }),
+        {
+          name: 'spread-ctx',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          taskRegistry: countingDurableRegistry(),
+        }
+      );
+      const result = await dispatchCreate(server, { push_notification_config: PUSH });
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.strictEqual(seen[0].ok, false);
+      assert.strictEqual(seen[0].error.code, 'UNSUPPORTED_FEATURE');
+    });
+
+    it('keeps the dispatch-time refusal as a backstop for a marker the call-time check did not see', async () => {
+      // A context kept from an earlier request carries that request's armed
+      // check (no push config). Returning its marker from a push request must
+      // still be refused before task creation.
+      let keptCtx;
+      let producerCalled = false;
+      const taskRegistry = countingDurableRegistry();
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            if (!keptCtx) {
+              keptCtx = ctx;
+              return { media_buy_id: 'mb_first' };
+            }
+            return keptCtx.handoffToTask(
+              async () => {
+                producerCalled = true;
+              },
+              { settlement: 'external' }
+            );
+          },
+        }),
+        {
+          name: 'dispatch-backstop',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          taskRegistry,
+        }
+      );
+      const first = await dispatchCreate(server);
+      assert.notStrictEqual(first.isError, true, JSON.stringify(first.structuredContent));
+      const second = await dispatchCreate(server, {
+        idempotency_key: 'af4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+        push_notification_config: PUSH,
+      });
+      assert.strictEqual(second.isError, true);
+      assert.strictEqual(second.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+      assert.strictEqual(second.structuredContent.adcp_error.message, EXTERNAL_PUSH_REFUSAL_MESSAGE);
+      assert.strictEqual(taskRegistry.createCalls, 0);
+      assert.strictEqual(producerCalled, false);
+    });
+
+    it('refuses the proposal-backed external handoff at the call, ahead of the push refusal', async () => {
+      const { InMemoryProposalStore } = require('../dist/lib/server/index.js');
+      const store = new InMemoryProposalStore();
+      store.putDraft({
+        proposalId: 'prop_1',
+        accountId: 'acc_1',
+        recipes: new Map(),
+        proposalPayload: { proposal_id: 'prop_1' },
+      });
+      store.commit('prop_1', {
+        expectedAccountId: 'acc_1',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        proposalPayload: { proposal_id: 'prop_1', proposal_status: 'committed' },
+      });
+      let thrown;
+      let remoteCalled = false;
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            try {
+              const handoff = ctx.handoffToTask(async () => {}, { settlement: 'external' });
+              remoteCalled = true;
+              return handoff;
+            } catch (error) {
+              thrown = error;
+              throw error;
+            }
+          },
+        }),
+        {
+          name: 'proposal-external-call-time',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          proposalStore: store,
+          taskRegistry: countingDurableRegistry(),
+        }
+      );
+      const result = await dispatchCreate(server, { proposal_id: 'prop_1', push_notification_config: PUSH });
+      assert.strictEqual(remoteCalled, false);
+      assert.ok(thrown, JSON.stringify(result.structuredContent));
+      assert.strictEqual(thrown.code, 'INVALID_REQUEST');
+      assert.strictEqual(thrown.field, 'proposal_id');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'proposal_id');
+      const record = store.get('prop_1', { expectedAccountId: 'acc_1' });
+      assert.strictEqual(record.state, 'committed', 'the reservation is released when the call is refused');
+    });
+
+    it('refuses a wholesale get_products handoff at the call', async () => {
+      let remoteCalled = false;
+      let probe;
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          getProducts: async (_req, ctx) => {
+            probe = ctx.canHandoffToTask();
+            const handoff = ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' }));
+            remoteCalled = true;
+            return handoff;
+          },
+        }),
+        { name: 'wholesale-call-time', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+      );
+      const result = await dispatchGetProducts(server, { buying_mode: 'wholesale', brief: undefined });
+      assert.strictEqual(probe.ok, false);
+      assert.strictEqual(probe.error.field, 'buying_mode');
+      assert.strictEqual(remoteCalled, false);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'buying_mode');
     });
   });
 
@@ -10595,5 +10738,169 @@ describe('signed-requests specialism forwarding (#1886)', () => {
         validation: { requests: 'off', responses: 'off' },
       })
     );
+  });
+});
+
+describe('call-time handoff refusal on every handoff dispatch site (#3761)', () => {
+  const PUSH = { url: 'https://buyer.example/hook', operation_id: 'op-call-time' };
+  const AUTH = {
+    authInfo: { token: 'redacted', scopes: [], credential: { kind: 'api_key', key_id: 'buyer-key-1' } },
+  };
+  const durableRegistry = () => ({ ...createInMemoryTaskRegistry(), durability: 'durable' });
+
+  // Each handler builds an external handoff, then records that it went on to
+  // "call the remote agent". The refusal must stop it before that line.
+  function externalThenRemote(state) {
+    return (...args) => {
+      const ctx = args[args.length - 1];
+      const handoff = ctx.handoffToTask(async () => {}, { settlement: 'external' });
+      state.remoteCalled = true;
+      return handoff;
+    };
+  }
+
+  const cases = [
+    {
+      tool: 'request_proposals',
+      platform: state =>
+        buildPlatform({ mediaBuyLifecycle: { requestProposals: async (...a) => externalThenRemote(state)(...a) } }),
+      args: { idempotency_key: 'call-time-request-proposals-01', brief: 'test', account: { account_id: 'acc_1' } },
+      auth: AUTH,
+    },
+    {
+      tool: 'refine_proposals',
+      platform: state =>
+        buildPlatform({
+          mediaBuyLifecycle: {
+            proposalRefinement: { supported_dimensions: [] },
+            refineProposals: async (...a) => externalThenRemote(state)(...a),
+          },
+        }),
+      args: { idempotency_key: 'call-time-refine-proposals-01', refinements: [] },
+      auth: AUTH,
+    },
+    {
+      tool: 'get_products',
+      platform: state =>
+        buildPlatform({
+          sales: { ...buildPlatform().sales, getProducts: async (...a) => externalThenRemote(state)(...a) },
+        }),
+      args: { buying_mode: 'brief', brief: 'premium', account: { account_id: 'acc_1' } },
+    },
+    {
+      tool: 'update_media_buy',
+      platform: state =>
+        buildPlatform({
+          sales: { ...buildPlatform().sales, updateMediaBuy: async (...a) => externalThenRemote(state)(...a) },
+        }),
+      args: {
+        media_buy_id: 'mb_1',
+        idempotency_key: '33333333-3333-3333-3333-333333333334',
+        account: { account_id: 'acc_1' },
+      },
+    },
+    {
+      tool: 'sync_creatives',
+      label: 'sync_creatives (sales)',
+      platform: state =>
+        buildPlatform({
+          sales: { ...buildPlatform().sales, syncCreatives: async (...a) => externalThenRemote(state)(...a) },
+        }),
+      args: {
+        idempotency_key: '44444444-4444-4444-4444-444444444444',
+        creatives: [],
+        account: { account_id: 'acc_1' },
+      },
+    },
+    {
+      tool: 'sync_creatives',
+      label: 'sync_creatives (creative)',
+      platform: state => ({
+        capabilities: { specialisms: ['creative-template'], config: {} },
+        accounts: { resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }) },
+        creative: {
+          buildCreativeLegacy: async () => ({ manifest_id: 'mf_1', assets: [] }),
+          syncCreatives: async (...a) => externalThenRemote(state)(...a),
+        },
+      }),
+      args: {
+        idempotency_key: '55555555-5555-5555-5555-555555555555',
+        creatives: [],
+        account: { account_id: 'acc_1' },
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    it(`${testCase.label ?? testCase.tool}: refuses an external push handoff before later handler code`, async () => {
+      const state = { remoteCalled: false };
+      const server = createAdcpServerFromPlatform(testCase.platform(state), {
+        name: `call-time-${testCase.tool}`,
+        version: '1.0.0',
+        adcpVersion: '3.2.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry: durableRegistry(),
+      });
+      const result = await server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: { name: testCase.tool, arguments: { ...testCase.args, push_notification_config: PUSH } },
+        },
+        testCase.auth
+      );
+      assert.strictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config');
+      assert.strictEqual(state.remoteCalled, false, 'handler code after handoffToTask must not run');
+    });
+  }
+
+  it('get_products without a resolved account refuses at the call with the missing-account error', async () => {
+    const state = { remoteCalled: false };
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      accounts: { ...base.accounts, resolution: 'explicit', resolve: async () => null },
+      sales: { ...base.sales, getProducts: async (...a) => externalThenRemote(state)(...a) },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'call-time-no-account',
+      version: '1.0.0',
+      adcpVersion: '3.2.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskRegistry: durableRegistry(),
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { buying_mode: 'brief', brief: 'x', push_notification_config: PUSH } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.notStrictEqual(result.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE', 'account error comes first');
+    assert.strictEqual(state.remoteCalled, false);
+  });
+
+  it('canHandoffToTask refuses on a tool that does not accept a task handoff', async () => {
+    let probe;
+    const platform = buildPlatform({
+      sales: {
+        ...buildPlatform().sales,
+        getMediaBuyDelivery: async (_req, ctx) => {
+          probe = ctx.canHandoffToTask();
+          return { media_buy_deliveries: [] };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'probe-unarmed',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_media_buy_delivery', arguments: { account: { account_id: 'acc_1' } } },
+    });
+    assert.ok(probe, 'getMediaBuyDelivery must run');
+    assert.strictEqual(probe.ok, false);
+    assert.strictEqual(probe.error.code, 'UNSUPPORTED_FEATURE');
+    assert.deepStrictEqual(probe.error.details, { feature: 'task_handoff' });
   });
 });

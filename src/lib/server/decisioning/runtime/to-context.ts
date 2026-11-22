@@ -192,7 +192,7 @@ function buildCtxMetadataAccessor(store: CtxMetadataStore, accountId: string): C
  *
  * @internal
  */
-export type TaskHandoffPreflight = (settlement: 'framework' | 'external') => void;
+export type TaskHandoffPreflight = (settlement: 'framework' | 'external', mode: 'handoff' | 'probe') => void;
 
 const taskHandoffPreflights = new WeakMap<object, TaskHandoffPreflight>();
 
@@ -243,17 +243,30 @@ function buildContextTaskHandoff(contextKey: () => object): RequestContext<Accou
     const settlement = handoffSettlement(options);
     // Throw the dispatch-time refusal now, before the handler can go on to
     // do work (for example, call a remote agent) that a refusal would waste.
-    taskHandoffPreflights.get(contextKey())?.(settlement);
+    taskHandoffPreflights.get(contextKey())?.(settlement, 'handoff');
     return _createTaskHandoff(fn, options);
   }
   return handoffToTask;
 }
 
+function taskHandoffUnsupportedError(): AdcpError {
+  return new AdcpError('UNSUPPORTED_FEATURE', {
+    recovery: 'terminal',
+    message: 'This tool does not accept a task handoff; return a synchronous response.',
+    details: { feature: 'task_handoff' },
+  });
+}
+
 function buildCanHandoffToTask(contextKey: () => object): RequestContext<Account>['canHandoffToTask'] {
   return options => {
     const settlement = handoffSettlement(options);
+    const preflight = taskHandoffPreflights.get(contextKey());
+    // Only tools that dispatch a returned TaskHandoff arm a preflight. A
+    // marker returned from any other tool is never dispatched, so the honest
+    // answer there is no.
+    if (preflight === undefined) return { ok: false, error: taskHandoffUnsupportedError() };
     try {
-      taskHandoffPreflights.get(contextKey())?.(settlement);
+      preflight(settlement, 'probe');
     } catch (error) {
       // Only a structured, request-caused refusal is an answer. A server
       // misconfiguration stays a thrown error, as it is for handoffToTask.

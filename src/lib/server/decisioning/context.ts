@@ -269,15 +269,21 @@ export interface RequestContext<TAccount = Account> {
    * submitted, so the framework cannot acknowledge unrecoverable work or
    * create a terminal task without its required durable delivery record.
    *
-   * **Refusal happens at call time.** The framework knows the request's
-   * `push_notification_config` before your method runs, so a handoff it
-   * cannot accept throws here, synchronously, rather than after your method
-   * returns. A request that carries `push_notification_config` throws
+   * **Refusal happens at call time.** Everything that decides whether the
+   * framework can dispatch a handoff is known before your method runs, so a
+   * handoff it cannot accept throws here, synchronously, rather than after
+   * your method returns. In the order dispatch applies them:
+   * `INVALID_REQUEST` for a wholesale `get_products` / `get_signals` request,
+   * or for an external handoff on a proposal-backed `create_media_buy`;
+   * the missing-account error when the request resolved no account; and,
+   * when the request carries `push_notification_config`, `INVALID_REQUEST`
+   * on beta.5+ without `push_notification_config.operation_id`, then
    * `AdcpError('UNSUPPORTED_FEATURE', { field: 'push_notification_config' })`
    * when the handoff kind has no terminal-webhook delivery path (an
    * external handoff, or a framework handoff on a server without task
-   * webhooks); a beta.5+ request without `operation_id` throws
-   * `INVALID_REQUEST`. Let the error propagate. Call `handoffToTask` (or
+   * webhooks). Let the error propagate. Because the check runs at the call,
+   * building a marker you might not return still refuses: call
+   * `handoffToTask` only on the path that returns it. Call `handoffToTask` (or
    * {@link canHandoffToTask}) before any side effect that a refusal would
    * waste, such as calling a remote agent. The framework repeats the same
    * check when it dispatches the returned marker.
@@ -314,10 +320,13 @@ export interface RequestContext<TAccount = Account> {
    * }
    * ```
    *
-   * Invalid `options` (an empty `task_id`, an unknown `settlement`) throw,
-   * as they do for `handoffToTask`. A server misconfiguration that is not
-   * caused by the request, such as external settlement on a process-local
-   * task registry, also throws rather than returning `ok: false`.
+   * On a tool that does not accept a task handoff at all, it returns
+   * `{ ok: false }` with an `UNSUPPORTED_FEATURE` error. A refusing probe is
+   * not logged as a refusal. Invalid `options` (an empty `task_id`, an
+   * unknown `settlement`) throw, as they do for `handoffToTask`. A server
+   * misconfiguration that is not caused by the request, such as external
+   * settlement on a process-local task registry, also throws rather than
+   * returning `ok: false`.
    */
   canHandoffToTask(options?: TaskHandoffOptions | ExternalTaskHandoffOptions): TaskHandoffAvailability;
 }

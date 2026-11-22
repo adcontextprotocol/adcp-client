@@ -5294,12 +5294,20 @@ interface DispatchHitlOpts {
   autoEmitCompletion?: boolean;
 }
 
-function refuseTaskWebhookHandoff(opts: TaskHandoffPreflightOpts, message: string, suggestion: string): never {
+function refuseTaskWebhookHandoff(
+  opts: TaskHandoffPreflightOpts,
+  message: string,
+  suggestion: string,
+  quiet = false
+): never {
   try {
-    opts.logger.warn(
-      '[adcp/decisioning] refusing push-enabled TaskHandoff before task creation: configure SDK webhooks for framework ' +
-        'settlement, or remove push_notification_config and retry with a new idempotency_key.'
-    );
+    // A `ctx.canHandoffToTask` probe is a question, not a refusal: the
+    // handler may go on to answer synchronously, so it is not logged.
+    if (!quiet)
+      opts.logger.warn(
+        '[adcp/decisioning] refusing push-enabled TaskHandoff before task creation: configure SDK webhooks for framework ' +
+          'settlement, or remove push_notification_config and retry with a new idempotency_key.'
+      );
   } catch {
     // Logging is adopter-controlled diagnostics. It must not replace the
     // structured protocol error that protects this pre-create boundary.
@@ -5313,7 +5321,11 @@ function refuseTaskWebhookHandoff(opts: TaskHandoffPreflightOpts, message: strin
   });
 }
 
-function resolveTaskWebhookDelivery(opts: TaskHandoffPreflightOpts, settlement: 'framework' | 'external'): boolean {
+function resolveTaskWebhookDelivery(
+  opts: TaskHandoffPreflightOpts,
+  settlement: 'framework' | 'external',
+  quiet = false
+): boolean {
   // This value is populated only by extractPushConfig after URL validation.
   // A malformed or missing URL cannot turn an accepted task into has_webhook.
   if (opts.pushNotificationUrl === undefined) return false;
@@ -5334,7 +5346,8 @@ function resolveTaskWebhookDelivery(opts: TaskHandoffPreflightOpts, settlement: 
       opts,
       'This seller cannot submit an externally settled task with push_notification_config because the SDK cannot deliver its terminal webhook. ' +
         'Remove push_notification_config to use polling, or use framework task settlement with configured task webhooks.',
-      'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to use framework task settlement with task webhooks.'
+      'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to use framework task settlement with task webhooks.',
+      quiet
     );
   }
   if (typeof opts.emitWebhook === 'function') return true;
@@ -5342,7 +5355,8 @@ function resolveTaskWebhookDelivery(opts: TaskHandoffPreflightOpts, settlement: 
     opts,
     'This seller cannot submit a task with push_notification_config because no task webhook delivery path is configured. ' +
       'Remove push_notification_config to use polling, or configure task webhooks on the seller.',
-    'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to configure task webhooks.'
+    'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to configure task webhooks.',
+    quiet
   );
 }
 
@@ -5362,9 +5376,10 @@ type TaskHandoffPreflightOpts = Pick<
 function preflightTaskHandoff(
   taskRegistry: TaskRegistry,
   opts: TaskHandoffPreflightOpts,
-  settlement: 'framework' | 'external'
+  settlement: 'framework' | 'external',
+  quiet = false
 ): boolean {
-  const hasWebhook = resolveTaskWebhookDelivery(opts, settlement);
+  const hasWebhook = resolveTaskWebhookDelivery(opts, settlement, quiet);
   if (
     settlement === 'external' &&
     (taskRegistry.durability !== 'durable' ||
@@ -5379,14 +5394,48 @@ function preflightTaskHandoff(
 /**
  * Arm the call-time handoff check on a request context. Call before invoking
  * the platform method, with the delivery options later passed to dispatch.
+ *
+ * `requestChecks` holds the tool's own request-determined handoff refusals
+ * (a wholesale request, a proposal-backed external handoff, no resolved
+ * account). They run first, in the order dispatch applies them, so a buyer
+ * is never told to drop push_notification_config only to hit one of those
+ * errors on the retry.
  */
 function armTaskHandoffPreflight(
   reqCtx: RequestContext<Account>,
   taskRegistry: TaskRegistry,
-  opts: TaskHandoffPreflightOpts
+  opts: TaskHandoffPreflightOpts,
+  requestChecks?: (settlement: 'framework' | 'external') => void
 ): void {
-  _armTaskHandoffPreflight(reqCtx, settlement => {
-    preflightTaskHandoff(taskRegistry, opts, settlement);
+  _armTaskHandoffPreflight(reqCtx, (settlement, mode) => {
+    requestChecks?.(settlement);
+    preflightTaskHandoff(taskRegistry, opts, settlement, mode === 'probe');
+  });
+}
+
+function wholesaleHandoffError(tool: 'get_products' | 'get_signals'): AdcpError {
+  return tool === 'get_products'
+    ? new AdcpError('INVALID_REQUEST', {
+        message:
+          'get_products buying_mode=wholesale must return synchronously; use incomplete[] for partial feed results.',
+        field: 'buying_mode',
+        recovery: 'correctable',
+      })
+    : new AdcpError('INVALID_REQUEST', {
+        message:
+          'get_signals discovery_mode=wholesale must return synchronously; use incomplete[] for partial feed results.',
+        field: 'discovery_mode',
+        recovery: 'correctable',
+      });
+}
+
+function proposalExternalSettlementError(): AdcpError {
+  return new AdcpError('INVALID_REQUEST', {
+    recovery: 'correctable',
+    field: 'proposal_id',
+    message:
+      'Proposal-backed create_media_buy does not support external task settlement; ' +
+      'use a framework-settled handoff so proposal consumption can be finalized atomically.',
   });
 }
 
@@ -7115,7 +7164,15 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           observability,
           logger,
         } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
-        armTaskHandoffPreflight(reqCtx, taskRegistry, productsDelivery);
+        armTaskHandoffPreflight(reqCtx, taskRegistry, productsDelivery, () => {
+          // Dispatch refuses these after the method returns; refuse at the call.
+          if ((params as { buying_mode?: string }).buying_mode === 'wholesale') {
+            throw wholesaleHandoffError('get_products');
+          }
+          if (reqCtx.account?.id === undefined) {
+            throw missingAccountError('get_products', platform.accounts.resolution);
+          }
+        });
         // v1.5 seam: intercept refine[i].action='finalize' before
         // dispatching to the manager / sales. When the framework
         // commits the proposal inline, project the response directly.
@@ -7257,14 +7314,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 : wireResponse;
             };
             const isHandoff = isTaskHandoff<GetProductsPayload>(resultForRouting);
-            if (buyingMode === 'wholesale' && isHandoff) {
-              throw new AdcpError('INVALID_REQUEST', {
-                message:
-                  'get_products buying_mode=wholesale must return synchronously; use incomplete[] for partial feed results.',
-                field: 'buying_mode',
-                recovery: 'correctable',
-              });
-            }
+            if (buyingMode === 'wholesale' && isHandoff) throw wholesaleHandoffError('get_products');
             if (!isHandoff && push.url === undefined) {
               rejectHandRolledSubmitted(resultForRouting);
               return projectProducts(resultForRouting as GetProductsPayload);
@@ -7324,7 +7374,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           observability,
           logger,
         } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
-        armTaskHandoffPreflight(reqCtx, taskRegistry, delivery);
         // v1.5 seam: when the request carries a proposal_id, reserve
         // the proposal (atomic CAS COMMITTED → CONSUMING), validate
         // expiry + capability overlap, hydrate ctx.recipes. The
@@ -7342,6 +7391,11 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             (reqCtx as unknown as { recipes?: ReadonlyMap<string, ProposalRecipe> }).recipes = reservation.recipes;
           }
         }
+        // Armed after the reservation so a proposal-backed external handoff is
+        // refused at the call; the method's throw releases the reservation.
+        armTaskHandoffPreflight(reqCtx, taskRegistry, delivery, settlement => {
+          if (settlement === 'external' && reservation && proposalStore) throw proposalExternalSettlementError();
+        });
         return projectSync(
           async () => {
             let result: Awaited<ReturnType<NonNullable<typeof sales.createMediaBuy>>>;
@@ -7401,13 +7455,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               handoffEntry.options.settlement === 'external'
             ) {
               await releaseProposalReservation({ store: proposalStore, record: reservation, logger });
-              throw new AdcpError('INVALID_REQUEST', {
-                recovery: 'correctable',
-                field: 'proposal_id',
-                message:
-                  'Proposal-backed create_media_buy does not support external task settlement; ' +
-                  'use a framework-settled handoff so proposal consumption can be finalized atomically.',
-              });
+              throw proposalExternalSettlementError();
             }
             return routeIfHandoff(
               taskRegistry,
@@ -8212,7 +8260,13 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
             observability,
             logger,
           } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
-          armTaskHandoffPreflight(reqCtx, taskRegistry, signalsDelivery);
+          armTaskHandoffPreflight(reqCtx, taskRegistry, signalsDelivery, () => {
+            // Dispatch refuses these after the method returns; refuse at the call.
+            if (discoveryMode === 'wholesale') throw wholesaleHandoffError('get_signals');
+            if (reqCtx.account?.id === undefined) {
+              throw missingAccountError('get_signals', platform.accounts.resolution);
+            }
+          });
           const result = await signals.getSignals(asValidatedDomainRequest(params), reqCtx);
           const projectSignals = async (terminalResult: import('../specialisms/signals').GetSignalsPayload) => {
             // signal_ids is `SignalID[]` (`{source, data_provider_domain, id}`
@@ -8238,14 +8292,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
             return terminalResult;
           };
           const isHandoff = isTaskHandoff<import('../specialisms/signals').GetSignalsPayload>(result);
-          if (discoveryMode === 'wholesale' && isHandoff) {
-            throw new AdcpError('INVALID_REQUEST', {
-              message:
-                'get_signals discovery_mode=wholesale must return synchronously; use incomplete[] for partial feed results.',
-              field: 'discovery_mode',
-              recovery: 'correctable',
-            });
-          }
+          if (discoveryMode === 'wholesale' && isHandoff) throw wholesaleHandoffError('get_signals');
           if (!isHandoff && push.url === undefined) {
             rejectHandRolledSubmitted(result);
             return projectSignals(result as import('../specialisms/signals').GetSignalsPayload);
