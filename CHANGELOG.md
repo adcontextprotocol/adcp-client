@@ -1,5 +1,24 @@
 # Changelog
 
+## 17.0.0-beta.33
+
+### Minor Changes
+
+- 4bce3fc: Support the AdCP 3.3 `refine_proposals` additions: the experimental `extend_hold` action (`media_buy.hold_extension`), `include_collections` / `collections` (`media_buy.collection_cards`), and `expected_confirmation_at`.
+  - **Requests.** `validateRefineProposalsRequest` and `buildRefineProposalsRequest` accept `action: "extend_hold"` on AdCP 3.3. An entry carries only `proposal_id`, `action` and `ext`, and a batch with `extend_hold` contains only `extend_hold` entries. When the seller's capabilities are known, `media_buy.proposal_refinement.hold_extension` must be `true`; otherwise the action fails with `VALIDATION_ERROR`, as the spec requires of a seller that does not declare it. `include_collections` is accepted as a boolean on 3.3. On AdCP 3.2 both are refused, and unknown keys are still rejected. `createAdcpServer` runs the same validator, so a hand-written `refine_proposals` handler now receives these requests.
+  - **Responses.** A successful extension verifies like a finalize: one committed successor whose parent is the source, with a future `expires_at`, all-or-none across the batch. Under a 3.3 contract, `collections` is accepted on a completed response when the request set `include_collections` (each entry is checked against `core/response-collection.json`), and `expected_confirmation_at` on a submitted response. A 3.2 contract still rejects both.
+  - **Source checks.** `verifyHoldExtension(source, successor)` checks the successor against the committed source: same `terms_digest`, `hold_policy` and `hold_placed_at`, and a later `expires_at`. `ProposalNegotiator.extendHold(proposal)` sends the action and runs those checks.
+  - **Capabilities.** `ProposalRefinementCapabilities.hold_extension` is projected to AdCP 3.3 callers only, and `createAdcpServer` adds `media_buy.hold_extension` to `experimental_features` when it is declared, as the 3.3 schema requires.
+  - **Types.** `ExtendHoldProposalRefinement` joins the `ProposalRefinement` union. `RefineProposalsRequest.include_collections`, `RefineProposalsCompletedResponse.collections` and `RefineProposalsSubmittedResponse.expected_confirmation_at` are added.
+
+  `createProposalRefinementHandler` does not implement hold extension yet (#3600). It refuses `hold_extension: true` at construction and answers `extend_hold` with `VALIDATION_ERROR`; serve the action from a custom handler.
+
+### Patch Changes
+
+- ec52e97: `createAdcpServer` with a prerelease `adcpVersion` and no `capabilities.supported_versions` no longer advertises or negotiates a different prerelease that the SDK packages. The derived window is the stable releases plus the configured preview, so a seller that registers its own preview bundle does not also serve the SDK's. The `adcpVersion` docs now state that handlers run in the ceiling release for every caller, so raising the ceiling to a preview changes the shape handlers return for older pins.
+- b22493e: Reporting subscriptions: offering selection honours `selector.dimension_systems` (adcontextprotocol/adcp#9049). An offering matches only when its `dimension_systems.metro` equals the selector's and its `dimension_systems.postal_area` includes every selector entry. A key the selector omits accepts any system. The canonical vectors are synced to the #9049 merge, adding `match-metro-system-named`, `match-metro-system-omitted` and `match-postal-systems-subset`.
+- e48377b: Storyboard strict response check: validate the seller's payload as sent against the served release's schema (adcp-client#3751). The check prepared the payload for the SDK pin's generated Zod schemas, so for a seller serving AdCP 3.2.x it added `status: "completed"` to a synchronous `decline_proposals` answer and then validated that against the 3.2.x JSON Schema, which forbids `status` on that arm. Every conforming 3.2.x `decline_proposals` answer failed, and storyboards `media_buy_seller/declined_proposal_execution` and `declined_proposal_refinement` could not pass for a 3.2.x seller under a 17.x runner. `prepareResponseForSchemaValidation` now takes the version whose schema judges the payload (defaulting to the SDK pin, so the Zod call sites are unchanged), and the strict check passes the served release.
+
 ## 17.0.0-beta.32
 
 ### Patch Changes
