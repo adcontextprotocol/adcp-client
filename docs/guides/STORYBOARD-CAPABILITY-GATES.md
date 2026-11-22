@@ -20,7 +20,7 @@ A predicate is either a path predicate or an `any_of` group.
 ## Which response gates read
 
 Gates read the agent profile's `get_adcp_capabilities` response. On a run pinned
-to a prerelease (for example `3.3.0-rc.0`), discovery first goes out unpinned.
+to a prerelease (for example `3.3.0-rc.3`), discovery first goes out unpinned.
 When the agent lists that exact prerelease in `adcp.supported_versions`, the
 runner asks again at the pin and builds the profile from the pinned answer, so
 preview-only `experimental_features` gates apply. An agent that does not list

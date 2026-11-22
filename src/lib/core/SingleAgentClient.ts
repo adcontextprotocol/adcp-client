@@ -2037,7 +2037,7 @@ function advertisesPreviewElsewhere(result: TaskResult<unknown>, pin: string): b
   );
 }
 
-/** Collapse a full-semver `adcp_version` param to its wire form: `3.3.0-rc.0` → `3.3-rc.0`. */
+/** Collapse a full-semver `adcp_version` param to its wire form: `3.3.0-rc.3` → `3.3-rc.3`. */
 function withReleasePrecisionVersion<T extends { adcp_version?: unknown }>(params: T): T {
   const version = params?.adcp_version;
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
@@ -10083,7 +10083,7 @@ export class SingleAgentClient {
   /**
    * Get AdCP capabilities
    *
-   * A client pinned to a preview release (e.g. `adcpVersion: '3.3.0-rc.0'`)
+   * A client pinned to a preview release (e.g. `adcpVersion: '3.3.0-rc.3'`)
    * discovers unpinned first, so a seller that does not offer the preview still
    * answers. When that answer lists the exact preview in
    * `adcp.supported_versions`, the client asks again pinned to it and returns
@@ -10091,7 +10091,7 @@ export class SingleAgentClient {
    * If the pinned request fails, the unpinned answer is returned.
    *
    * To pin one call, pass `adcp_version` in `params` at release precision
-   * (`'3.3-rc.0'`); a full-semver value (`'3.3.0-rc.0'`) is collapsed to that
+   * (`'3.3-rc.3'`); a full-semver value (`'3.3.0-rc.3'`) is collapsed to that
    * form. A pinned call is not re-probed or retried: a seller without that
    * release answers `VERSION_UNSUPPORTED`, with its releases in
    * `adcpError.details.supported_versions`.

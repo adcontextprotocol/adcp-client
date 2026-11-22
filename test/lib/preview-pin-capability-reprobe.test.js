@@ -19,11 +19,17 @@ const { createInMemoryAgentDiscoveryCache } = require('../../dist/lib/core/agent
 const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const { advertisesExactAdcpRelease } = require('../../dist/lib/adapters/version/index.js');
 const { createTestClient, discoverAgentProfile } = require('../../dist/lib/testing/client.js');
+const { ADCP_VERSION, toReleasePrecisionVersion } = require('../../dist/lib/version.js');
 
-const PREVIEW_PIN = '3.3.0-rc.0';
-const PREVIEW_WIRE = '3.3-rc.0';
+// The preview release the SDK ships (e.g. '3.3.0-rc.3'), and its wire form ('3.3-rc.3').
+const PREVIEW_PIN = ADCP_VERSION;
+const PREVIEW_WIRE = toReleasePrecisionVersion(ADCP_VERSION);
+assert.match(PREVIEW_PIN, /-/, 'these tests need the SDK default ADCP_VERSION to be a preview release');
+// The preview's release line ('3.3') and a different prerelease on that line.
+const PREVIEW_LINE = PREVIEW_WIRE.split('-')[0];
+const OTHER_PREVIEW_WIRE = `${PREVIEW_LINE}-alpha.0`;
 const FEATURE = 'media_buy.collection_catalog';
-// The 3.3-rc.0 schema requires `collection_cards` wherever `collection_catalog` is declared.
+// The 3.3 preview schema requires `collection_cards` wherever `collection_catalog` is declared.
 const FEATURES = [FEATURE, 'media_buy.collection_cards'];
 
 function capabilities(release, extra = {}) {
@@ -41,7 +47,7 @@ function capabilities(release, extra = {}) {
 }
 
 /**
- * A seller whose default release is 3.2. It serves `3.3-rc.0`, with the
+ * A seller whose default release is 3.2. It serves the SDK's preview, with the
  * `media_buy.collection_catalog` experimental feature, only to the exact pin,
  * and refuses any other pin with VERSION_UNSUPPORTED. Records the arguments of
  * every `get_adcp_capabilities` call.
@@ -204,7 +210,7 @@ describe('a preview-pinned client sees preview-only experimental features (#3765
 
 describe('no re-probe', () => {
   test('a seller that does not list the exact pin gets one unpinned call', async t => {
-    const seller = await withSeller(t, { supportedVersions: ['3.2', '3.3-rc.1'] });
+    const seller = await withSeller(t, { supportedVersions: ['3.2', OTHER_PREVIEW_WIRE] });
     const client = singleAgentFor(seller.url, { adcpVersion: PREVIEW_PIN });
 
     const result = await client.getAdcpCapabilities({});
@@ -218,7 +224,7 @@ describe('no re-probe', () => {
   });
 
   test('a bare release-line advertisement is not the exact pin', async t => {
-    const seller = await withSeller(t, { supportedVersions: ['3.2', '3.3'] });
+    const seller = await withSeller(t, { supportedVersions: ['3.2', PREVIEW_LINE] });
     await agentFor(seller.url, { adcpVersion: PREVIEW_PIN }).getAdcpCapabilities({});
 
     assert.deepEqual(seller.discoveryCalls, [{}]);
@@ -446,12 +452,12 @@ describe('advertisesExactAdcpRelease', () => {
   });
 
   test('a different prerelease tag is not a match', () => {
-    assert.equal(advertisesExactAdcpRelease(PREVIEW_PIN, ['3.3-rc.1']), false);
+    assert.equal(advertisesExactAdcpRelease(PREVIEW_PIN, [OTHER_PREVIEW_WIRE]), false);
     assert.equal(advertisesExactAdcpRelease(PREVIEW_PIN, ['3.3-beta.0']), false);
   });
 
   test('a different patch or the bare release line is not a match', () => {
-    assert.equal(advertisesExactAdcpRelease(PREVIEW_PIN, ['3.3', '3.3.1']), false);
+    assert.equal(advertisesExactAdcpRelease(PREVIEW_PIN, [PREVIEW_LINE, `${PREVIEW_LINE}.1`]), false);
     assert.equal(advertisesExactAdcpRelease(PREVIEW_PIN, ['3.2']), false);
   });
 
