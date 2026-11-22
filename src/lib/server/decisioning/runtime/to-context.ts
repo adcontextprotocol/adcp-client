@@ -32,6 +32,7 @@ import type { Account } from '../account';
 import type { RequestContext, CtxMetadataAccessor } from '../context';
 import { sanitizeTaskProgressForStorage, type ScopedTaskRef, type TaskRegistry } from './task-registry';
 import {
+  AdcpError,
   _createTaskHandoff,
   throwTaskHandoffRejection,
   type ExternalTaskHandoffContext,
@@ -183,18 +184,32 @@ function buildCtxMetadataAccessor(store: CtxMetadataStore, accountId: string): C
   };
 }
 
-function createContextTaskHandoff(
-  fn: (taskCtx: ExternalTaskHandoffContext) => Promise<void>,
-  options: ExternalTaskHandoffOptions
-): TaskHandoff<never>;
-function createContextTaskHandoff<TResult>(
-  fn: (taskCtx: TaskHandoffContext) => Promise<TResult>,
-  options?: TaskHandoffOptions
-): TaskHandoff<TResult>;
-function createContextTaskHandoff(
-  fn: (taskCtx: TaskHandoffContext) => Promise<unknown>,
-  options?: TaskHandoffOptions | ExternalTaskHandoffOptions
-): TaskHandoff<unknown> {
+/**
+ * Pre-dispatch check the framework arms on a request context once it knows
+ * how a returned `TaskHandoff` would be dispatched. It throws the exact
+ * refusal dispatch would throw, so `ctx.handoffToTask(...)` can refuse before
+ * the handler does any further work.
+ *
+ * @internal
+ */
+export type TaskHandoffPreflight = (settlement: 'framework' | 'external') => void;
+
+const taskHandoffPreflights = new WeakMap<object, TaskHandoffPreflight>();
+
+/**
+ * Arm the call-time handoff check for one request context. Dispatch sites
+ * call this before invoking the platform method, with the same delivery
+ * options they later pass to task dispatch.
+ *
+ * @internal
+ */
+export function _armTaskHandoffPreflight(context: RequestContext<Account>, preflight: TaskHandoffPreflight): void {
+  taskHandoffPreflights.set(context, preflight);
+}
+
+function handoffSettlement(
+  options: TaskHandoffOptions | ExternalTaskHandoffOptions | undefined
+): 'framework' | 'external' {
   if (options?.task_id !== undefined) {
     if (typeof options.task_id !== 'string' || options.task_id.length === 0) {
       throw new Error('handoffToTask options.task_id must be a non-empty string');
@@ -203,10 +218,50 @@ function createContextTaskHandoff(
       throw new Error('handoffToTask options.task_id must be ≤ 128 characters');
     }
   }
-  if (options != null && 'settlement' in options && options.settlement !== 'external') {
-    throw new Error("handoffToTask options.settlement must be 'external'");
+  if (options != null && 'settlement' in options) {
+    if (options.settlement !== 'external') {
+      throw new Error("handoffToTask options.settlement must be 'external'");
+    }
+    return 'external';
   }
-  return _createTaskHandoff(fn, options);
+  return 'framework';
+}
+
+function buildContextTaskHandoff(contextKey: () => object): RequestContext<Account>['handoffToTask'] {
+  function handoffToTask(
+    fn: (taskCtx: ExternalTaskHandoffContext) => Promise<void>,
+    options: ExternalTaskHandoffOptions
+  ): TaskHandoff<never>;
+  function handoffToTask<TResult>(
+    fn: (taskCtx: TaskHandoffContext) => Promise<TResult>,
+    options?: TaskHandoffOptions
+  ): TaskHandoff<TResult>;
+  function handoffToTask(
+    fn: (taskCtx: TaskHandoffContext) => Promise<unknown>,
+    options?: TaskHandoffOptions | ExternalTaskHandoffOptions
+  ): TaskHandoff<unknown> {
+    const settlement = handoffSettlement(options);
+    // Throw the dispatch-time refusal now, before the handler can go on to
+    // do work (for example, call a remote agent) that a refusal would waste.
+    taskHandoffPreflights.get(contextKey())?.(settlement);
+    return _createTaskHandoff(fn, options);
+  }
+  return handoffToTask;
+}
+
+function buildCanHandoffToTask(contextKey: () => object): RequestContext<Account>['canHandoffToTask'] {
+  return options => {
+    const settlement = handoffSettlement(options);
+    try {
+      taskHandoffPreflights.get(contextKey())?.(settlement);
+    } catch (error) {
+      // Only a structured, request-caused refusal is an answer. A server
+      // misconfiguration stays a thrown error, as it is for handoffToTask.
+      if (error instanceof AdcpError) return { ok: false, error };
+      throw error;
+    }
+    return { ok: true };
+  };
 }
 
 export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
@@ -275,7 +330,10 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
       creativeFormat: stubResolver('creativeFormat'),
     },
     ctxMetadata,
-    handoffToTask: createContextTaskHandoff,
+    // Both closures look up the armed preflight by this context object, so a
+    // handler that spreads or forwards `ctx` still reaches the same check.
+    handoffToTask: buildContextTaskHandoff(() => context),
+    canHandoffToTask: buildCanHandoffToTask(() => context),
   };
   if (handlerCtx.servedAdcpVersion !== undefined) {
     Object.defineProperty(context, 'servedAdcpVersion', {

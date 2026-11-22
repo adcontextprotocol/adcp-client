@@ -133,7 +133,12 @@ import { resolveCredentialPolicyForTool, scanArgsForCredentials, type Credential
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import { validateSpecialismRequiredTools, formatSpecialismIssue } from '../validate-specialisms';
 import type { AdcpLogger } from '../../create-adcp-server';
-import { buildExternalHandoffContext, buildRequestContext, buildHandoffContext } from './to-context';
+import {
+  _armTaskHandoffPreflight,
+  buildExternalHandoffContext,
+  buildRequestContext,
+  buildHandoffContext,
+} from './to-context';
 import {
   type CtxMetadataStore,
   type ResourceKind,
@@ -5289,7 +5294,7 @@ interface DispatchHitlOpts {
   autoEmitCompletion?: boolean;
 }
 
-function refuseTaskWebhookHandoff(opts: DispatchHitlOpts, message: string, suggestion: string): never {
+function refuseTaskWebhookHandoff(opts: TaskHandoffPreflightOpts, message: string, suggestion: string): never {
   try {
     opts.logger.warn(
       '[adcp/decisioning] refusing push-enabled TaskHandoff before task creation: configure SDK webhooks for framework ' +
@@ -5308,7 +5313,7 @@ function refuseTaskWebhookHandoff(opts: DispatchHitlOpts, message: string, sugge
   });
 }
 
-function resolveTaskWebhookDelivery(opts: DispatchHitlOpts, settlement: 'framework' | 'external'): boolean {
+function resolveTaskWebhookDelivery(opts: TaskHandoffPreflightOpts, settlement: 'framework' | 'external'): boolean {
   // This value is populated only by extractPushConfig after URL validation.
   // A malformed or missing URL cannot turn an accepted task into has_webhook.
   if (opts.pushNotificationUrl === undefined) return false;
@@ -5339,6 +5344,50 @@ function resolveTaskWebhookDelivery(opts: DispatchHitlOpts, settlement: 'framewo
       'Remove push_notification_config to use polling, or configure task webhooks on the seller.',
     'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to configure task webhooks.'
   );
+}
+
+/** Delivery options the pre-create handoff checks read; `DispatchHitlOpts` satisfies it. */
+type TaskHandoffPreflightOpts = Pick<
+  DispatchHitlOpts,
+  'pushNotificationUrl' | 'pushNotificationOperationId' | 'servedAdcpVersion' | 'emitWebhook' | 'logger'
+>;
+
+/**
+ * Every check that must pass before a `TaskHandoff` may create a task.
+ * `dispatchHitl` runs it before `TaskRegistry.create`, and the request
+ * context runs it when the handler calls `ctx.handoffToTask(...)`, so a
+ * handler learns of a refusal before it does work the refusal would waste.
+ * Returns whether the task has a terminal-webhook owner (`has_webhook`).
+ */
+function preflightTaskHandoff(
+  taskRegistry: TaskRegistry,
+  opts: TaskHandoffPreflightOpts,
+  settlement: 'framework' | 'external'
+): boolean {
+  const hasWebhook = resolveTaskWebhookDelivery(opts, settlement);
+  if (
+    settlement === 'external' &&
+    (taskRegistry.durability !== 'durable' ||
+      typeof taskRegistry.registryId !== 'string' ||
+      taskRegistry.registryId.length === 0)
+  ) {
+    throw new Error('External task settlement requires a durable task registry with a stable identity');
+  }
+  return hasWebhook;
+}
+
+/**
+ * Arm the call-time handoff check on a request context. Call before invoking
+ * the platform method, with the delivery options later passed to dispatch.
+ */
+function armTaskHandoffPreflight(
+  reqCtx: RequestContext<Account>,
+  taskRegistry: TaskRegistry,
+  opts: TaskHandoffPreflightOpts
+): void {
+  _armTaskHandoffPreflight(reqCtx, settlement => {
+    preflightTaskHandoff(taskRegistry, opts, settlement);
+  });
 }
 
 function taskOwnerScopeFor(ctx: HandlerContext<Account>, accountId: string): string {
@@ -5519,17 +5568,10 @@ async function dispatchHitl<TResult>(
 ): Promise<SubmittedEnvelope> {
   // Fail before task creation, external producer callbacks, or any terminal
   // state can be persisted. A buyer gets Submitted only after a validated
-  // destination has exactly one terminal-delivery owner.
-  const hasWebhook = resolveTaskWebhookDelivery(opts, settlement);
-  if (settlement === 'external' && taskRegistry.durability !== 'durable') {
-    throw new Error('External task settlement requires a durable task registry with a stable identity');
-  }
-  if (
-    settlement === 'external' &&
-    (typeof taskRegistry.registryId !== 'string' || taskRegistry.registryId.length === 0)
-  ) {
-    throw new Error('External task settlement requires a durable task registry with a stable identity');
-  }
+  // destination has exactly one terminal-delivery owner. The request context
+  // already ran this check when the handler called `ctx.handoffToTask`; this
+  // repeat is the backstop for markers that reach dispatch some other way.
+  const hasWebhook = preflightTaskHandoff(taskRegistry, opts, settlement);
   const createStart = Date.now();
   const createdRef = await taskRegistry.create({
     tool: opts.tool,
@@ -6838,26 +6880,23 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
           const push = extractPushConfig(request, logger, {
             allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
           });
+          const hitlOpts: DispatchHitlOpts = {
+            tool: 'refine_proposals',
+            accountId: reqCtx.account.id,
+            ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
+            pushNotificationUrl: push.url,
+            pushNotificationSigningProfile: push.signingProfile,
+            pushNotificationToken: push.token,
+            pushNotificationOperationId: push.operationId,
+            servedAdcpVersion: ctx.servedAdcpVersion,
+            emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+            autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+            observability,
+            logger,
+          };
+          armTaskHandoffPreflight(reqCtx, taskRegistry, hitlOpts);
           const result = await lifecycle.refineProposals!(params, reqCtx);
-          return routeIfHandoff(
-            taskRegistry,
-            {
-              tool: 'refine_proposals',
-              accountId: reqCtx.account.id,
-              ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
-              pushNotificationUrl: push.url,
-              pushNotificationSigningProfile: push.signingProfile,
-              pushNotificationToken: push.token,
-              pushNotificationOperationId: push.operationId,
-              servedAdcpVersion: ctx.servedAdcpVersion,
-              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-              observability,
-              logger,
-            },
-            result,
-            value => value
-          );
+          return routeIfHandoff(taskRegistry, hitlOpts, result, value => value);
         },
         value => value
       );
@@ -6930,26 +6969,23 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         const push = extractPushConfig(params, logger, {
           allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
         });
+        const hitlOpts: DispatchHitlOpts = {
+          tool,
+          accountId,
+          ownerScope: taskOwnerScopeFor(ctx, accountId),
+          pushNotificationUrl: push.url,
+          pushNotificationSigningProfile: push.signingProfile,
+          pushNotificationToken: push.token,
+          pushNotificationOperationId: push.operationId,
+          servedAdcpVersion: ctx.servedAdcpVersion,
+          emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+          autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+          observability,
+          logger,
+        };
+        armTaskHandoffPreflight(reqCtx, taskRegistry, hitlOpts);
         const result = await invoke(reqCtx);
-        return routeIfHandoff(
-          taskRegistry,
-          {
-            tool,
-            accountId,
-            ownerScope: taskOwnerScopeFor(ctx, accountId),
-            pushNotificationUrl: push.url,
-            pushNotificationSigningProfile: push.signingProfile,
-            pushNotificationToken: push.token,
-            pushNotificationOperationId: push.operationId,
-            servedAdcpVersion: ctx.servedAdcpVersion,
-            emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-            autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-            observability,
-            logger,
-          },
-          result,
-          value => value
-        );
+        return routeIfHandoff(taskRegistry, hitlOpts, result, value => value);
       },
       value => value
     );
@@ -7065,6 +7101,21 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         // narrow the successful extractor result from the property check even
         // though projectSync returns it only on the error path.
         const push = pushOrError as ReturnType<typeof extractPushConfig>;
+        // Account scope is attached at dispatch: the synchronous no-push path
+        // stays available to requests that resolve no account.
+        const productsDelivery = {
+          tool: 'get_products',
+          pushNotificationUrl: push.url,
+          pushNotificationSigningProfile: push.signingProfile,
+          pushNotificationToken: push.token,
+          pushNotificationOperationId: push.operationId,
+          servedAdcpVersion: ctx.servedAdcpVersion,
+          emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+          autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+          observability,
+          logger,
+        } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
+        armTaskHandoffPreflight(reqCtx, taskRegistry, productsDelivery);
         // v1.5 seam: intercept refine[i].action='finalize' before
         // dispatching to the manager / sales. When the framework
         // commits the proposal inline, project the response directly.
@@ -7101,18 +7152,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             const out = await routeIfHandoff(
               taskRegistry,
               {
-                tool: 'get_products',
+                ...productsDelivery,
                 accountId: reqCtx.account.id,
                 ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
-                pushNotificationUrl: push.url,
-                pushNotificationSigningProfile: push.signingProfile,
-                pushNotificationToken: push.token,
-                pushNotificationOperationId: push.operationId,
-                servedAdcpVersion: ctx.servedAdcpVersion,
-                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-                observability,
-                logger,
               },
               intercept.result,
               intercept.project
@@ -7233,20 +7275,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             }
             return routeIfHandoff(
               taskRegistry,
-              {
-                tool: 'get_products',
-                accountId,
-                ownerScope: taskOwnerScopeFor(ctx, accountId),
-                pushNotificationUrl: push.url,
-                pushNotificationSigningProfile: push.signingProfile,
-                pushNotificationToken: push.token,
-                pushNotificationOperationId: push.operationId,
-                servedAdcpVersion: ctx.servedAdcpVersion,
-                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-                observability,
-                logger,
-              },
+              { ...productsDelivery, accountId, ownerScope: taskOwnerScopeFor(ctx, accountId) },
               resultForRouting as GetProductsPayload | TaskHandoff<GetProductsPayload>,
               projectProducts
             );
@@ -7281,6 +7310,21 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         const push = extractPushConfig(params, logger, {
           allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
         });
+        // Account scope is attached at dispatch, after the platform method has
+        // had its chance to refuse a request that resolved no account.
+        const delivery = {
+          tool: 'create_media_buy',
+          pushNotificationUrl: push.url,
+          pushNotificationSigningProfile: push.signingProfile,
+          pushNotificationToken: push.token,
+          pushNotificationOperationId: push.operationId,
+          servedAdcpVersion: ctx.servedAdcpVersion,
+          emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+          autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+          observability,
+          logger,
+        } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
+        armTaskHandoffPreflight(reqCtx, taskRegistry, delivery);
         // v1.5 seam: when the request carries a proposal_id, reserve
         // the proposal (atomic CAS COMMITTED → CONSUMING), validate
         // expiry + capability overlap, hydrate ctx.recipes. The
@@ -7367,20 +7411,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             }
             return routeIfHandoff(
               taskRegistry,
-              {
-                tool: 'create_media_buy',
-                accountId: reqCtx.account.id,
-                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
-                pushNotificationUrl: push.url,
-                pushNotificationSigningProfile: push.signingProfile,
-                pushNotificationToken: push.token,
-                pushNotificationOperationId: push.operationId,
-                servedAdcpVersion: ctx.servedAdcpVersion,
-                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-                observability,
-                logger,
-              },
+              { ...delivery, accountId: reqCtx.account.id, ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id) },
               result,
               async r => {
                 await persistMediaBuyFromCreate(mediaBuyStore, reqCtx.account?.id, params, r, logger);
@@ -7481,6 +7512,21 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             const push = extractPushConfig(params, logger, {
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
+            // Account scope is attached at dispatch, after the platform method has
+            // had its chance to refuse a request that resolved no account.
+            const delivery = {
+              tool: 'update_media_buy',
+              pushNotificationUrl: push.url,
+              pushNotificationSigningProfile: push.signingProfile,
+              pushNotificationToken: push.token,
+              pushNotificationOperationId: push.operationId,
+              servedAdcpVersion: ctx.servedAdcpVersion,
+              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+              observability,
+              logger,
+            } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
+            armTaskHandoffPreflight(reqCtx, taskRegistry, delivery);
             const result = await sales!.updateMediaBuy!(
               media_buy_id,
               params as unknown as CanonicalUpdateMediaBuyRequest,
@@ -7488,20 +7534,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             );
             return routeIfHandoff(
               taskRegistry,
-              {
-                tool: 'update_media_buy',
-                accountId: reqCtx.account.id,
-                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
-                pushNotificationUrl: push.url,
-                pushNotificationSigningProfile: push.signingProfile,
-                pushNotificationToken: push.token,
-                pushNotificationOperationId: push.operationId,
-                servedAdcpVersion: ctx.servedAdcpVersion,
-                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-                observability,
-                logger,
-              },
+              { ...delivery, accountId: reqCtx.account.id, ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id) },
               result,
               async r => {
                 // A TaskHandoff marker is not acceptance of the patch. Apply
@@ -7540,23 +7573,25 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             const push = extractPushConfig(params, logger, {
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
+            // Account scope is attached at dispatch, after the platform method has
+            // had its chance to refuse a request that resolved no account.
+            const delivery = {
+              tool: 'sync_creatives',
+              pushNotificationUrl: push.url,
+              pushNotificationSigningProfile: push.signingProfile,
+              pushNotificationToken: push.token,
+              pushNotificationOperationId: push.operationId,
+              servedAdcpVersion: ctx.servedAdcpVersion,
+              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+              observability,
+              logger,
+            } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
+            armTaskHandoffPreflight(reqCtx, taskRegistry, delivery);
             const result = await sales.syncCreatives!(creatives, reqCtx);
             return routeIfHandoff(
               taskRegistry,
-              {
-                tool: 'sync_creatives',
-                accountId: reqCtx.account.id,
-                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
-                pushNotificationUrl: push.url,
-                pushNotificationSigningProfile: push.signingProfile,
-                pushNotificationToken: push.token,
-                pushNotificationOperationId: push.operationId,
-                servedAdcpVersion: ctx.servedAdcpVersion,
-                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-                observability,
-                logger,
-              },
+              { ...delivery, accountId: reqCtx.account.id, ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id) },
               result,
               rows =>
                 asSemanticServerResponseForWire(
@@ -7965,23 +8000,25 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
             const push = extractPushConfig(params, logger, {
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
+            // Account scope is attached at dispatch, after the platform method has
+            // had its chance to refuse a request that resolved no account.
+            const delivery = {
+              tool: 'sync_creatives',
+              pushNotificationUrl: push.url,
+              pushNotificationSigningProfile: push.signingProfile,
+              pushNotificationToken: push.token,
+              pushNotificationOperationId: push.operationId,
+              servedAdcpVersion: ctx.servedAdcpVersion,
+              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+              observability,
+              logger,
+            } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
+            armTaskHandoffPreflight(reqCtx, taskRegistry, delivery);
             const result = await creative.syncCreatives!(creatives, reqCtx);
             return routeIfHandoff(
               taskRegistry,
-              {
-                tool: 'sync_creatives',
-                accountId: reqCtx.account.id,
-                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
-                pushNotificationUrl: push.url,
-                pushNotificationSigningProfile: push.signingProfile,
-                pushNotificationToken: push.token,
-                pushNotificationOperationId: push.operationId,
-                servedAdcpVersion: ctx.servedAdcpVersion,
-                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-                observability,
-                logger,
-              },
+              { ...delivery, accountId: reqCtx.account.id, ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id) },
               result,
               rows =>
                 asSemanticServerResponseForWire(
@@ -8161,6 +8198,21 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
           const push = extractPushConfig(params, logger, {
             allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
           });
+          // Account scope is attached at dispatch: the synchronous no-push
+          // path stays available to requests that resolve no account.
+          const signalsDelivery = {
+            tool: 'get_signals',
+            pushNotificationUrl: push.url,
+            pushNotificationSigningProfile: push.signingProfile,
+            pushNotificationToken: push.token,
+            pushNotificationOperationId: push.operationId,
+            servedAdcpVersion: ctx.servedAdcpVersion,
+            emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+            autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+            observability,
+            logger,
+          } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
+          armTaskHandoffPreflight(reqCtx, taskRegistry, signalsDelivery);
           const result = await signals.getSignals(asValidatedDomainRequest(params), reqCtx);
           const projectSignals = async (terminalResult: import('../specialisms/signals').GetSignalsPayload) => {
             // signal_ids is `SignalID[]` (`{source, data_provider_domain, id}`
@@ -8204,20 +8256,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
           }
           return routeIfHandoff(
             taskRegistry,
-            {
-              tool: 'get_signals',
-              accountId,
-              ownerScope: taskOwnerScopeFor(ctx, accountId),
-              pushNotificationUrl: push.url,
-              pushNotificationSigningProfile: push.signingProfile,
-              pushNotificationToken: push.token,
-              pushNotificationOperationId: push.operationId,
-              servedAdcpVersion: ctx.servedAdcpVersion,
-              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-              observability,
-              logger,
-            },
+            { ...signalsDelivery, accountId, ownerScope: taskOwnerScopeFor(ctx, accountId) },
             result,
             projectSignals
           );

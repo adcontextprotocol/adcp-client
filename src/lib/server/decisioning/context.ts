@@ -33,6 +33,7 @@ import type {
   ExternalTaskHandoffContext,
   ExternalTaskHandoffOptions,
   TaskHandoff,
+  TaskHandoffAvailability,
   TaskHandoffContext,
   TaskHandoffOptions,
 } from './async-outcome';
@@ -267,6 +268,19 @@ export interface RequestContext<TAccount = Account> {
    * throws, the initial invocation fails and the task remains internally
    * submitted, so the framework cannot acknowledge unrecoverable work or
    * create a terminal task without its required durable delivery record.
+   *
+   * **Refusal happens at call time.** The framework knows the request's
+   * `push_notification_config` before your method runs, so a handoff it
+   * cannot accept throws here, synchronously, rather than after your method
+   * returns. A request that carries `push_notification_config` throws
+   * `AdcpError('UNSUPPORTED_FEATURE', { field: 'push_notification_config' })`
+   * when the handoff kind has no terminal-webhook delivery path (an
+   * external handoff, or a framework handoff on a server without task
+   * webhooks); a beta.5+ request without `operation_id` throws
+   * `INVALID_REQUEST`. Let the error propagate. Call `handoffToTask` (or
+   * {@link canHandoffToTask}) before any side effect that a refusal would
+   * waste, such as calling a remote agent. The framework repeats the same
+   * check when it dispatches the returned marker.
    */
   handoffToTask(
     fn: (taskCtx: ExternalTaskHandoffContext) => Promise<void>,
@@ -276,6 +290,36 @@ export interface RequestContext<TAccount = Account> {
     fn: (taskCtx: TaskHandoffContext) => Promise<TResult>,
     options?: TaskHandoffOptions
   ): TaskHandoff<TResult>;
+
+  /**
+   * Ask whether `handoffToTask` with these options would be accepted for
+   * this request, without creating a handoff. Returns `{ ok: true }`, or
+   * `{ ok: false, error }` where `error` is the exact structured `AdcpError`
+   * `handoffToTask` would throw (for example `UNSUPPORTED_FEATURE` on
+   * `push_notification_config` for an external handoff the server cannot
+   * deliver a terminal webhook for). Use it before work a refusal would
+   * waste, such as proxying the request to a remote agent:
+   *
+   * @example
+   * ```ts
+   * requestProposals: async (req, ctx) => {
+   *   const availability = ctx.canHandoffToTask({ settlement: 'external' });
+   *   if (!availability.ok) throw availability.error;
+   *   const ack = await callRemoteAgent(req);
+   *   if (ack.status !== 'submitted') return ack;
+   *   return ctx.handoffToTask(
+   *     async taskCtx => db.enqueuePending(taskCtx.taskRef, ack.task_id),
+   *     { settlement: 'external' }
+   *   );
+   * }
+   * ```
+   *
+   * Invalid `options` (an empty `task_id`, an unknown `settlement`) throw,
+   * as they do for `handoffToTask`. A server misconfiguration that is not
+   * caused by the request, such as external settlement on a process-local
+   * task registry, also throws rather than returning `ok: false`.
+   */
+  canHandoffToTask(options?: TaskHandoffOptions | ExternalTaskHandoffOptions): TaskHandoffAvailability;
 }
 
 // ---------------------------------------------------------------------------

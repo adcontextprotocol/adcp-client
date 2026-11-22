@@ -1,0 +1,5 @@
+---
+'@adcp/sdk': patch
+---
+
+`ctx.handoffToTask(...)` now refuses a handoff the framework cannot dispatch when it is called, not after the handler returns (#3761). For a request that carries `push_notification_config`, an external handoff (`{ settlement: 'external' }`), or a framework handoff on a server without task webhooks, throws the same structured `AdcpError` (`UNSUPPORTED_FEATURE`, `recovery: 'correctable'`, `field: 'push_notification_config'`, `details: { feature: 'task_webhook_delivery' }`) from the `handoffToTask` call, so handler code after it, such as a call to a remote agent, does not run. External settlement on a process-local registry also fails at the call. New `ctx.canHandoffToTask(options)` returns `{ ok: true }` or `{ ok: false, error }` with that error, so a proxying handler can check before it starts remote work. Dispatch still runs the same check as a backstop. `RequestContext` gains the required `canHandoffToTask` member, so a hand-built `RequestContext` test double needs it too.
