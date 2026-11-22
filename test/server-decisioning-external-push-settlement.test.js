@@ -152,6 +152,36 @@ describe('external push settlement without a durable coordinator', () => {
   });
 });
 
+describe('projectBoundTaskResultForRelease', () => {
+  const { projectBoundTaskResultForRelease } = require('../dist/lib/server/decisioning/runtime/task-result-release');
+  const result = () => ({
+    media_buy_id: 'mb_1',
+    media_buy_status: 'pending_creatives',
+    confirmed_at: '2026-04-29T00:00:00Z',
+    revision: 1,
+    packages: [
+      { package_id: 'pk', targeting_overlay: { collection_lists: [{ agent_url: 'https://g.example', list_id: 'l' }] } },
+    ],
+  });
+
+  test('a recorded release with no bundle converts from its minor line', () => {
+    const projected = projectBoundTaskResultForRelease('create_media_buy', result(), '3.3.0-beta.6', '3.2');
+    assert.strictEqual(projected.packages[0].targeting_overlay?.collection_lists, undefined);
+  });
+
+  test('no minor-line step returns the same reference', () => {
+    const input = result();
+    assert.strictEqual(
+      projectBoundTaskResultForRelease('create_media_buy', input, '3.3.0-beta.6', '3.3.0-beta.6'),
+      input
+    );
+  });
+
+  test('a recorded release with no schemas on its minor line throws', () => {
+    assert.throws(() => projectBoundTaskResultForRelease('create_media_buy', result(), '3.9.0-beta.1', '3.2'));
+  });
+});
+
 describe('external push settlement with PostgreSQL', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
   let pool;
   let lib;
@@ -456,6 +486,73 @@ describe('external push settlement with PostgreSQL', { skip: !DATABASE_URL && 'D
       const [post] = await deliverPending(coordinator);
       assert.strictEqual(post.body.result.errors[0].mutation_outcome, 'not_applied');
       assert.deepStrictEqual(post.body.result.errors[0].buyer_reason, BUYER_REASON);
+    });
+
+    const NO_TOKEN_PUSH = { url: PUSH.url, operation_id: PUSH.operation_id };
+
+    async function handoffNoToken(release) {
+      const { registry, coordinator } = stack();
+      const state = { queued: [] };
+      const server = serverFor(registry, coordinator, state);
+      await dispatchCreate(server, { push_notification_config: NO_TOKEN_PUSH, adcp_version: release });
+      return { registry, coordinator, ref: state.queued[0] };
+    }
+
+    /** Rewrite the recorded server release of the stored binding, keeping its fingerprint valid. */
+    async function rewriteServerRelease(ref, serverAdcpVersion) {
+      const { canonicalJsonSha256 } = require('../dist/lib/utils/jcs');
+      const { rows } = await pool.query(`SELECT push_binding FROM ${TABLE} WHERE task_id = $1`, [ref.taskId]);
+      const binding = { ...rows[0].push_binding, serverAdcpVersion };
+      const { url, operationId, servedAdcpVersion, signingProfile } = binding;
+      binding.fingerprint = canonicalJsonSha256({
+        url,
+        ...(operationId !== undefined && { operationId }),
+        ...(servedAdcpVersion !== undefined && { servedAdcpVersion }),
+        serverAdcpVersion,
+        ...(signingProfile !== undefined && { signingProfile }),
+      });
+      await pool.query(`UPDATE ${TABLE} SET push_binding = $2::jsonb WHERE task_id = $1`, [
+        ref.taskId,
+        JSON.stringify(binding),
+      ]);
+    }
+
+    test('a retired recorded release still projects through its minor-line bundle', async () => {
+      const { coordinator, ref } = await handoffNoToken('3.2');
+      await rewriteServerRelease(ref, '3.3.0-beta.6');
+      assert.strictEqual((await lib.completeBoundPushTask(coordinator, ref, COMPLETED())).outcome, 'applied');
+      const [post] = await deliverPending(coordinator);
+      assert.strictEqual(post.body.result.packages[0].targeting_overlay?.collection_lists, undefined);
+    });
+
+    test('an unconvertible recorded release refuses settlement and writes nothing', async () => {
+      const { registry, coordinator, ref } = await handoffNoToken('3.2');
+      await rewriteServerRelease(ref, '3.9.0-beta.1');
+      await assert.rejects(
+        lib.completeBoundPushTask(coordinator, ref, COMPLETED()),
+        error => error instanceof lib.TaskPushSettlementConfigurationError
+      );
+      assert.strictEqual((await registry.getTask(ref.taskId, ref)).status, 'submitted');
+      assert.strictEqual(await count(OUTBOX), 0);
+    });
+
+    test('an exact retry stays compatible after the recorded release becomes unconvertible', async () => {
+      const { coordinator, ref } = await handoffNoToken('3.2');
+      assert.strictEqual((await lib.completeBoundPushTask(coordinator, ref, COMPLETED())).outcome, 'applied');
+      await rewriteServerRelease(ref, '3.9.0-beta.1');
+      const retried = async result => lib.completeBoundPushTask(coordinator, ref, result);
+      const compatible = { outcome: 'already_terminal', status: 'completed', compatibility: 'compatible' };
+
+      assert.deepStrictEqual(
+        { ...(await retried(COMPLETED())), delivery: undefined },
+        { ...compatible, delivery: undefined }
+      );
+      const differing = { ...COMPLETED(), media_buy_id: 'mb_other' };
+      assert.strictEqual((await retried(differing)).compatibility, 'conflicting');
+
+      assert.strictEqual((await deliverPending(coordinator)).length, 1);
+      assert.strictEqual((await retried(COMPLETED())).compatibility, 'compatible');
+      assert.strictEqual((await retried(differing)).compatibility, 'conflicting');
     });
   });
 
