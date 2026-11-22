@@ -33,7 +33,12 @@ import { validateUserAgent } from '../utils/validate-user-agent';
 import { ssrfSafeFetch, SsrfRefusedError, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { AdAgentsJson } from './types';
-import { AdAgentsRedirectRefusedError, ssrfSafeFetchAdAgents, type AdAgentsRedirectPolicy } from './adagents-redirects';
+import {
+  AdAgentsRedirectRefusedError,
+  isAdAgentsUrlReference,
+  ssrfSafeFetchAdAgents,
+  type AdAgentsRedirectPolicy,
+} from './adagents-redirects';
 
 /** How the validator located the authoritative `adagents.json` for a publisher. */
 export type DiscoveryMethod = 'direct' | 'authoritative_location' | 'ads_txt_managerdomain';
@@ -174,15 +179,15 @@ export async function validateAdAgents(
       };
     }
 
-    // Handle `authoritative_location` indirection: a pointer file with no
-    // inline `authorized_agents` should be followed exactly once.
-    if (data.authoritative_location && !data.authorized_agents) {
-      const target = data.authoritative_location;
-      // Production: HTTPS-only. Loopback test runs (gated by
-      // ADCP_ALLOW_INTERNAL_PROBES=1) may use `http://` against a
-      // 127.0.0.1 server — the same opt-in that lets `ssrfSafeFetch`
-      // touch loopback in the first place.
-      const allowHttp = isInternalProbesAllowed();
+    // Handle `authoritative_location` indirection: a URL reference is followed
+    // exactly once, even when it also carries inline `authorized_agents`.
+    // Production: HTTPS-only. Loopback test runs (gated by
+    // ADCP_ALLOW_INTERNAL_PROBES=1) may use `http://` against a
+    // 127.0.0.1 server — the same opt-in that lets `ssrfSafeFetch`
+    // touch loopback in the first place.
+    const allowHttp = isInternalProbesAllowed();
+    if (isAdAgentsUrlReference(data, { allowHttp })) {
+      const target = data.authoritative_location!;
       if (!target.startsWith('https://') && !(allowHttp && target.startsWith('http://'))) {
         return {
           valid: false,

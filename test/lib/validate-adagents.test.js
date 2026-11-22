@@ -20,6 +20,7 @@ const http = require('node:http');
 const { validateAdAgents, parseManagerDomain } = require('../../dist/lib/discovery/validate-adagents.js');
 const {
   validateSameRegistrableDomainRedirect,
+  isAdAgentsUrlReference,
   AdAgentsRedirectRefusedError,
 } = require('../../dist/lib/discovery/adagents-redirects.js');
 
@@ -388,6 +389,117 @@ describe('validateAdAgents — discovery_method', () => {
     } finally {
       await Promise.all([publisher.close(), manager.close()]);
     }
+  });
+
+  test('authoritative_location + inline authorized_agents → location is followed, inline agents ignored', async () => {
+    let managerHits = 0;
+    const countingManager = http.createServer((req, res) => {
+      managerHits++;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(adAgentsJson('https://fresh-agent.example.com/mcp'));
+    });
+    await new Promise(r => countingManager.listen(0, '127.0.0.1', r));
+    const managerUrl = `http://127.0.0.1:${countingManager.address().port}/.well-known/adagents.json`;
+    const publisher = await startRoutedServer({
+      '/.well-known/adagents.json': {
+        body: JSON.stringify({
+          authoritative_location: managerUrl,
+          authorized_agents: [{ url: 'https://stale-agent.example.com/mcp', authorized_for: 'Stale' }],
+        }),
+      },
+    });
+    try {
+      const result = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, true, `expected valid, got errors=${JSON.stringify(result.errors)}`);
+      assert.strictEqual(result.discovery_method, 'authoritative_location');
+      assert.strictEqual(managerHits, 1, 'authoritative server must be fetched');
+      assert.strictEqual(result.resolved_url, managerUrl);
+      const urls = result.adagents.authorized_agents.map(a => a.url);
+      assert.deepStrictEqual(urls, ['https://fresh-agent.example.com/mcp']);
+    } finally {
+      await Promise.all([publisher.close(), new Promise(r => countingManager.close(() => r()))]);
+    }
+  });
+
+  for (const [label, location] of [
+    ['non-http(s) scheme', 'ftp://x/adagents.json'],
+    ['non-URL string', 'not a url'],
+  ]) {
+    test(`authoritative_location + inline authorized_agents with ${label} → inline used, discovery_method 'direct'`, async () => {
+      const publisher = await startRoutedServer({
+        '/.well-known/adagents.json': {
+          body: JSON.stringify({
+            authoritative_location: location,
+            authorized_agents: [{ url: 'https://inline-agent.example.com/mcp', authorized_for: 'Inline' }],
+            properties: [
+              {
+                property_type: 'website',
+                name: 'example.com',
+                identifiers: [{ type: 'domain', value: 'example.com' }],
+              },
+            ],
+          }),
+        },
+      });
+      try {
+        const result = await validateAdAgents(publisher.host, {
+          urlForDomain: (domain, path) => `http://${domain}${path}`,
+        });
+        assert.strictEqual(result.discovery_method, 'direct');
+        assert.ok(
+          !(result.errors ?? []).some(e => /authoritative_location/.test(e)),
+          `no authoritative_location error expected, got ${JSON.stringify(result.errors)}`
+        );
+        assert.deepStrictEqual(
+          result.adagents.authorized_agents.map(a => a.url),
+          ['https://inline-agent.example.com/mcp']
+        );
+      } finally {
+        await publisher.close();
+      }
+    });
+  }
+
+  test('isAdAgentsUrlReference: precedence between authoritative_location and inline authorized_agents', () => {
+    const agents = [{ url: 'https://a.example.com', authorized_for: 'x' }];
+    assert.strictEqual(isAdAgentsUrlReference({ authorized_agents: agents }), false, 'no location');
+    assert.strictEqual(isAdAgentsUrlReference({}), false, 'empty file');
+    assert.strictEqual(isAdAgentsUrlReference({ authoritative_location: 'https://x.example.com/a.json' }), true);
+    assert.strictEqual(
+      isAdAgentsUrlReference({ authoritative_location: 'http://x.example.com/a.json' }),
+      true,
+      'location without inline agents is a reference regardless of scheme (callers refuse non-HTTPS)'
+    );
+    assert.strictEqual(
+      isAdAgentsUrlReference({ authoritative_location: 'https://x.example.com/a.json', authorized_agents: agents }),
+      true,
+      'valid https + inline → reference'
+    );
+    assert.strictEqual(
+      isAdAgentsUrlReference({ authoritative_location: 'http://x.example.com/a.json', authorized_agents: agents }),
+      false,
+      'http + inline → inline'
+    );
+    assert.strictEqual(
+      isAdAgentsUrlReference(
+        { authoritative_location: 'http://x.example.com/a.json', authorized_agents: agents },
+        { allowHttp: true }
+      ),
+      true,
+      'http + inline with allowHttp → reference'
+    );
+    assert.strictEqual(
+      isAdAgentsUrlReference({ authoritative_location: 'https://', authorized_agents: agents }),
+      false,
+      'unparseable https string + inline → inline'
+    );
+    assert.strictEqual(
+      isAdAgentsUrlReference({ authoritative_location: 42, authorized_agents: agents }),
+      false,
+      'non-string location + inline → inline'
+    );
   });
 
   test("managerdomain fallback on 404 → discovery_method 'ads_txt_managerdomain', manager_domain populated", async () => {

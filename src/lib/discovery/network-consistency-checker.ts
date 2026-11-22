@@ -15,7 +15,12 @@ import { validateAgentUrl } from '../validation';
 import { ssrfSafeFetch, SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { AdAgentsJson, AuthorizedAgent, Property } from './types';
-import { AdAgentsRedirectRefusedError, ssrfSafeFetchAdAgents, type AdAgentsRedirectPolicy } from './adagents-redirects';
+import {
+  AdAgentsRedirectRefusedError,
+  isAdAgentsUrlReference,
+  ssrfSafeFetchAdAgents,
+  type AdAgentsRedirectPolicy,
+} from './adagents-redirects';
 
 // ====== Configuration ======
 
@@ -267,9 +272,10 @@ export class NetworkConsistencyChecker {
       const data = authoritative.data;
       const resolvedUrl = authoritative.url;
 
-      // Follow at most one authoritative_location redirect
-      if (data.authoritative_location && !data.authorized_agents) {
-        const redirectUrl = data.authoritative_location;
+      // Follow at most one authoritative_location redirect, even from a URL
+      // reference that also carries inline authorized_agents.
+      if (isAdAgentsUrlReference(data)) {
+        const redirectUrl = data.authoritative_location!;
         if (!redirectUrl.startsWith('https://')) {
           report.schemaErrors.push({
             field: 'authoritative_location',

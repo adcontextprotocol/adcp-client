@@ -103,6 +103,35 @@ export async function ssrfSafeFetchAdAgents(
   }
 }
 
+/**
+ * Whether an adagents.json document is the URL reference variant, which readers resolve by
+ * following `authoritative_location` instead of using any inline authorization.
+ *
+ * A file without inline `authorized_agents` is a reference whenever it names a location; the
+ * caller then refuses a location that is not HTTPS. A file that also carries inline
+ * `authorized_agents` is still the reference when its location is a valid HTTPS URL: the schema's
+ * inline variant refuses a valid URL reference (AdCP 3.3, adcontextprotocol/adcp#9051), and
+ * adagents.mdx has validators follow `authoritative_location`. Only an invalid location leaves
+ * such a file the inline variant. `allowHttp` admits an `http://` location for a caller that
+ * already follows one under the internal-probes opt-in (loopback tests).
+ */
+export function isAdAgentsUrlReference(
+  data: { authoritative_location?: unknown; authorized_agents?: unknown },
+  options: { allowHttp?: boolean } = {}
+): boolean {
+  const location = data.authoritative_location;
+  if (!location) return false;
+  if (!data.authorized_agents) return true;
+  if (typeof location !== 'string') return false;
+  if (!location.startsWith('https://') && !(options.allowHttp && location.startsWith('http://'))) return false;
+  try {
+    new URL(location);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function validateSameRegistrableDomainRedirect(originUrl: string, currentUrl: string, nextUrl: string): void {
   let origin: URL;
   let next: URL;

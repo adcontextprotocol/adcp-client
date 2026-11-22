@@ -487,16 +487,16 @@ describe('PropertyCrawler', () => {
       }
     });
 
-    test('should use local data when authorized_agents present alongside authoritative_location', async () => {
+    test('should use inline data when authoritative_location is non-HTTPS and authorized_agents present', async () => {
       let callCount = 0;
       const server = await startServer((_req, res) => {
         callCount++;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
-            // Both authoritative_location AND authorized_agents present.
-            // Per spec, should use local data, not follow redirect.
-            authoritative_location: 'https://central.example.com/adagents.json',
+            // A non-HTTPS location is not a valid URL reference (AdCP 3.3,
+            // adcp#9051), so this stays the inline variant: use local data.
+            authoritative_location: 'http://central.example.com/adagents.json',
             authorized_agents: [{ url: 'https://local-agent.example.com', authorized_for: 'Local' }],
             properties: [
               {
@@ -512,10 +512,60 @@ describe('PropertyCrawler', () => {
         const crawler = new PropertyCrawler({ logLevel: 'silent' });
         const result = await fetchAdAgentsJsonAt(crawler, `${server.url}/.well-known/adagents.json`, 'example.com');
 
-        // Should only make one fetch call (no redirect followed)
-        assert.strictEqual(callCount, 1, 'Should not follow redirect when authorized_agents present');
+        assert.strictEqual(callCount, 1, 'Should not follow a non-HTTPS location when authorized_agents present');
         assert.strictEqual(result.properties.length, 1);
         assert.strictEqual(result.properties[0].name, 'Local Property');
+      } finally {
+        await server.close();
+      }
+    });
+
+    test('should follow a valid HTTPS authoritative_location and ignore inline authorized_agents', async () => {
+      const server = await startServer((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            authoritative_location: 'https://central.example.com/adagents.json',
+            authorized_agents: [{ url: 'https://stale-agent.example.com', authorized_for: 'Stale' }],
+            properties: [
+              {
+                property_type: 'website',
+                name: 'Stale Inline Property',
+                identifiers: [{ type: 'domain', value: 'example.com' }],
+              },
+            ],
+          })
+        );
+      });
+      try {
+        const crawler = new PropertyCrawler({ logLevel: 'silent' });
+        // Intercept the recursive fetch so the HTTPS target is never dialed.
+        const original = crawler['fetchAdAgentsJsonFromUrl'].bind(crawler);
+        const followed = [];
+        crawler['fetchAdAgentsJsonFromUrl'] = (url, ...rest) => {
+          if (!url.startsWith('https://central.example.com/')) return original(url, ...rest);
+          followed.push({ url, depth: rest[2] });
+          return Promise.resolve({
+            properties: [
+              {
+                property_type: 'website',
+                name: 'Central Property',
+                identifiers: [{ type: 'domain', value: 'example.com' }],
+                publisher_domain: 'example.com',
+              },
+            ],
+          });
+        };
+
+        const result = await fetchAdAgentsJsonAt(crawler, `${server.url}/.well-known/adagents.json`, 'example.com');
+
+        assert.deepStrictEqual(followed, [{ url: 'https://central.example.com/adagents.json', depth: 1 }]);
+        assert.strictEqual(result.properties.length, 1);
+        assert.strictEqual(result.properties[0].name, 'Central Property');
+        assert.ok(
+          !result.properties.some(p => p.name === 'Stale Inline Property'),
+          'inline properties must be ignored when a valid location is present'
+        );
       } finally {
         await server.close();
       }

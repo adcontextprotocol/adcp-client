@@ -370,8 +370,17 @@ fails with a configuration error.
 - **Overlapping `oneOf` branches resolve (adcp#9051).** Payloads two branches
   both matched now validate: property IDs in property feature results,
   content-standards successes that also list `errors`, an `adagents.json` with
-  both `authoritative_location` and inline `authorized_agents` (it is the URL
-  reference), and calibration exemplars that carry `type` and `value`.
+  both `authoritative_location` and inline `authorized_agents`, and
+  calibration exemplars that carry `type` and `value`. Two SDK readers follow:
+  - **`adagents.json` discovery behavior change.** A file with a valid HTTPS
+    `authoritative_location` is the URL reference even when it also carries
+    inline `authorized_agents`. `validateAdAgents`, the property crawler and
+    `NetworkConsistencyChecker` now fetch the authoritative file and ignore
+    the inline entries; they used to use the inline entries. A file whose
+    `authoritative_location` is not a valid HTTPS URL keeps its inline
+    authorization.
+  - A `get_content_standards` success that lists advisory `errors` is now a
+    successful operation; it used to be reported as failed.
 - **Unchanged.** The proposal-terms review table, the canonical storyboard
   fixtures and the reporting-subscription vectors are the same as rc.0.
   Campaign-governance rule changes in rc.1 change no wire field.
