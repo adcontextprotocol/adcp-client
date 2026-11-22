@@ -390,6 +390,75 @@ describe('external push settlement with PostgreSQL', { skip: !DATABASE_URL && 'D
     assert.strictEqual((await registry.getTask(rejectedRef.taskId, rejectedRef)).status, 'rejected');
   });
 
+  describe('release projection of bound settlement webhooks (DR-0024)', () => {
+    const { ADCP_VERSION, toReleasePrecisionVersion } = require('../dist/lib/version');
+    const { projectToolPayload } = require('../dist/lib/adapters/version');
+    const { validateResponse } = require('../dist/lib/validation/schema-validator');
+    const SERVED = toReleasePrecisionVersion(ADCP_VERSION);
+    const BUYER_REASON = { code: 'X', message: 'y' };
+    const COLLECTION_LISTS = [{ agent_url: 'https://g.example', list_id: 'l' }];
+    const COMPLETED = () => ({
+      media_buy_id: 'mb_1',
+      media_buy_status: 'pending_creatives',
+      confirmed_at: '2026-04-29T00:00:00Z',
+      revision: 1,
+      packages: [{ package_id: 'pk', targeting_overlay: { collection_lists: structuredClone(COLLECTION_LISTS) } }],
+    });
+
+    async function handoff(release) {
+      const { registry, coordinator } = stack();
+      const state = { queued: [] };
+      const server = serverFor(registry, coordinator, state);
+      await dispatchCreate(server, { push_notification_config: PUSH, adcp_version: release });
+      return { registry, coordinator, ref: state.queued[0] };
+    }
+
+    test('a 3.2 caller gets a completed webhook without 3.3-only fields while the task row keeps them', async () => {
+      const { registry, coordinator, ref } = await handoff('3.2');
+      assert.strictEqual((await lib.completeBoundPushTask(coordinator, ref, COMPLETED())).outcome, 'applied');
+      const [post] = await deliverPending(coordinator);
+      assert.strictEqual(post.body.status, 'completed');
+      assert.strictEqual(post.body.result.packages[0].targeting_overlay?.collection_lists, undefined);
+      const { dropped } = projectToolPayload('create_media_buy', 'sync', post.body.result, ADCP_VERSION, '3.2');
+      assert.deepStrictEqual(dropped, []);
+      const validated = validateResponse('create_media_buy', post.body.result, '3.2');
+      assert.strictEqual(validated.valid, true, JSON.stringify(validated.issues));
+      const stored = (await registry.getTask(ref.taskId, ref)).result;
+      assert.deepStrictEqual(stored.packages[0].targeting_overlay.collection_lists, COLLECTION_LISTS);
+    });
+
+    test('a caller at the served release keeps 3.3-only fields in the completed webhook', async () => {
+      const { coordinator, ref } = await handoff(SERVED);
+      await lib.completeBoundPushTask(coordinator, ref, COMPLETED());
+      const [post] = await deliverPending(coordinator);
+      assert.deepStrictEqual(post.body.result.packages[0].targeting_overlay.collection_lists, COLLECTION_LISTS);
+    });
+
+    test('a 3.2 caller gets a rejection webhook without mutation_outcome but with buyer_reason', async () => {
+      const { coordinator, ref } = await handoff('3.2');
+      const errors = [
+        { code: 'POLICY_VIOLATION', message: 'no', mutation_outcome: 'not_applied', buyer_reason: BUYER_REASON },
+      ];
+      assert.strictEqual((await lib.rejectBoundPushTask(coordinator, ref, { errors }, 'no')).outcome, 'applied');
+      const [post] = await deliverPending(coordinator);
+      assert.strictEqual(post.body.status, 'rejected');
+      const [error] = post.body.result.errors;
+      assert.strictEqual(error.mutation_outcome, undefined);
+      assert.deepStrictEqual(error.buyer_reason, BUYER_REASON);
+    });
+
+    test('a caller at the served release keeps mutation_outcome in the rejection webhook', async () => {
+      const { coordinator, ref } = await handoff(SERVED);
+      const errors = [
+        { code: 'POLICY_VIOLATION', message: 'no', mutation_outcome: 'not_applied', buyer_reason: BUYER_REASON },
+      ];
+      await lib.rejectBoundPushTask(coordinator, ref, { errors }, 'no');
+      const [post] = await deliverPending(coordinator);
+      assert.strictEqual(post.body.result.errors[0].mutation_outcome, 'not_applied');
+      assert.deepStrictEqual(post.body.result.errors[0].buyer_reason, BUYER_REASON);
+    });
+  });
+
   test('a separate worker process reconstructs the coordinator and still delivers after a restart', async () => {
     const { registry, coordinator } = stack();
     const state = { queued: [] };
