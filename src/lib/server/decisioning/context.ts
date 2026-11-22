@@ -269,6 +269,16 @@ export interface RequestContext<TAccount = Account> {
    * submitted, so the framework cannot acknowledge unrecoverable work or
    * create a terminal task without its required durable delivery record.
    *
+   * An external handoff accepts a request that carries
+   * `push_notification_config` only on a server configured with
+   * `taskSettlementCoordinator` (a `createPostgresTaskSettlementCoordinator`
+   * on the server's Postgres `taskRegistry`). Before the producer runs, the
+   * framework binds the buyer's validated route to the task in durable
+   * storage and marks it `has_webhook`. The worker settles with
+   * `completeBoundPushTask()` / `failBoundPushTask()` /
+   * `rejectBoundPushTask()`, which read that route; it never supplies the
+   * destination or token. Elsewhere such a request is refused here.
+   *
    * **Refusal happens at call time.** Everything that decides whether the
    * framework can dispatch a handoff is known before your method runs, so a
    * handoff it cannot accept throws here, synchronously, rather than after

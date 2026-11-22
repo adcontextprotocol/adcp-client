@@ -542,7 +542,7 @@ async function ensureWorkerSettlementIsSafe(
   if (record == null) return { outcome: 'not_found_in_scope' };
   if (record.hasWebhook) {
     throw new Error(
-      'Registry-only scoped settlement is unavailable for tasks with push notifications. Use createPostgresTaskSettlementCoordinator() with completeScopedPushTask()/failScopedPushTask() for crash-safe PostgreSQL settlement.'
+      'Registry-only scoped settlement is unavailable for tasks with push notifications. Settle an externally settled framework handoff with completeBoundPushTask()/failBoundPushTask()/rejectBoundPushTask(), and an application-managed push task with completeScopedPushTask()/failScopedPushTask(), both on createPostgresTaskSettlementCoordinator().'
     );
   }
   return undefined;

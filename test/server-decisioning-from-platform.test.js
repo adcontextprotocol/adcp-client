@@ -5535,8 +5535,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 
   describe('call-time handoff refusal (#3761)', () => {
     const EXTERNAL_PUSH_REFUSAL_MESSAGE =
-      'This seller cannot submit an externally settled task with push_notification_config because the SDK cannot deliver its terminal webhook. ' +
-      'Remove push_notification_config to use polling, or use framework task settlement with configured task webhooks.';
+      'This seller cannot submit an externally settled task with push_notification_config because it has no durable push settlement, so the SDK cannot deliver its terminal webhook. ' +
+      'Remove push_notification_config to use polling.';
     const PUSH = {
       url: 'https://buyer.example/hook',
       token: 'buyer-validation-token-0123456789',

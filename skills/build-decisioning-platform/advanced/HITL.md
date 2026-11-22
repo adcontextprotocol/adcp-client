@@ -43,10 +43,16 @@ marker, call `ctx.canHandoffToTask(options)`: it returns `{ ok: true }` or
 side effect the refusal would waste, such as calling a remote agent.
 Proposal-backed framework reservations are unwound on this refusal.
 
-External settlement (`handoffToTask(..., { settlement: 'external' })`) is
-polling-only. It cannot use `push_notification_config`, even when framework
-webhooks are configured, because its producer is not the SDK delivery path.
-`ctx.canHandoffToTask({ settlement: 'external' })` reports this refusal up front.
+External settlement (`handoffToTask(..., { settlement: 'external' })`) can use
+`push_notification_config` only when the server is given
+`taskSettlementCoordinator` (`createPostgresTaskSettlementCoordinator` on the
+same Postgres task registry, whose table needs the `push_binding` column). The SDK then
+stores the buyer's validated route against the task before acknowledging it,
+and your worker settles with `completeBoundPushTask(coordinator, taskRef, result)`
+(or `failBoundPushTask` / `rejectBoundPushTask`). The worker never passes a URL
+or token. Without a coordinator, framework webhooks do not help: the handoff is
+refused, and `ctx.canHandoffToTask({ settlement: 'external' })` reports that up
+front.
 
 ## When a tool is HITL-capable
 

@@ -80,7 +80,7 @@ import { GetProductsRequest_BuyingModeValues } from '../../../types/inline-enums
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import { normalizeTargetingCapabilities } from '../capabilities';
-import { isAdcpVersionAtLeast, isPre31AdcpVersion } from '../../../utils/adcp-version-config';
+import { isAdcpVersionAtLeast, isPre31AdcpVersion, isValidAdcpVersion } from '../../../utils/adcp-version-config';
 import { omitsEnvelopeStatusForRelease } from '../../../utils/envelope-status-compat';
 import type { Account, AccountResolutionMode, ResolvedAuthInfo, ResolveContext } from '../account';
 import {
@@ -160,6 +160,11 @@ import type {
   GetMediaBuysResultForStore,
 } from '../../media-buy-store';
 import { createPostgresTaskRegistry, getDecisioningTaskRegistryBootstrap } from './postgres-task-registry';
+import {
+  _taskPushBindingSupport,
+  type PostgresTaskSettlementCoordinator,
+  type TaskPushBindingSupport,
+} from './postgres-task-settlement';
 import type { PgQueryable } from '../../postgres-task-store';
 import {
   isTaskHandoff,
@@ -2332,6 +2337,36 @@ export interface CreateAdcpServerFromPlatformOptions<TAccount = unknown> extends
    */
   taskRegistryStorageId?: string;
   /**
+   * Durable push settlement for externally settled handoffs. With it, a
+   * request that carries `push_notification_config` may use
+   * `ctx.handoffToTask(fn, { settlement: 'external' })`: before the buyer is
+   * told the task was submitted, the SDK stores the buyer's validated push
+   * route (URL, operation id, signing profile, and the token, protected by
+   * the coordinator's `authenticationAdapter`) bound to the task in the
+   * coordinator's database, and reports `has_webhook: true`. A trusted
+   * worker then settles with `completeBoundPushTask()` /
+   * `failBoundPushTask()` / `rejectBoundPushTask()` (or
+   * `applyTaskSettlementIntent(intent, { coordinator })`), which read that
+   * route; the worker never supplies the destination or token. The terminal
+   * webhook is checkpointed in the coordinator's outbox in the same
+   * transaction as the task transition, and the webhook recovery worker
+   * delivers it with the emitter's signing, retries and idempotency.
+   *
+   * Must come from `createPostgresTaskSettlementCoordinator()` on this
+   * server's `taskRegistry` (a `createPostgresTaskRegistry` with a
+   * `storageId`). The registry table needs the `push_binding` column: the
+   * bootstrap DDL has it, and `getTaskPushBindingMigration()` adds it to an
+   * existing table. Run a recovery worker for `coordinator.recovery`, since
+   * `has_webhook: true` promises delivery. The binding is kept on the task
+   * row, so its location follows the registry identity, not coordinator
+   * settings. Run the webhook outbox migration on the same database too.
+   * Without a coordinator, an external handoff with
+   * `push_notification_config` is refused at `ctx.handoffToTask(...)`.
+   * A push config with a token additionally needs the coordinator's
+   * `authenticationAdapter`.
+   */
+  taskSettlementCoordinator?: PostgresTaskSettlementCoordinator;
+  /**
    * Override the framework's status-change event bus for this server.
    * Defaults to a fresh per-server `createInMemoryStatusChangeBus()` so
    * tests get isolation without touching the module-level singleton from
@@ -2948,6 +2983,25 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       'taskRegistry.scopeVersion must be 1. Migrate custom registries to the account/principal-scoped TaskRegistry signatures before use.'
     );
   }
+  let externalPushSettlement: TaskPushBindingSupport | undefined;
+  if (opts.taskSettlementCoordinator !== undefined) {
+    externalPushSettlement = _taskPushBindingSupport(opts.taskSettlementCoordinator);
+    if (externalPushSettlement === undefined) {
+      throw new PlatformConfigError(
+        'taskSettlementCoordinator must be created by createPostgresTaskSettlementCoordinator().'
+      );
+    }
+    if (
+      taskRegistry.durability !== 'durable' ||
+      typeof taskRegistry.registryId !== 'string' ||
+      externalPushSettlement.registryId !== taskRegistry.registryId
+    ) {
+      throw new PlatformConfigError(
+        "taskSettlementCoordinator must be bound to this server's taskRegistry: create both from the same " +
+          'createPostgresTaskRegistry({ pool, namespace, storageId }) and pass that registry as taskRegistry.'
+      );
+    }
+  }
   const baseBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();
   const taskWebhookEmit = opts.taskWebhookEmitter?.emit;
 
@@ -3405,6 +3459,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
     // Handler results are in this release; task webhooks convert them to the served one.
     serverAdcpVersion: configuredAdcpVersion,
+    ...(externalPushSettlement !== undefined && { externalPushSettlement }),
   };
   const platformProposalNegotiation = buildProposalNegotiationHandlers(
     platform,
@@ -5298,22 +5353,28 @@ interface DispatchHitlOpts {
   logger: AdcpLogger;
   /** @deprecated Ignored; retained internally during the SDK 14 compatibility window. */
   autoEmitCompletion?: boolean;
+  /**
+   * Durable push settlement for externally settled handoffs, present only
+   * when the server was configured with `taskSettlementCoordinator`.
+   */
+  externalPushSettlement?: TaskPushBindingSupport;
 }
+
+const DEFAULT_PUSH_REFUSAL_LOG =
+  '[adcp/decisioning] refusing push-enabled TaskHandoff before task creation: configure SDK webhooks for framework ' +
+  'settlement, or remove push_notification_config and retry with a new idempotency_key.';
 
 function refuseTaskWebhookHandoff(
   opts: TaskHandoffPreflightOpts,
   message: string,
   suggestion: string,
-  quiet = false
+  quiet = false,
+  operatorLog = DEFAULT_PUSH_REFUSAL_LOG
 ): never {
   try {
     // A `ctx.canHandoffToTask` probe is a question, not a refusal: the
     // handler may go on to answer synchronously, so it is not logged.
-    if (!quiet)
-      opts.logger.warn(
-        '[adcp/decisioning] refusing push-enabled TaskHandoff before task creation: configure SDK webhooks for framework ' +
-          'settlement, or remove push_notification_config and retry with a new idempotency_key.'
-      );
+    if (!quiet) opts.logger.warn(operatorLog);
   } catch {
     // Logging is adopter-controlled diagnostics. It must not replace the
     // structured protocol error that protects this pre-create boundary.
@@ -5344,17 +5405,59 @@ function resolveTaskWebhookDelivery(
       field: 'push_notification_config.operation_id',
     });
   }
-  // An external producer has no SDK-owned terminal webhook delivery path.
-  // Do not let a framework emitter make its submitted task claim delivery it
-  // will never receive; polling-only external settlement remains supported.
+  // An external producer's terminal webhook is delivered only through a
+  // durable settlement coordinator: the SDK binds the buyer's validated route
+  // to the task before acknowledging it, and a worker's bound settlement
+  // checkpoints the webhook in the coordinator's outbox. A framework emitter
+  // is not a delivery path for it. Without a coordinator, refuse rather than
+  // let the submitted task claim a delivery it will never receive;
+  // polling-only external settlement remains supported.
   if (settlement === 'external') {
-    return refuseTaskWebhookHandoff(
-      opts,
-      'This seller cannot submit an externally settled task with push_notification_config because the SDK cannot deliver its terminal webhook. ' +
-        'Remove push_notification_config to use polling, or use framework task settlement with configured task webhooks.',
-      'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to use framework task settlement with task webhooks.',
-      quiet
-    );
+    const pushSettlement = opts.externalPushSettlement;
+    if (pushSettlement === undefined) {
+      return refuseTaskWebhookHandoff(
+        opts,
+        'This seller cannot submit an externally settled task with push_notification_config because it has no durable push settlement, so the SDK cannot deliver its terminal webhook. ' +
+          'Remove push_notification_config to use polling.',
+        'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to configure durable push settlement for externally settled tasks.',
+        quiet,
+        '[adcp/decisioning] refusing an externally settled TaskHandoff with push_notification_config before task creation: ' +
+          'pass taskSettlementCoordinator (createPostgresTaskSettlementCoordinator on the same Postgres task registry) ' +
+          'to createAdcpServerFromPlatform to deliver its terminal webhook, or let the buyer poll.'
+      );
+    }
+    if (opts.pushNotificationToken !== undefined && !pushSettlement.protectsTokens) {
+      return refuseTaskWebhookHandoff(
+        opts,
+        'This seller cannot submit an externally settled task whose push_notification_config carries a token. ' +
+          'Remove push_notification_config.token, or remove push_notification_config to use polling.',
+        'Retry without push_notification_config.token (or without push_notification_config) and a new idempotency_key.',
+        quiet,
+        '[adcp/decisioning] refusing an externally settled TaskHandoff whose push_notification_config carries a token: ' +
+          'configure authenticationAdapter on the task settlement coordinator so the token is protected at rest.'
+      );
+    }
+    if (!SPEC_WEBHOOK_TASK_TYPES.has(opts.tool)) {
+      return refuseTaskWebhookHandoff(
+        opts,
+        `This seller cannot submit an externally settled ${opts.tool} task with push_notification_config because ${opts.tool} has no AdCP task-webhook type. ` +
+          'Remove push_notification_config to use polling.',
+        'Remove push_notification_config and retry with a new idempotency_key.',
+        quiet
+      );
+    }
+    if (
+      opts.pushNotificationOperationId === undefined &&
+      !(isValidAdcpVersion(opts.servedAdcpVersion) && !isAdcpVersionAtLeast(opts.servedAdcpVersion, '3.2.0-beta.5'))
+    ) {
+      // The bound route must reproduce the same operation_id after a restart;
+      // only an explicit pre-beta.5 release may derive it from the task id.
+      throw new AdcpError('INVALID_REQUEST', {
+        message: 'push_notification_config.operation_id is required for webhook delivery',
+        field: 'push_notification_config.operation_id',
+      });
+    }
+    return true;
   }
   if (typeof opts.emitWebhook === 'function') return true;
   return refuseTaskWebhookHandoff(
@@ -5369,7 +5472,14 @@ function resolveTaskWebhookDelivery(
 /** Delivery options the pre-create handoff checks read; `DispatchHitlOpts` satisfies it. */
 type TaskHandoffPreflightOpts = Pick<
   DispatchHitlOpts,
-  'pushNotificationUrl' | 'pushNotificationOperationId' | 'servedAdcpVersion' | 'emitWebhook' | 'logger'
+  | 'tool'
+  | 'pushNotificationUrl'
+  | 'pushNotificationToken'
+  | 'pushNotificationOperationId'
+  | 'servedAdcpVersion'
+  | 'emitWebhook'
+  | 'externalPushSettlement'
+  | 'logger'
 >;
 
 /**
@@ -5627,6 +5737,19 @@ async function dispatchHitl<TResult>(
   // already ran this check when the handler called `ctx.handoffToTask`; this
   // repeat is the backstop for markers that reach dispatch some other way.
   const hasWebhook = preflightTaskHandoff(taskRegistry, opts, settlement);
+  if (settlement === 'external' && hasWebhook) {
+    // Confirm the registry can hold the push binding before creating a task,
+    // so an unmigrated deployment refuses without an orphaned has_webhook task.
+    try {
+      await opts.externalPushSettlement!.ensureReady();
+    } catch (readyError) {
+      opts.logger.error(
+        `[adcp/decisioning] external task push settlement is not ready for ${opts.tool}: ` +
+          `${readyError instanceof Error ? readyError.message : String(readyError)}`
+      );
+      throw new Error('External task push settlement is not ready');
+    }
+  }
   const createStart = Date.now();
   const createdRef = await taskRegistry.create({
     tool: opts.tool,
@@ -5699,6 +5822,30 @@ async function dispatchHitl<TResult>(
   if (settlement === 'external') {
     if (typeof taskRef.registryId !== 'string' || taskRef.registryId.length === 0) {
       throw new Error('External task settlement requires a durable task registry with a stable identity');
+    }
+    if (hasWebhook) {
+      // Bind the buyer's validated route to the task before the producer
+      // sees the ref. The worker's bound settlement reads it from durable
+      // storage, so the worker never supplies (and cannot redirect) the
+      // destination or token. Preflight guaranteed the coordinator exists.
+      try {
+        await opts.externalPushSettlement!.bind(taskRef, {
+          url: opts.pushNotificationUrl!,
+          ...(opts.pushNotificationOperationId !== undefined && { operationId: opts.pushNotificationOperationId }),
+          ...(opts.servedAdcpVersion !== undefined && { servedAdcpVersion: opts.servedAdcpVersion }),
+          ...(opts.pushNotificationToken !== undefined && { token: opts.pushNotificationToken }),
+          ...(opts.pushNotificationSigningProfile !== undefined && {
+            signingProfile: opts.pushNotificationSigningProfile,
+          }),
+        });
+      } catch (bindError) {
+        opts.logger.error(
+          `[adcp/decisioning] external task push binding for ${taskId} (${opts.tool}) failed before durable handoff. ` +
+            `Task remains submitted internally; the producer was not called and no buyer acknowledgment was written. ` +
+            `Error type: ${bindError instanceof Error ? bindError.name : typeof bindError}`
+        );
+        throw new Error('External task push binding failed before durable handoff');
+      }
     }
     try {
       // The callback owns the durable application-queue write. Do not tell the
@@ -6917,6 +7064,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
     serverAdcpVersion: string;
+    externalPushSettlement?: TaskPushBindingSupport;
   },
   ctxFor: CtxForFn
 ): ProposalNegotiationHandlers<Account> | undefined {
@@ -6967,6 +7115,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
             emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
             autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
             serverAdcpVersion: pushOpts.serverAdcpVersion,
+            externalPushSettlement: pushOpts.externalPushSettlement,
             observability,
             logger,
           };
@@ -6990,6 +7139,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
     serverAdcpVersion: string;
+    externalPushSettlement?: TaskPushBindingSupport;
   },
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined,
@@ -7058,6 +7208,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
           autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
           serverAdcpVersion: pushOpts.serverAdcpVersion,
+          externalPushSettlement: pushOpts.externalPushSettlement,
           observability,
           logger,
         };
@@ -7191,6 +7342,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
           autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
           serverAdcpVersion: pushOpts.serverAdcpVersion,
+          externalPushSettlement: pushOpts.externalPushSettlement,
           observability,
           logger,
         } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -7402,6 +7554,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
           autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
           serverAdcpVersion: pushOpts.serverAdcpVersion,
+          externalPushSettlement: pushOpts.externalPushSettlement,
           observability,
           logger,
         } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -7603,6 +7756,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               serverAdcpVersion: pushOpts.serverAdcpVersion,
+              externalPushSettlement: pushOpts.externalPushSettlement,
               observability,
               logger,
             } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -7665,6 +7819,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               serverAdcpVersion: pushOpts.serverAdcpVersion,
+              externalPushSettlement: pushOpts.externalPushSettlement,
               observability,
               logger,
             } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -7990,6 +8145,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
     serverAdcpVersion: string;
+    externalPushSettlement?: TaskPushBindingSupport;
   },
   ctxFor: CtxForFn,
   legacyFormatConverter: LegacyFormatConverter | undefined,
@@ -8094,6 +8250,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               serverAdcpVersion: pushOpts.serverAdcpVersion,
+              externalPushSettlement: pushOpts.externalPushSettlement,
               observability,
               logger,
             } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;
@@ -8259,6 +8416,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
     serverAdcpVersion: string;
+    externalPushSettlement?: TaskPushBindingSupport;
   },
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined
@@ -8294,6 +8452,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
             emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
             autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
             serverAdcpVersion: pushOpts.serverAdcpVersion,
+            externalPushSettlement: pushOpts.externalPushSettlement,
             observability,
             logger,
           } satisfies Omit<DispatchHitlOpts, 'accountId' | 'ownerScope'>;

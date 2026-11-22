@@ -9,7 +9,9 @@
 import { isDeepStrictEqual } from 'node:util';
 import { completeScopedTask, failScopedTask, type TaskRegistry } from './task-registry';
 import {
+  completeBoundPushTask,
   completeScopedPushTask,
+  failBoundPushTask,
   failScopedPushTask,
   type PostgresTaskSettlementCoordinator,
   type TaskPushSettlementConfig,
@@ -26,8 +28,12 @@ export type ApplyTaskSettlementIntentOptions =
   | {
       /** Crash-safe PostgreSQL task/outbox coordinator for push-enabled tasks. */
       coordinator: PostgresTaskSettlementCoordinator;
-      /** The original, durably protected push route for this task. */
-      push: TaskPushSettlementConfig;
+      /**
+       * The original, durably protected push route for an application-managed
+       * push task. Omit it for an externally settled framework handoff: the
+       * coordinator then delivers to the route the SDK bound at handoff.
+       */
+      push?: TaskPushSettlementConfig;
       registry?: never;
     };
 
@@ -46,20 +52,29 @@ export async function applyTaskSettlementIntent(
 
   if (options.coordinator !== undefined) {
     const outcome =
-      canonicalIntent.action === 'complete'
-        ? await completeScopedPushTask(
-            options.coordinator,
-            canonicalIntent.taskRef,
-            options.push,
-            canonicalIntent.result
-          )
-        : await failScopedPushTask(
-            options.coordinator,
-            canonicalIntent.taskRef,
-            options.push,
-            canonicalIntent.error,
-            canonicalIntent.result
-          );
+      options.push === undefined
+        ? canonicalIntent.action === 'complete'
+          ? await completeBoundPushTask(options.coordinator, canonicalIntent.taskRef, canonicalIntent.result)
+          : await failBoundPushTask(
+              options.coordinator,
+              canonicalIntent.taskRef,
+              canonicalIntent.error,
+              canonicalIntent.result
+            )
+        : canonicalIntent.action === 'complete'
+          ? await completeScopedPushTask(
+              options.coordinator,
+              canonicalIntent.taskRef,
+              options.push,
+              canonicalIntent.result
+            )
+          : await failScopedPushTask(
+              options.coordinator,
+              canonicalIntent.taskRef,
+              options.push,
+              canonicalIntent.error,
+              canonicalIntent.result
+            );
 
     if (outcome.outcome === 'applied') return 'settled';
     if (outcome.outcome === 'already_terminal' && outcome.compatibility === 'compatible') return 'settled';

@@ -229,6 +229,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
   error           JSONB,
   progress        JSONB,
   has_webhook     BOOLEAN NOT NULL DEFAULT FALSE,
+  push_binding    JSONB,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -251,6 +252,22 @@ CREATE INDEX IF NOT EXISTS idx_${table}_status_created
 CREATE INDEX IF NOT EXISTS idx_${table}_owner_account
   ON ${table}(owner_scope, account_id);
 `.trim();
+}
+
+/**
+ * Upgrade an existing decisioning task registry table for externally settled
+ * push handoffs: adds the nullable `push_binding` column in which the SDK
+ * stores the buyer's push route bound to a task. New tables created with
+ * `getDecisioningTaskRegistryBootstrap()` already have it.
+ *
+ * Adding a nullable column without a default is a catalog-only change, but
+ * `ALTER TABLE` still takes a brief ACCESS EXCLUSIVE lock; run it during
+ * deployment, not at application boot. It is idempotent.
+ */
+export function getTaskPushBindingMigration(options: { tableName?: string } = {}): string {
+  const table = options?.tableName ?? DEFAULT_TABLE;
+  assertValidIdentifier(table);
+  return `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS push_binding JSONB;`;
 }
 
 /** @deprecated Choose bootstrap or the phased scope-v1 upgrade explicitly. */

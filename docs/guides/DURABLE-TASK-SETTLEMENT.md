@@ -12,13 +12,163 @@ created an AdCP task. There are three distinct durability boundaries:
 `createPostgresTaskSettlementCoordinator()` protects the second. The webhook
 delivery recovery worker protects the third.
 
-This guide's push coordinator is a lower-level application-managed path: the
-application must already own both task creation and protected push-route
-registration outside `createAdcpServerFromPlatform`'s `TaskHandoff` flow. It
-does not make `ctx.handoffToTask(producer, { settlement: 'external' })`
-push-capable. That framework handoff is polling-only and must omit
-`push_notification_config`; its producer can durably queue the complete scoped
-reference and workers settle it with `completeScopedTask()` / `failScopedTask()`.
+The same coordinator serves two kinds of push task:
+
+- **External framework handoffs.** `ctx.handoffToTask(producer, { settlement: 'external' })`
+  on a request that carries `push_notification_config`. The SDK stores the
+  buyer's route against the task, and the worker settles with the bound helpers.
+  See [External framework handoffs with push](#external-framework-handoffs-with-push).
+- **Application-managed push tasks.** The application owns both task creation
+  and protected push-route registration outside `createAdcpServerFromPlatform`'s
+  `TaskHandoff` flow, and passes the route at settlement.
+
+A polling-only external handoff (no `push_notification_config`) needs no
+coordinator. Its producer durably queues the complete scoped reference, and
+workers settle it with `completeScopedTask()` / `failScopedTask()`.
+
+## External framework handoffs with push
+
+A handler that hands work to a durable worker, for example one that proxies to a
+remote agent, can accept the buyer's `push_notification_config`. The SDK owns the
+push route: it is bound to the task before the buyer is told the task was
+submitted, and the worker never supplies (and so cannot change) the destination
+or token.
+
+### Storage requirement
+
+This works only when the task state and the binding are durable:
+
+- `taskRegistry: createPostgresTaskRegistry({ pool, namespace, storageId })`.
+  The `storageId` gives refs a stable registry identity across processes.
+- `taskSettlementCoordinator: createPostgresTaskSettlementCoordinator({ registry, ... })`
+  on that same registry instance.
+- The webhook outbox (`getWebhookDeliveryRecoveryMigration()`) on the registry's
+  database, and the registry table's `push_binding` column. New tables created by
+  `getDecisioningTaskRegistryBootstrap()` already have the column. Upgrade an
+  existing table once with `getTaskPushBindingMigration({ tableName })`. If the
+  column is missing, the first push handoff fails with a migration message before
+  any task is created.
+- A webhook recovery worker that polls `taskSettlementCoordinator.recovery` (for
+  example through the server's `webhooks.deliveryRecovery` and the recovery
+  poller). `has_webhook: true` is a promise that this worker keeps.
+- An `authenticationAdapter` on the coordinator if buyers send
+  `push_notification_config.token`. The token is stored only in adapter-protected
+  form. Without an adapter, a request with a token is refused.
+
+With an in-memory registry, without a coordinator, or with a coordinator bound to
+another registry, the handoff is refused at `ctx.handoffToTask(...)` with
+`UNSUPPORTED_FEATURE` on `push_notification_config`. Polling-only external
+handoffs keep working. A mismatched coordinator fails at server construction.
+
+```ts
+import {
+  createAdcpServerFromPlatform,
+  createPostgresTaskRegistry,
+  createPostgresTaskSettlementCoordinator,
+  getDecisioningTaskRegistryBootstrap,
+  getTaskPushBindingMigration,
+  getWebhookDeliveryRecoveryMigration,
+} from '@adcp/sdk/server';
+
+await pool.query(getDecisioningTaskRegistryBootstrap({ namespace: 'seller-prod' }));
+await pool.query(getWebhookDeliveryRecoveryMigration());
+// Existing registry tables only; the bootstrap above already has the column.
+await pool.query(getTaskPushBindingMigration());
+
+const taskRegistry = createPostgresTaskRegistry({
+  pool,
+  namespace: 'seller-prod',
+  storageId: 'prod-eu1:seller-tasks',
+});
+const taskSettlementCoordinator = createPostgresTaskSettlementCoordinator({
+  registry: taskRegistry,
+  publisherScope: 'my-seller',
+  authenticationAdapter: kmsAdapter,
+});
+
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'my-seller',
+  version: '1.0.0',
+  taskRegistry,
+  taskSettlementCoordinator,
+  webhooks: {
+    /* signing key, deliveryStore, deliveryRecovery: taskSettlementCoordinator.recovery, ... */
+  },
+});
+```
+
+### Hand off, then settle from the worker
+
+```ts
+requestProposals: async (req, ctx) => {
+  // Refused here, before the remote call, if this request cannot be accepted.
+  const availability = ctx.canHandoffToTask({ settlement: 'external' });
+  if (!availability.ok) throw availability.error;
+  const ack = await callRemoteAgent(req);
+  if (ack.status !== 'submitted') return ack;
+  return ctx.handoffToTask(async taskCtx => db.enqueuePending(taskCtx.taskRef, ack.task_id), {
+    settlement: 'external',
+  });
+};
+```
+
+Before the producer runs, the framework creates the task with `has_webhook: true`
+and stores the buyer's validated URL, `operation_id`, signing profile and
+protected token against it. If storing the binding fails, the producer is not
+called and the buyer gets an error, not `submitted`.
+
+The worker, in this or any later process, holds only the queued `taskRef`:
+
+```ts
+import { completeBoundPushTask, failBoundPushTask, rejectBoundPushTask } from '@adcp/sdk/server';
+
+await completeBoundPushTask(taskSettlementCoordinator, taskRef, result);
+// or: await failBoundPushTask(taskSettlementCoordinator, taskRef, structuredError);
+// or: await rejectBoundPushTask(taskSettlementCoordinator, taskRef, artifact, 'Inventory sold out');
+```
+
+With the intent queue, call `applyTaskSettlementIntent(intent, { coordinator })`
+and omit `push`. The coordinator reads the bound route.
+
+Settlement takes the same path as every coordinator push settlement. The task
+transition and the terminal webhook checkpoint commit in one transaction, and
+the webhook recovery worker delivers the checkpoint with the emitter's RFC 9421
+signing, retries and idempotency key. Retrying a settlement is idempotent and
+produces at most one terminal webhook.
+
+### What a worker cannot do
+
+- **Supply a destination or token.** The bound helpers take no route.
+- **Change the route with the older helpers.** `completeScopedPushTask()` /
+  `failScopedPushTask()` / `rejectScopedPushTask()` still work on a bound task,
+  but only when the route matches the binding exactly. A different URL, token,
+  `operation_id` or signing profile, or added transport authentication, throws
+  `TaskPushBindingMismatchError` and writes nothing.
+- **Rebind the task.** A binding is immutable.
+- **Skip the webhook.** Registry-only `completeScopedTask()` / `failScopedTask()`
+  reject a push-enabled task.
+
+The binding lives on the task row, in the registry's `push_binding` column. Its
+location is fixed by the registry identity in the `taskRef` (storage id, table,
+namespace), not by any coordinator setting. A worker whose coordinator uses a
+different `publisherScope`, or no adapter, still finds the binding. It then
+either delivers to the bound route or fails. It never falls back to a route the
+worker passed. A coordinator over another registry cannot address the task. A
+binding is read under the task's row lock during settlement. A consistency
+fingerprint, an unkeyed hash, is checked on every read. It catches a corrupted
+or partially edited binding, but it is not tamper-proof. As with the outbox,
+anyone with write access to the task table is outside the threat model. Do not
+drop the `push_binding` column while bound tasks are still open: on a table
+without the column, every task reads as unbound.
+
+Retention: a binding is part of its task row and is removed when the row is
+purged. A reused `overrideTaskId` starts with a fresh, unbound row. The binding
+keeps the adapter-protected token so a retried settlement can prove it names the
+same route. Keep the adapter's decrypt keys for as long as bound tasks can still
+be settled, plus your settlement intents' replay horizon.
+
+Settle with a coordinator that uses the same outbox and `publisherScope` as
+your recovery worker, so the worker picks up the checkpoint.
 
 ## Provision the queue
 
@@ -146,8 +296,8 @@ For an application-managed push task, persist the original push route and its
 protected authentication configuration in durable application state in the same
 domain transaction as the intent. Recovery must reconstruct that configuration;
 an in-memory callback route can disappear in the exact crash this queue
-protects. Do not use this path to add push delivery to an external framework
-handoff.
+protects. An external framework handoff does not need this: its route is
+already bound by the SDK (see above).
 
 Use the PostgreSQL settlement coordinator instead of the polling helper. Its
 compatible `already_terminal` outcome proves both the exact task artifact and
