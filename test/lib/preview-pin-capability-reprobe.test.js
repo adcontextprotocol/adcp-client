@@ -326,8 +326,10 @@ describe('caches keep the pinned and unpinned answers apart', () => {
 
     const stable = await build('3.2.0').getCapabilities();
     const preview = await build(PREVIEW_PIN).getCapabilities();
+    const discovered = seller.discoveryCalls.length;
     const stableAgain = await build('3.2.0').getCapabilities();
     const previewAgain = await build(PREVIEW_PIN).getCapabilities();
+    assert.equal(seller.discoveryCalls.length, discovered, 'both later clients are served from the shared cache');
 
     assert.equal(stable.servedVersion, '3.2');
     assert.equal(stable.experimentalFeatures?.includes(FEATURE) ?? false, false);
