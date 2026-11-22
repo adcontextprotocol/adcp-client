@@ -10098,9 +10098,9 @@ export class SingleAgentClient {
    *
    * To see which release answered, read `result.metadata.adcpVersion`: the
    * seller's echoed release, also `data.adcp_version`. Compare it with your pin
-   * at release precision. `result.metadata.wireAdcpVersion` is the pin the SDK
-   * sent on a re-probed answer, and is absent when a preview client's
-   * discovery went out unpinned.
+   * at release precision; a different release means the seller did not answer
+   * at your pin. On a re-probed answer, `result.metadata.wireAdcpVersion` also
+   * carries the client pin the re-probe was sent at.
    *
    * @param params - Capabilities request parameters
    * @param inputHandler - Handler for clarification requests
@@ -12286,8 +12286,7 @@ export class SingleAgentClient {
         // and callback authorization provenance. The active OpenTelemetry
         // context remains in the async chain, correlating both physical tasks.
         const callerOptions = options as CapabilityProbeRequestOptions | undefined;
-        const isPreview =
-          capabilityDiscoveryEnvelope(undefined, this.config.wireAdcpVersion ?? this.resolvedAdcpVersion) === 'none';
+        const isPreview = this.discoversPreviewRelease();
         const probeOptions: CapabilityProbeRequestOptions = {
           // Discover the seller's release window before claiming a preview
           // older sellers may reject. Ordinary calls still negotiate exact
@@ -12308,9 +12307,7 @@ export class SingleAgentClient {
           {},
           undefined,
           probeOptions,
-          // The operation's own envelope steers only a preview probe; a stable
-          // probe keeps the client's configured envelope.
-          (isPreview ? callerOptions?.versionEnvelope : undefined) ?? this.config.versionEnvelope
+          this.capabilityProbeEnvelope(options)
         );
         throwIfAborted(options?.signal);
         const requestTimeoutMs = resolveRequestTimeoutMs(
@@ -12704,16 +12701,37 @@ export class SingleAgentClient {
    * `undefined` when sharing is off or the call uses a scoped `trustedFetchFn`
    * (whose network boundary is per-call, so its evidence is never shared).
    */
+  /** Whether this client's discovery probe targets a preview release (and so goes out unpinned by default). */
+  private discoversPreviewRelease(): boolean {
+    return capabilityDiscoveryEnvelope(undefined, this.config.wireAdcpVersion ?? this.resolvedAdcpVersion) === 'none';
+  }
+
+  /**
+   * Explicit version envelope for the capability probe, if any. The operation's
+   * own envelope steers only a preview probe; a stable probe keeps the client's
+   * configured envelope.
+   */
+  private capabilityProbeEnvelope(
+    options?: ReadRequestOptions
+  ): import('../protocols').VersionEnvelopeMode | undefined {
+    const operationEnvelope = this.discoversPreviewRelease()
+      ? (options as CapabilityProbeRequestOptions | undefined)?.versionEnvelope
+      : undefined;
+    return operationEnvelope ?? this.config.versionEnvelope;
+  }
+
   private sharedDiscoveryKey(options?: ReadRequestOptions): string | undefined {
     const config = this.config.discoveryCache;
     if (!config) return undefined;
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     if (transport?.trustedFetchFn !== undefined) return undefined;
+    const versionEnvelope = this.capabilityProbeEnvelope(options);
     return agentDiscoveryCacheKey({
       protocol: this.normalizedAgent.protocol,
       agentUri: this.normalizedAgent.agent_uri,
       adcpVersion: this.resolvedAdcpVersion,
       wireAdcpVersion: this.config.wireAdcpVersion,
+      ...(versionEnvelope !== undefined && { versionEnvelope }),
       authIdentity: config.authIdentity,
       connectionPartition: transport?.connectionPartition,
       credentialKind: this.discoveryCredentialKind(),

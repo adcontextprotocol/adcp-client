@@ -3,6 +3,7 @@ import { ConfigurationError } from '../errors';
 import { canonicalize as canonicalizeJson } from '../utils/jcs';
 import { splitConnectionHeaders } from '../protocols/mcp-call-context';
 import type { AdcpCapabilities } from '../utils/capabilities';
+import type { VersionEnvelopeMode } from '../protocols';
 
 /** Default freshness window for shared discovery entries. */
 export const DEFAULT_AGENT_DISCOVERY_TTL_MS = 5 * 60 * 1000;
@@ -165,6 +166,12 @@ export interface AgentDiscoveryKeyInput {
   agentUri: string;
   adcpVersion: string;
   wireAdcpVersion?: string;
+  /**
+   * Version envelope the capability probe was explicitly given, when any. It
+   * decides which release a seller answers discovery at, so evidence gathered
+   * under one envelope never serves another. Omitted for the default policy.
+   */
+  versionEnvelope?: VersionEnvelopeMode;
   authIdentity: string;
   /** Kind of credential presented (`none`, `bearer`, `oauth`, `header`, ...); never its value. */
   credentialKind?: string;
@@ -199,6 +206,7 @@ export function agentDiscoveryCacheKey(input: AgentDiscoveryKeyInput): string {
         agentUri: input.agentUri,
         adcpVersion: input.adcpVersion,
         wireAdcpVersion: input.wireAdcpVersion ?? null,
+        ...(input.versionEnvelope !== undefined && { versionEnvelope: input.versionEnvelope }),
         authIdentity: input.authIdentity,
         ...(input.connectionPartition !== undefined && { connectionPartition: input.connectionPartition }),
         credentialKind: input.credentialKind ?? null,

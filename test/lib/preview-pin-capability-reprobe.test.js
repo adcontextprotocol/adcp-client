@@ -339,6 +339,34 @@ describe('caches keep the pinned and unpinned answers apart', () => {
     assert.equal(previewAgain.servedVersion, PREVIEW_WIRE);
     assert.deepEqual(previewAgain.experimentalFeatures, FEATURES);
   });
+
+  for (const order of [
+    ['none', undefined],
+    [undefined, 'none'],
+  ]) {
+    test(`an explicit 'none' envelope and the default policy keep separate shared evidence (${order.map(String).join(' → ')})`, async t => {
+      const seller = await withSeller(t);
+      const cache = createInMemoryAgentDiscoveryCache();
+      const build = versionEnvelope =>
+        new SingleAgentClient(
+          { id: 'shared', name: 'shared', agent_uri: seller.url, protocol: 'mcp' },
+          {
+            adcpVersion: PREVIEW_PIN,
+            ...(versionEnvelope !== undefined && { versionEnvelope }),
+            allowPrivateIp: true,
+            transport: { allowPrivateIp: true },
+            discoveryCache: { cache, authIdentity: 'tenant-a' },
+          }
+        );
+
+      const served = {};
+      for (const envelope of order)
+        served[envelope ?? 'default'] = (await build(envelope).getCapabilities()).servedVersion;
+
+      assert.equal(served.none, '3.2', 'an explicit unpinned discovery is not re-probed');
+      assert.equal(served.default, PREVIEW_WIRE, 'the default policy re-probes at the advertised pin');
+    });
+  }
 });
 
 describe('servedVersion and result metadata', () => {

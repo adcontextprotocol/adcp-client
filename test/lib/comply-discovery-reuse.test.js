@@ -142,6 +142,11 @@ async function startAgent(name) {
     const data =
       rpc.params?.name === 'get_adcp_capabilities'
         ? {
+            // The release served. A seller that lists the SDK's preview pin but
+            // does not echo it is re-probed at the pin (#3765). An echoed
+            // response composes the envelope, so it carries `status` too.
+            status: 'completed',
+            adcp_version: toReleasePrecisionVersion(ADCP_VERSION),
             adcp: {
               major_versions: [3],
               supported_versions: [toReleasePrecisionVersion(ADCP_VERSION)],
