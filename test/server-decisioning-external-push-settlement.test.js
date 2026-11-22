@@ -164,9 +164,12 @@ describe('projectBoundTaskResultForRelease', () => {
     ],
   });
 
-  test('a recorded release with no bundle converts from its minor line', () => {
-    const projected = projectBoundTaskResultForRelease('create_media_buy', result(), '3.3.0-beta.6', '3.2');
-    assert.strictEqual(projected.packages[0].targeting_overlay?.collection_lists, undefined);
+  test('a recorded release with no packaged schemas throws instead of converting from a sibling preview', () => {
+    assert.throws(() => projectBoundTaskResultForRelease('create_media_buy', result(), '3.3.0-beta.6', '3.2'));
+  });
+
+  test('a stable recorded release with a patch resolves through its line bundle', () => {
+    assert.doesNotThrow(() => projectBoundTaskResultForRelease('create_media_buy', result(), '3.2.0', '3.1'));
   });
 
   test('no minor-line step returns the same reference', () => {
@@ -213,14 +216,20 @@ describe('external push settlement with PostgreSQL', { skip: !DATABASE_URL && 'D
     if (pool) await pool.end();
   });
 
-  function stack({ adapter = ADAPTER, publisherScope = PUBLISHER, tableName = TABLE, storageId = STORAGE_ID } = {}) {
+  function stack({
+    adapter = ADAPTER,
+    publisherScope = PUBLISHER,
+    tableName = TABLE,
+    storageId = STORAGE_ID,
+    recovery = { defaultLeaseMs: 1000 },
+  } = {}) {
     const registry = lib.createPostgresTaskRegistry({ pool, namespace: NAMESPACE, storageId, tableName });
     const coordinator = lib.createPostgresTaskSettlementCoordinator({
       registry,
       publisherScope,
       outbox: { tableName: OUTBOX },
       ...(adapter && { authenticationAdapter: adapter }),
-      recovery: { defaultLeaseMs: 1000 },
+      recovery,
     });
     return { registry, coordinator };
   }
@@ -517,23 +526,44 @@ describe('external push settlement with PostgreSQL', { skip: !DATABASE_URL && 'D
       ]);
     }
 
-    test('a retired recorded release still projects through its minor-line bundle', async () => {
-      const { coordinator, ref } = await handoffNoToken('3.2');
-      await rewriteServerRelease(ref, '3.3.0-beta.6');
-      assert.strictEqual((await lib.completeBoundPushTask(coordinator, ref, COMPLETED())).outcome, 'applied');
-      const [post] = await deliverPending(coordinator);
-      assert.strictEqual(post.body.result.packages[0].targeting_overlay?.collection_lists, undefined);
-    });
+    for (const recorded of ['3.3.0-beta.6', '3.9.0-beta.1']) {
+      test(`an unconvertible recorded release (${recorded}) refuses settlement and writes nothing`, async () => {
+        const { registry, coordinator, ref } = await handoffNoToken('3.2');
+        await rewriteServerRelease(ref, recorded);
+        await assert.rejects(
+          lib.completeBoundPushTask(coordinator, ref, COMPLETED()),
+          error => error instanceof lib.TaskPushSettlementConfigurationError
+        );
+        assert.strictEqual((await registry.getTask(ref.taskId, ref)).status, 'submitted');
+        assert.strictEqual(await count(OUTBOX), 0);
+      });
+    }
 
-    test('an unconvertible recorded release refuses settlement and writes nothing', async () => {
-      const { registry, coordinator, ref } = await handoffNoToken('3.2');
+    test('a retry of a checkpoint whose source exceeds the snapshot limit stays compatible once the release is unconvertible', async () => {
+      const { registry, coordinator } = stack({ recovery: { defaultLeaseMs: 1000, maxSnapshotBytes: 1024 } });
+      const state = { queued: [] };
+      const server = serverFor(registry, coordinator, state);
+      await dispatchCreate(server, { push_notification_config: NO_TOKEN_PUSH, adcp_version: '3.2' });
+      const [ref] = state.queued;
+      const big = COMPLETED();
+      big.packages[0].targeting_overlay.collection_lists = Array.from({ length: 40 }, (_, i) => ({
+        agent_url: 'https://g.example',
+        list_id: `list-${i}-${'x'.repeat(20)}`,
+      }));
+      assert.ok(Buffer.byteLength(JSON.stringify(big)) > 1024, 'the source exceeds the limit');
+      assert.strictEqual((await lib.completeBoundPushTask(coordinator, ref, big)).outcome, 'applied');
       await rewriteServerRelease(ref, '3.9.0-beta.1');
-      await assert.rejects(
-        lib.completeBoundPushTask(coordinator, ref, COMPLETED()),
-        error => error instanceof lib.TaskPushSettlementConfigurationError
-      );
-      assert.strictEqual((await registry.getTask(ref.taskId, ref)).status, 'submitted');
-      assert.strictEqual(await count(OUTBOX), 0);
+      const retried = () => lib.completeBoundPushTask(coordinator, ref, big);
+      const expectCompatible = async () => {
+        const outcome = await retried();
+        assert.strictEqual(outcome.outcome, 'already_terminal');
+        assert.strictEqual(outcome.compatibility, 'compatible');
+      };
+      await expectCompatible();
+      const [post] = await deliverPending(coordinator);
+      assert.ok(Buffer.byteLength(JSON.stringify(post.body)) < 1024, 'the projected payload fits');
+      assert.strictEqual(post.body.result.packages[0].targeting_overlay?.collection_lists, undefined);
+      await expectCompatible();
     });
 
     test('an exact retry stays compatible after the recorded release becomes unconvertible', async () => {
