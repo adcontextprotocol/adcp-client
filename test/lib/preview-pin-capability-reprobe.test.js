@@ -9,7 +9,7 @@
  * once more, pinned, and uses (and caches) that answer.
  */
 
-const { describe, test, before, after, beforeEach } = require('node:test');
+const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
