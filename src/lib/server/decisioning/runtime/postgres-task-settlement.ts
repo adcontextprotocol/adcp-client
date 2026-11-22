@@ -43,7 +43,7 @@ import {
   type PgTransactionalPool,
 } from './postgres-task-registry';
 import { sanitizeTaskResultForWire, type ScopedTaskRef, type TaskRegistry, type TaskStatus } from './task-registry';
-import { projectTaskResultForRelease } from './task-result-release';
+import { projectBoundTaskResultForRelease } from './task-result-release';
 
 export interface TaskPushSettlementConfig {
   /** Validated destination from the original push_notification_config. */
@@ -571,21 +571,24 @@ export function createPostgresTaskSettlementCoordinator(
 
     // A bound task's result is in the server's release recorded at handoff.
     // Its webhook carries it in the release the request was served at,
-    // converted exactly as the in-process task webhook converts it (DR-0024).
-    // The task row keeps the server-release result, which a poll converts on
-    // read.
+    // converted as the in-process task webhook converts it (DR-0024). The
+    // task row keeps the server-release result, which a poll converts on
+    // read. When this SDK cannot convert it, no new webhook is checkpointed
+    // (see the outbox insert below); an exact retry of a settlement that is
+    // already checkpointed still succeeds, because the intent fingerprint
+    // covers the source result rather than its conversion.
     let webhookResult = result;
+    let webhookResultError: unknown;
     if (resultAdcpVersion !== undefined && clonedPush.servedAdcpVersion !== undefined) {
       try {
-        webhookResult = projectTaskResultForRelease(observed.tool, result, {
-          fromVersion: resultAdcpVersion,
-          toVersion: clonedPush.servedAdcpVersion,
-        }).data;
-      } catch (cause) {
-        throw new TaskPushSettlementConfigurationError(
-          'Task terminal result could not be converted to the served AdCP release',
-          { cause }
+        webhookResult = projectBoundTaskResultForRelease(
+          observed.tool,
+          result,
+          resultAdcpVersion,
+          clonedPush.servedAdcpVersion
         );
+      } catch (cause) {
+        webhookResultError = cause;
       }
     }
 
@@ -634,7 +637,7 @@ export function createPostgresTaskSettlementCoordinator(
         cause,
       });
     }
-    const intentFingerprint = taskPushIntentFingerprint(prepared.snapshot, settlementRef);
+    const intentFingerprint = taskPushIntentFingerprint(prepared.snapshot, settlementRef, result);
 
     let client: PgTransactionClient | undefined;
     try {
@@ -719,6 +722,13 @@ export function createPostgresTaskSettlementCoordinator(
       }
 
       if (!existing) {
+        if (webhookResultError !== undefined) {
+          throw new TaskPushSettlementConfigurationError(
+            `Task terminal result cannot be converted to AdCP ${clonedPush.servedAdcpVersion}, the release the ` +
+              'request was served at; settle with an SDK that packages the schemas the conversion needs',
+            { cause: webhookResultError }
+          );
+        }
         const write = await client.query(
           `INSERT INTO ${outboxTable} (
              publisher_scope, tenant_scope, delivery_id, snapshot, snapshot_fingerprint,
@@ -997,11 +1007,25 @@ function stableRegistryScope(registryId: string, namespace: string): string {
   return `task-registry:${digest}`;
 }
 
-function taskPushIntentFingerprint(snapshot: StoredWebhookDeliverySnapshot, ref: ScopedTaskRef): string {
+/**
+ * `sourceResult`, when given, stands in for the payload's `result`: a bound
+ * settlement's webhook result is converted to the served release, and the
+ * fingerprint covers the result it was converted from, so an exact retry
+ * stays compatible on an SDK that converts it differently. Without a
+ * conversion the two are the same value.
+ */
+function taskPushIntentFingerprint(
+  snapshot: StoredWebhookDeliverySnapshot,
+  ref: ScopedTaskRef,
+  sourceResult?: unknown
+): string {
   const { timestamp: _generatedTimestamp, ...storedPayload } = snapshot.payload;
   const payload = structuredClone(storedPayload);
   if (Object.hasOwn(payload, 'result')) {
-    payload.result = sanitizeTaskResultForWire(payload.result, ref);
+    payload.result = sanitizeTaskResultForWire(
+      sourceResult === undefined ? payload.result : structuredClone(sourceResult),
+      ref
+    );
   }
   return taskPushIntentFingerprintForPayload(snapshot, payload);
 }

@@ -143,6 +143,15 @@ release in that release's shape, exactly as a framework-settled task's webhook
 does. The task row keeps the result in the server's release; a
 `get_task_status` poll converts it on read.
 
+The SDK packages one preview per minor line. If the worker runs a later SDK
+that no longer packages the preview recorded at handoff, the result is
+converted from the release that SDK packages on the same minor line, as a poll
+converts from the server's current release. If no release the conversion needs
+is packaged, settlement throws `TaskPushSettlementConfigurationError` and
+writes nothing, rather than send the buyer a result its release cannot express;
+settle from a worker on an SDK that packages it. An exact retry of a settlement
+whose webhook is already checkpointed still returns `already_terminal`.
+
 ### What a worker cannot do
 
 - **Supply a destination or token.** The bound helpers take no route.
