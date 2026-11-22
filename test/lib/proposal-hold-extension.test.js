@@ -61,7 +61,7 @@ function extendHold(proposal_id = 'held-1', extra = {}) {
 }
 
 function request(refinements = [extendHold()], extra = {}) {
-  return { adcp_version: '3.3-rc.0', adcp_major_version: 3, idempotency_key: KEY, refinements, ...extra };
+  return { adcp_version: '3.3-rc.3', adcp_major_version: 3, idempotency_key: KEY, refinements, ...extra };
 }
 
 function finalized(source = 'held-1', successor = 'held-2', expires_at = '2100-01-02T00:00:00.000Z') {
@@ -458,7 +458,7 @@ test('AgentClient.refineProposals sends extend_hold and include_collections to a
   const server = createAdcpServer({
     name: 'hold-extension-seller',
     version: '1.0.0',
-    adcpVersion: '3.3.0-rc.0',
+    adcpVersion: '3.3.0-rc.3',
     validation: { requests: 'strict', responses: 'strict' },
     stateStore: new InMemoryStateStore(),
     idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }), ttlSeconds: 3600 }),
@@ -489,7 +489,7 @@ test('AgentClient.refineProposals sends extend_hold and include_collections to a
   const mcp = new Client({ name: 'hold-extension-buyer', version: '1.0.0' });
   try {
     await mcp.connect(clientTransport);
-    const buyer = AgentClient.fromMCPClient(mcp, { adcpVersion: '3.3.0-rc.0', validation: { responses: 'strict' } });
+    const buyer = AgentClient.fromMCPClient(mcp, { adcpVersion: '3.3.0-rc.3', validation: { responses: 'strict' } });
 
     const extended = await buyer.refineProposals(
       { refinements: [{ proposal_id: 'held-1', action: 'extend_hold' }], include_collections: true },

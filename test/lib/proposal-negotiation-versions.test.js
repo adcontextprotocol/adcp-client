@@ -475,9 +475,9 @@ test('a lower actual served contract selects its bundle, including when task ech
       false,
       'same-response metadata cannot contradict the response echo'
     );
-    const newerRequest = buildRefineProposalsRequest({ adcp_version: '3.3-rc.1', refinements: [refinement] });
+    const newerRequest = buildRefineProposalsRequest({ adcp_version: '3.3-rc.4', refinements: [refinement] });
     assert.equal(
-      verify(newerRequest, response(), { adcpVersion: '3.3.0-rc.1' }).ok,
+      verify(newerRequest, response(), { adcpVersion: '3.3.0-rc.4' }).ok,
       true,
       'a lower genuine prerelease uses its actual registered beta bundle, not an unavailable rc bundle'
     );

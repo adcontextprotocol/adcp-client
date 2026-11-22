@@ -59,10 +59,12 @@ test('the positive proposal lifecycle uses the compact tool sequence without leg
   assert.ok(storyboard);
 
   const businessTasks = tasks(storyboard).filter(task => task !== 'comply_test_controller');
+  // rc.3 attempts acceptance with a mismatched terms digest before the real acceptance (adcp#9168).
   assert.deepEqual(businessTasks, [
     'list_products',
     'request_proposals',
     'refine_proposals',
+    'accept_proposal',
     'accept_proposal',
     'control_media_buy',
     'get_media_buys',
@@ -204,6 +206,7 @@ test('the public CLI lists and renders both complete compact lifecycles', () => 
         'list_products',
         'request_proposals',
         'refine_proposals',
+        'accept_proposal',
         'accept_proposal',
         'control_media_buy',
         'get_media_buys',

@@ -6,7 +6,7 @@
 import { fitCreativeToPackages } from '@adcp/sdk';
 
 const decision = fitCreativeToPackages(creative, packages, {
-  adcpVersion: '3.3.0-rc.0',
+  adcpVersion: '3.3.0-rc.3',
   primaryAssetFacts: { width: 600, height: 500, pixel_ratio: 2 },
 });
 

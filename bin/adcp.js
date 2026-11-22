@@ -2082,7 +2082,7 @@ RUN OPTIONS (full assessment):
   --storyboards IDS   Comma-separated storyboard/bundle IDs to run
   --compliance-version VERSION
                       Select a compliance cache version, e.g. 3.1.31 or
-                      3.3.0-rc.0. The runner uses this cache for
+                      3.3.0-rc.3. The runner uses this cache for
                       storyboard resolution and wire-version defaults. When
                       --test-kit points into a compliance cache, its version is
                       selected automatically; an explicit mismatch is rejected.

@@ -18,7 +18,7 @@ import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { Property, AdAgentsJson } from './types';
 import { resolveAgentProperties } from './resolve-agent-properties';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
-import { AdAgentsRedirectRefusedError, ssrfSafeFetchAdAgents } from './adagents-redirects';
+import { AdAgentsRedirectRefusedError, isAdAgentsUrlReference, ssrfSafeFetchAdAgents } from './adagents-redirects';
 
 /**
  * Cap on a single adagents.json response body. The published advertising
@@ -370,10 +370,10 @@ export class PropertyCrawler {
       const data: AdAgentsJson =
         typeof decoded === 'string' ? (JSON.parse(decoded) as AdAgentsJson) : (decoded as AdAgentsJson);
 
-      // Handle authoritative_location redirect (per AdCP spec)
-      // If authorized_agents is present, use it; otherwise follow the redirect
-      if (data.authoritative_location && !data.authorized_agents) {
-        const redirectUrl = data.authoritative_location;
+      // Handle authoritative_location redirect (per AdCP spec). A URL reference
+      // is followed even when it also carries inline authorized_agents.
+      if (isAdAgentsUrlReference(data)) {
+        const redirectUrl = data.authoritative_location!;
 
         // Validate HTTPS
         if (!redirectUrl.startsWith('https://')) {

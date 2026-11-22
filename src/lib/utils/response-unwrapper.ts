@@ -135,6 +135,7 @@ const SUCCESS_PAYLOAD_FIELD_GROUPS_BY_TOOL: Readonly<Record<string, readonly (re
   list_collection_lists: [['lists']],
   delete_collection_list: [['deleted', 'list_id']],
   list_content_standards: [['standards']],
+  get_content_standards: [['standards_id']],
   create_content_standards: [['standards_id']],
   update_content_standards: [['success', 'standards_id']],
   calibrate_content: [['verdict']],

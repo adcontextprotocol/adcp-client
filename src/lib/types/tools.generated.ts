@@ -167,6 +167,7 @@ import type {
   ImageAssetRequirements,
   ImpairmentOfflineState,
   ImpairmentReasonCode,
+  ImpressionEstimationBasis,
   IndicatorType,
   InstallmentStatus,
   InvoiceKind,
@@ -320,7 +321,7 @@ import type {
   WebhookSigningProfile,
 } from './core.generated';
 
-export type { AccountCurrencyMode, AccountReference, AccountRequestResolution, AccountRequestState, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AgentOnboardingMode, AgentOnboardingRequirementKind, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceMatchRateBasis, AudienceResolutionMethod, AudienceSizePrecision, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BudgetChangeConstraints, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalOptimizationGoal, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionMechanism, CollectionRelationship, CollectionStatus, CommittedMediaBuy, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeChangeKind, CreativeEventReasonCode, CreativeIdentifierType, CreativeMergeRejectionReason, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTarget, DaypartTimeGranularity, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryProjectionBasis, DeliveryProjectionEndState, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EffectiveTimingConstraints, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExecutionReadinessStatus, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, FlightChangeConstraints, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, InvoiceKind, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LaterProposalReason, LiftDimension, LiveUpdateServingMode, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchKeyUse, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyChangeTermConstraints, MediaBuyDeliveryWebhookResult, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyLineageReason, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferReason, OfferingAvailabilityStatus, OptimizationGoal, OutcomeTargetCostStrength, OutcomeType, Pacing, PackageCountConstraints, PackageUpdate, PaymentTerms, PendingActionKind, PendingActionParty, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, PrincipalRelationshipStatus, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalDisposition, ProposalInitiator, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingCustody, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingDimension, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, RequestSigningErrorCode, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SellerPolicyDeclineReason, SignalAvailabilityType, SignalDefinitionEnrichment, SignalDeliveryStatus, SignalSource, SignalStatus, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, SpotStatus, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod, WebhookSigningProfile } from './core.generated';
+export type { AccountCurrencyMode, AccountReference, AccountRequestResolution, AccountRequestState, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AgentOnboardingMode, AgentOnboardingRequirementKind, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceMatchRateBasis, AudienceResolutionMethod, AudienceSizePrecision, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BudgetChangeConstraints, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalOptimizationGoal, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionMechanism, CollectionRelationship, CollectionStatus, CommittedMediaBuy, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeChangeKind, CreativeEventReasonCode, CreativeIdentifierType, CreativeMergeRejectionReason, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTarget, DaypartTimeGranularity, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryProjectionBasis, DeliveryProjectionEndState, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EffectiveTimingConstraints, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExecutionReadinessStatus, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, FlightChangeConstraints, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapControlMode, FrequencyCapMutableField, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, ImpressionEstimationBasis, IndicatorType, InstallmentStatus, InvoiceKind, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LaterProposalReason, LiftDimension, LiveUpdateServingMode, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchKeyUse, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyAvailableAction, MediaBuyChangeTermConstraints, MediaBuyDeliveryWebhookResult, MediaBuyFrequencyCapControlMode, MediaBuyHealth, MediaBuyLineageReason, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferReason, OfferingAvailabilityStatus, OptimizationGoal, OutcomeTargetCostStrength, OutcomeType, Pacing, PackageCountConstraints, PackageUpdate, PaymentTerms, PendingActionKind, PendingActionParty, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, PrincipalRelationshipStatus, ProductAllowedAction, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalDisposition, ProposalInitiator, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachAggregation, ReachUnit, ReportingCustody, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingDimension, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, RequestSigningErrorCode, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SellerPolicyDeclineReason, SignalAvailabilityType, SignalDefinitionEnrichment, SignalDeliveryStatus, SignalSource, SignalStatus, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, SpotStatus, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VendorRelationship, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod, WebhookSigningProfile } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -550,33 +551,6 @@ export type PostalCountryArea = PostalCountrySystem & {
  * @deprecated Use `PostalCountryArea` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
 export type PostalArea1 = PostalCountryArea;
-/**
- * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
- */
-export type PerformanceStandard = {
-} & {
-  metric: PerformanceStandardMetric;
-  /**
-   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
-   */
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandReference;
-  metric_id?: VendorMetricID;
-} & {
-  metric: PerformanceStandardMetric;
-  /**
-   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
-   */
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandReference;
-  metric_id?: VendorMetricID;
-};
-/**
- * Which of the vendor's metrics is judged against threshold. Only vendor_metric_values[] entries with this vendor and metric_id are evidence. MUST name a 0-1 fraction running the same way as metric; a value outside 0-1 is not evidence and MUST NOT be converted. Only for ivt, brand_safety, and attention_score; when absent, parties MUST NOT infer one and treat the standard as not judged from vendor_metric_values.
- */
-export type VendorMetricID = string;
 /**
  * Buyer policy for evaluating Product.audience_evidence. In required mode, sellers MUST apply the evidence_presence and admissibility semantics and exclude non-matching products; they MUST NOT ignore an unsupported hard requirement. In preferred mode, sellers use matches for ranking and explain the evidence selected. Buyers SHOULD inspect media_buy.audience_evidence capabilities before sending this object.
  */
@@ -2109,6 +2083,18 @@ export interface PostalAreaWithFusedSystem {
    * @minItems 1
    */
   values: [string, ...string[]];
+}
+/**
+ * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
+ */
+export interface PerformanceStandard {
+  metric: PerformanceStandardMetric;
+  /**
+   * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
+   */
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandReference;
 }
 /**
  * A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.
@@ -4258,6 +4244,10 @@ export interface ForecastRange {
   /** Optimistic (high-end) forecast value. */
   high?: number;
 }
+export type VendorMetricID = string;
+/**
+ * Experimental (media_buy.hold_policy). Planning hint: the inventory-hold policy the seller generally offers when finalizing a proposal that allocates this product, so buyers can plan before requesting one. It binds nothing. Proposal-level hold policy exists only in the compact lifecycle (request_proposals and refine_proposals), where the seller derives the binding draft policy from the allocated products; legacy get_products proposals carry none. Not a reservation and no guarantee of availability. When absent, get_adcp_capabilities media_buy.proposal_refinement.hold_semantics applies (inventory_hold when that is also absent). Omitted for callers below 3.3.
+ */
 export type HoldPolicy = {
 } & {
   /**
@@ -6113,6 +6103,11 @@ export interface ProductDOOHPlacementAttributes {
   screen_resolution?: ProductDOOHScreenResolution;
   motion?: DOOHMotionType;
   location?: ProductDOOHLocation;
+  impression_basis?: ImpressionEstimationBasis;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). Planning audience per play for this placement: the `impressions / plays` the seller's forecasts use. Optional on `currency_measured` placements.
+   */
+  audience_multiplier?: number;
 }
 /**
  * Physical screen resolution in pixels. Canonical format dimensions remain authoritative for creative acceptance and may describe a smaller content region within the physical screen.
@@ -6741,6 +6736,25 @@ export interface TimeForecastDimension {
    * Exclusive window end (RFC 3339 date-time with timezone offset). MUST be after start_time.
    */
   end_time: string;
+}
+/**
+ * Experimental (media_buy.dooh_impression_basis). The plays of a DOOH row, or of a forecast point, whose audience was estimated on one tier, and the impressions they produced. A row that aggregates plays estimated on different tiers (sensor-equipped screens and screens without a sensor, or one screen whose sensor stopped reporting for part of the flight) lists one entry per tier instead of a row-level `impression_basis`: at least two entries, at most one per tier. In a delivery row the entries' `plays` and `impressions` sum exactly to the row's `plays` and `impressions`; in a forecast point they are the expected values behind the point's midpoints. Entries of different tiers are different units with no exchange rate.
+ */
+export interface ImpressionBasisBreakdownEntry {
+  impression_basis: ImpressionEstimationBasis;
+  /**
+   * Plays whose audience was estimated on this tier. A number like the row's `plays`, so that a forecast's fractional expected values can sum exactly.
+   */
+  plays: number;
+  /**
+   * Impressions those plays produced. Authoritative: `audience_multiplier` is derived from it, not the other way round.
+   */
+  impressions: number;
+  /**
+   * `impressions / plays` of these plays, rounded. A receiver MUST NOT reject a multiplier that differs from `impressions / plays` only by rounding. Optional on `currency_measured` entries.
+   */
+  audience_multiplier?: number;
+  ext?: ExtensionObject;
 }
 /**
  * A forecasted value for a vendor-defined metric, emitted on ForecastPoint.vendor_metric_values parallel to delivery-metrics vendor_metric_values. The envelope mirrors VendorMetricValue but uses ForecastRange for value and the coverage denominators (measurable_impressions, measurable_plays, measurable_play_seconds) because forecasts may carry low/mid/high bounds instead of actual delivered values.
@@ -8389,14 +8403,12 @@ export type ProductOfferFilters = {
       threshold: number;
       standard?: ViewabilityStandard;
       vendor: BrandKey;
-      metric_id?: VendorMetricID;
     },
     ...{
       metric: PerformanceStandardMetric;
       threshold: number;
       standard?: ViewabilityStandard;
       vendor: BrandKey;
-      metric_id?: VendorMetricID;
     }[]
   ];
   /**
@@ -9318,23 +9330,6 @@ export type ForecastRateRange = ForecastRange & {
   };
   high?: {
   };
-};
-/**
- * Compact committed metric threshold with resolvable vendor identity and no creative or brand-asset graph. metric_id has the semantics of performance-standard.json metric_id.
- */
-export type CanonicalPerformanceStandard = {
-} & {
-  metric: PerformanceStandardMetric;
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandKey;
-  metric_id?: VendorMetricID;
-} & {
-  metric: PerformanceStandardMetric;
-  threshold: number;
-  standard?: ViewabilityStandard;
-  vendor: BrandKey;
-  metric_id?: VendorMetricID;
 };
 /**
  * Compact immutable audience-evidence snapshot for product discovery. Provider identity is a BrandKey; credential and brand-asset graphs are resolved separately.
@@ -10362,6 +10357,11 @@ export interface CanonicalDOOHPlacementAttributes {
   screen_resolution?: CanonicalDOOHScreenResolution;
   motion?: DOOHMotionType;
   location?: CanonicalDOOHLocation;
+  impression_basis?: ImpressionEstimationBasis;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). Planning audience per play for this placement: the `impressions / plays` the seller's forecasts use. Optional on `currency_measured` placements.
+   */
+  audience_multiplier?: number;
 }
 /**
  * Physical screen resolution in pixels. Canonical format dimensions remain authoritative for creative acceptance.
@@ -10518,6 +10518,21 @@ export interface CanonicalForecastPoint {
   product_id?: string;
   dimensions?: ForecastPointDimensions;
   availability_status?: AvailabilityStatus;
+  impression_basis?: ImpressionEstimationBasis;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). The planning multiplier of a single-tier DOOH point: `metrics.impressions.mid / metrics.plays.mid`, rounded. The impressions are authoritative: a receiver MUST NOT reject a multiplier that differs from that ratio only by rounding. A point that reports `impression_basis_breakdown` SHOULD omit it and give each entry's planning multiplier instead: a multiplier blended across tiers mixes different units and misleads. A declaration, not a forecastable metric, so it sits outside `metrics`.
+   */
+  audience_multiplier?: number;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). For a DOOH point covering plays expected on different tiers, one entry per tier with the expected plays and impressions behind the point's midpoints: at least two entries, whose tiers MUST be distinct and whose `plays` and `impressions` MUST sum exactly to `metrics.plays.mid` and `metrics.impressions.mid`, which a point carrying a breakdown therefore carries. It SHOULD include the fallback the seller expects: the plays sensor-equipped screens are expected to estimate on `seller_modeled` while their sensor is not reporting. A point never carries both this and `impression_basis`. Tiers are different units with no exchange rate, so compare impressions within a tier (and for `sensor_measured`, within the same metric), and plays and spend across tiers.
+   *
+   * @minItems 2
+   */
+  impression_basis_breakdown?: [
+    ImpressionBasisBreakdownEntry,
+    ImpressionBasisBreakdownEntry,
+    ...ImpressionBasisBreakdownEntry[]
+  ];
   metrics: {
     coverage_rate?: ForecastRateRange;
     [k: string]: ForecastRange | undefined;
@@ -10607,6 +10622,15 @@ export interface CanonicalMeasurementTerms {
      */
     available_remedies: [MakegoodRemedy, ...MakegoodRemedy[]];
   };
+}
+/**
+ * Compact committed metric threshold with resolvable vendor identity and no creative or brand-asset graph.
+ */
+export interface CanonicalPerformanceStandard {
+  metric: PerformanceStandardMetric;
+  threshold: number;
+  standard?: ViewabilityStandard;
+  vendor: BrandKey;
 }
 /**
  * Compact decision readback pinning the evidence snapshot that affected recommendation or eligibility.
@@ -13032,7 +13056,7 @@ export interface AcceptProposalRequest {
    */
   proposal_id: string;
   /**
-   * terms_digest from the committed proposal. The seller MUST atomically verify both ID and digest before acceptance.
+   * terms_digest from the committed proposal. The seller MUST atomically verify both ID and digest before acceptance. When the digest does not match the proposal's current terms_digest, including a proposal already accepted under a different digest, the seller MUST refuse the request without creating, amending, or cancelling anything, and SHOULD return PROPOSAL_TERMS_CHANGED with error.field set to 'proposal_terms_digest'. Idempotency checks (IDEMPOTENCY_CONFLICT) and the proposal-state codes (PROPOSAL_NOT_FOUND, PROPOSAL_EXPIRED, PROPOSAL_NOT_COMMITTED, and INVALID_STATE for a declined or withdrawn proposal) take precedence. The buyer re-reads the proposal: if it is accepted, the buyer does not accept again and finds the existing MediaBuy through get_media_buys; otherwise, if its current terms are acceptable, it accepts them with the current terms_digest and a fresh idempotency_key. Sellers on releases before 3.3 may use another code, so buyers act on error.recovery and error.field rather than the code alone.
    * @pattern ^sha256:[A-Za-z0-9_-]{43}$
    */
   proposal_terms_digest: string;
@@ -14477,7 +14501,129 @@ export type VASTAsset = {
         };
       }[];
     }
-);
+) & {
+    /**
+     * Discriminator identifying this as a VAST asset. See /schemas/creative/asset-types for the registry.
+     */
+    asset_type: 'vast';
+    vast_version?: VASTVersion;
+    /**
+     * One declaration per exact occurrence in a field carried by this asset. A URL-delivered asset can declare only occurrences in its locator `url`; tokens discovered later in a fetched VAST response require document validation evidence or an inline/snapshotted asset and MUST NOT be guessed from the locator. IAB tokens cite a registry namespace and revision rather than copying the live registry into AdCP.
+     *
+     * @minItems 1
+     */
+    macro_declarations?: [MacroDeclaration, ...MacroDeclaration[]];
+    /**
+     * Whether VPAID (Video Player-Ad Interface Definition) is supported
+     */
+    vpaid_enabled?: boolean;
+    /**
+     * Expected media duration in milliseconds (if known)
+     */
+    duration_ms?: number;
+    /**
+     * Tracking events supported by this VAST tag
+     */
+    tracking_events?: VASTTrackingEvent[];
+    /**
+     * URL to captions file (WebVTT, SRT, etc.)
+     */
+    captions_url?: string;
+    /**
+     * URL to audio description track for visually impaired users
+     */
+    audio_description_url?: string;
+    provenance?: Provenance;
+  } & (
+    | {
+        /**
+         * Discriminator indicating VAST is delivered via URL endpoint
+         */
+        delivery_type: 'url';
+        url: MacroBearingURL;
+        macro_declarations?: {
+          location?: {
+            field?: 'url';
+          };
+        }[];
+      }
+    | {
+        /**
+         * Discriminator indicating VAST is delivered as inline XML content
+         */
+        delivery_type: 'inline';
+        /**
+         * Inline VAST XML content
+         */
+        content: string;
+        macro_declarations?: {
+          location?: {
+            field?: 'content';
+          };
+        }[];
+      }
+  ) & {
+    /**
+     * Discriminator identifying this as a VAST asset. See /schemas/creative/asset-types for the registry.
+     */
+    asset_type: 'vast';
+    vast_version?: VASTVersion;
+    /**
+     * One declaration per exact occurrence in a field carried by this asset. A URL-delivered asset can declare only occurrences in its locator `url`; tokens discovered later in a fetched VAST response require document validation evidence or an inline/snapshotted asset and MUST NOT be guessed from the locator. IAB tokens cite a registry namespace and revision rather than copying the live registry into AdCP.
+     *
+     * @minItems 1
+     */
+    macro_declarations?: [MacroDeclaration, ...MacroDeclaration[]];
+    /**
+     * Whether VPAID (Video Player-Ad Interface Definition) is supported
+     */
+    vpaid_enabled?: boolean;
+    /**
+     * Expected media duration in milliseconds (if known)
+     */
+    duration_ms?: number;
+    /**
+     * Tracking events supported by this VAST tag
+     */
+    tracking_events?: VASTTrackingEvent[];
+    /**
+     * URL to captions file (WebVTT, SRT, etc.)
+     */
+    captions_url?: string;
+    /**
+     * URL to audio description track for visually impaired users
+     */
+    audio_description_url?: string;
+    provenance?: Provenance;
+  } & (
+    | {
+        /**
+         * Discriminator indicating VAST is delivered via URL endpoint
+         */
+        delivery_type: 'url';
+        url: MacroBearingURL;
+        macro_declarations?: {
+          location?: {
+            field?: 'url';
+          };
+        }[];
+      }
+    | {
+        /**
+         * Discriminator indicating VAST is delivered as inline XML content
+         */
+        delivery_type: 'inline';
+        /**
+         * Inline VAST XML content
+         */
+        content: string;
+        macro_declarations?: {
+          location?: {
+            field?: 'content';
+          };
+        }[];
+      }
+  );
 /**
  * One atomic third-party display delivery representation. `delivery_type` distinguishes a single ad-request URL, byte-preserved inline markup, and a paired redirect whose ad-request and click-through URLs MUST travel together. This is not an HTML5 bundle: seller-hosted HTML5 zip files use `asset_type: "zip"` under `format_kind: "html5"`.
  */
@@ -14516,7 +14662,77 @@ export type DisplayTagAsset = {
     }[]
   ];
   provenance?: Provenance;
-} & (TagURL | InlineMarkup | PairedRedirect);
+} & (TagURL | InlineMarkup | PairedRedirect) & {
+    /**
+     * Discriminator identifying an atomic third-party display-tag representation.
+     */
+    asset_type: 'display_tag';
+    /**
+     * Exact macro tokens present anywhere in this representation. Tokens remain byte-preserved until the resolver named by each declaration substitutes them.
+     *
+     * @minItems 1
+     */
+    macro_declarations?: [MacroDeclaration, ...MacroDeclaration[]];
+    /**
+     * Rendered width in logical pixels of the entry canvas, independent of target placement and embedded image density. For expandable units, this is the initial width. When set, height must also be set. Mutually exclusive with sizes.
+     */
+    width?: number;
+    /**
+     * Rendered height in logical pixels of the entry canvas. For expandable units, this is the initial height. When set, width must also be set. Mutually exclusive with sizes.
+     */
+    height?: number;
+    /**
+     * Selectable entry-canvas sizes in logical pixels at which the same representation can render, rather than placement constraints or expanded states. Mutually exclusive with width/height. Omit all size fields for an unsized or responsive asset; absence does not establish compatibility with a size-constrained option.
+     *
+     * @minItems 1
+     */
+    sizes?: [
+      {
+        width: number;
+        height: number;
+      },
+      ...{
+        width: number;
+        height: number;
+      }[]
+    ];
+    provenance?: Provenance;
+  } & (TagURL | InlineMarkup | PairedRedirect) & {
+    /**
+     * Discriminator identifying an atomic third-party display-tag representation.
+     */
+    asset_type: 'display_tag';
+    /**
+     * Exact macro tokens present anywhere in this representation. Tokens remain byte-preserved until the resolver named by each declaration substitutes them.
+     *
+     * @minItems 1
+     */
+    macro_declarations?: [MacroDeclaration, ...MacroDeclaration[]];
+    /**
+     * Rendered width in logical pixels of the entry canvas, independent of target placement and embedded image density. For expandable units, this is the initial width. When set, height must also be set. Mutually exclusive with sizes.
+     */
+    width?: number;
+    /**
+     * Rendered height in logical pixels of the entry canvas. For expandable units, this is the initial height. When set, width must also be set. Mutually exclusive with sizes.
+     */
+    height?: number;
+    /**
+     * Selectable entry-canvas sizes in logical pixels at which the same representation can render, rather than placement constraints or expanded states. Mutually exclusive with width/height. Omit all size fields for an unsized or responsive asset; absence does not establish compatibility with a size-constrained option.
+     *
+     * @minItems 1
+     */
+    sizes?: [
+      {
+        width: number;
+        height: number;
+      },
+      ...{
+        width: number;
+        height: number;
+      }[]
+    ];
+    provenance?: Provenance;
+  } & (TagURL | InlineMarkup | PairedRedirect);
 /**
  * Re-export of `MacroBearingURL` under the legacy codegen artifact name.
  *
@@ -14625,7 +14841,121 @@ export type DAASTAsset = {
         };
       }[];
     }
-);
+) & {
+    /**
+     * Discriminator identifying this as a DAAST asset. See /schemas/creative/asset-types for the registry.
+     */
+    asset_type: 'daast';
+    daast_version?: DAASTVersion;
+    /**
+     * Expected audio duration in milliseconds (if known)
+     */
+    duration_ms?: number;
+    /**
+     * Tracking events supported by this DAAST tag
+     */
+    tracking_events?: DAASTTrackingEvent[];
+    /**
+     * Whether companion display ads are included
+     */
+    companion_ads?: boolean;
+    /**
+     * URL to text transcript of the audio content
+     */
+    transcript_url?: string;
+    provenance?: Provenance;
+    /**
+     * One declaration per occurrence in a field carried by this asset. URL-delivered assets declare only locator-URL occurrences; receivers do not infer declarations for tokens discovered later in a fetched document.
+     *
+     * @minItems 1
+     */
+    macro_declarations?: [MacroDeclaration, ...MacroDeclaration[]];
+  } & (
+    | {
+        /**
+         * Discriminator indicating DAAST is delivered via URL endpoint
+         */
+        delivery_type: 'url';
+        url: MacroBearingURL5;
+        macro_declarations?: {
+          location?: {
+            field?: 'url';
+          };
+        }[];
+      }
+    | {
+        /**
+         * Discriminator indicating DAAST is delivered as inline XML content
+         */
+        delivery_type: 'inline';
+        /**
+         * Inline DAAST XML content
+         */
+        content: string;
+        macro_declarations?: {
+          location?: {
+            field?: 'content';
+          };
+        }[];
+      }
+  ) & {
+    /**
+     * Discriminator identifying this as a DAAST asset. See /schemas/creative/asset-types for the registry.
+     */
+    asset_type: 'daast';
+    daast_version?: DAASTVersion;
+    /**
+     * Expected audio duration in milliseconds (if known)
+     */
+    duration_ms?: number;
+    /**
+     * Tracking events supported by this DAAST tag
+     */
+    tracking_events?: DAASTTrackingEvent[];
+    /**
+     * Whether companion display ads are included
+     */
+    companion_ads?: boolean;
+    /**
+     * URL to text transcript of the audio content
+     */
+    transcript_url?: string;
+    provenance?: Provenance;
+    /**
+     * One declaration per occurrence in a field carried by this asset. URL-delivered assets declare only locator-URL occurrences; receivers do not infer declarations for tokens discovered later in a fetched document.
+     *
+     * @minItems 1
+     */
+    macro_declarations?: [MacroDeclaration, ...MacroDeclaration[]];
+  } & (
+    | {
+        /**
+         * Discriminator indicating DAAST is delivered via URL endpoint
+         */
+        delivery_type: 'url';
+        url: MacroBearingURL5;
+        macro_declarations?: {
+          location?: {
+            field?: 'url';
+          };
+        }[];
+      }
+    | {
+        /**
+         * Discriminator indicating DAAST is delivered as inline XML content
+         */
+        delivery_type: 'inline';
+        /**
+         * Inline DAAST XML content
+         */
+        content: string;
+        macro_declarations?: {
+          location?: {
+            field?: 'content';
+          };
+        }[];
+      }
+  );
 /**
  * Re-export of `MacroBearingURL` under the legacy codegen artifact name.
  *
@@ -14646,6 +14976,16 @@ export type BriefAsset = CreativeBrief & {
    * Discriminator identifying this as a brief asset. See /schemas/creative/asset-types for the registry.
    */
   asset_type: 'brief';
+} & {
+  /**
+   * Discriminator identifying this as a brief asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'brief';
+} & {
+  /**
+   * Discriminator identifying this as a brief asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'brief';
 };
 /**
  * Typed per-segment generation brief supplied in a creative manifest's video_brief slot. Carries the existing VideoBrief structure as an asset, independently of the generated video output.
@@ -14653,11 +14993,27 @@ export type BriefAsset = CreativeBrief & {
 export type VideoBriefAsset = VideoBrief & {
   asset_type: 'video_brief';
   provenance?: Provenance;
+} & {
+  asset_type: 'video_brief';
+  provenance?: Provenance;
+} & {
+  asset_type: 'video_brief';
+  provenance?: Provenance;
 };
 /**
  * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
  */
 export type CatalogAsset = Catalog & {
+  /**
+   * Discriminator identifying this as a catalog asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'catalog';
+} & {
+  /**
+   * Discriminator identifying this as a catalog asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'catalog';
+} & {
   /**
    * Discriminator identifying this as a catalog asset. See /schemas/creative/asset-types for the registry.
    */
@@ -14749,6 +15105,80 @@ export type PixelTrackerAsset = {
    */
   custom_event_name?: string;
   provenance?: Provenance;
+} & {
+  /**
+   * Discriminator identifying this as a renderer-fired pixel tracker asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'pixel_tracker';
+  event: PixelTrackingEvent;
+  /**
+   * How the tracker URL is invoked at serve time:
+   * - `img` — fired as an image pixel (HTTP GET with `<img>`-like semantics; no JS execution)
+   * - `js` — fired as a script include (renderer evaluates the URL's response as JavaScript)
+   *
+   * Matches IAB OpenRTB Native 1.2 method enum (1=img, 2=js). `js` MUST only be used by sellers whose renderer supports JavaScript trackers; sellers without JS-tracker support MUST reject `method: js` declarations at sync_creatives time with `CREATIVE_REJECTED` carrying the reason.
+   */
+  method?: 'img' | 'js';
+  url: MacroBearingURL6;
+  /**
+   * One declaration per token occurrence in `url`; declaration_id values MUST be unique and locations MUST resolve. When omitted, legacy behavior applies.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
+  /**
+   * REQUIRED when `event` is `custom`; otherwise MUST be absent. Adopter-defined event name. When tracker execution is undeclared, an unknown custom event is a forward-compatible probe and the seller silently no-ops instead of rejecting the creative. An effective tracker_execution_contract overrides that legacy fallback: with complete:true an unlisted custom selector is unsupported and rejects compatibility with tracker_contract_mismatch; a listed custom selector is an affirmative accept-and-initiate commitment.
+   */
+  custom_event_name?: string;
+  provenance?: Provenance;
+} & {
+  /**
+   * Discriminator identifying this as a renderer-fired pixel tracker asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'pixel_tracker';
+  event: PixelTrackingEvent;
+  /**
+   * How the tracker URL is invoked at serve time:
+   * - `img` — fired as an image pixel (HTTP GET with `<img>`-like semantics; no JS execution)
+   * - `js` — fired as a script include (renderer evaluates the URL's response as JavaScript)
+   *
+   * Matches IAB OpenRTB Native 1.2 method enum (1=img, 2=js). `js` MUST only be used by sellers whose renderer supports JavaScript trackers; sellers without JS-tracker support MUST reject `method: js` declarations at sync_creatives time with `CREATIVE_REJECTED` carrying the reason.
+   */
+  method?: 'img' | 'js';
+  url: MacroBearingURL6;
+  /**
+   * One declaration per token occurrence in `url`; declaration_id values MUST be unique and locations MUST resolve. When omitted, legacy behavior applies.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
+  /**
+   * REQUIRED when `event` is `custom`; otherwise MUST be absent. Adopter-defined event name. When tracker execution is undeclared, an unknown custom event is a forward-compatible probe and the seller silently no-ops instead of rejecting the creative. An effective tracker_execution_contract overrides that legacy fallback: with complete:true an unlisted custom selector is unsupported and rejects compatibility with tracker_contract_mismatch; a listed custom selector is an affirmative accept-and-initiate commitment.
+   */
+  custom_event_name?: string;
+  provenance?: Provenance;
 };
 /**
  * Re-export of `MacroBearingURL` under the legacy codegen artifact name.
@@ -14803,6 +15233,80 @@ export type VASTTrackerAsset = {
    */
   target?: 'linear' | 'non_linear' | 'companion';
   provenance?: Provenance;
+} & {
+  /**
+   * Discriminator identifying this as a VAST tracker asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'vast_tracker';
+  /**
+   * The VAST tracking event this URL fires on. Maps 1:1 to the VAST `Tracking event="..."` attribute inside `TrackingEvents`. MUST NOT be `impression` (belongs in the VAST `Impression` element — model as a `url` asset with `url_type: "tracker_pixel"`), `clickTracking` / `customClick` (belong in `VideoClicks`), `error` (VAST `Error` element), or any of `viewable` / `notViewable` / `viewUndetermined` / `measurableImpression` / `viewableImpression` (children of the VAST `ViewableImpression` element, not `TrackingEvents`).
+   */
+  vast_event: VASTTrackingEvent & {
+  };
+  url: MacroBearingURL7;
+  /**
+   * Exact tokens in `url` and their resolver/encoding contracts.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
+  /**
+   * VAST `offset` attribute. Required when `vast_event` is `progress`; ignored otherwise for compatibility with existing 3.x manifests. Format matches the VAST 4.2 XSD `Tracking@offset` pattern: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted — the VAST 4.2 XSD pattern does not allow a leading minus.
+   */
+  offset?: string;
+  /**
+   * Which VAST creative element this tracker scopes to — `linear` for `<Linear>/<TrackingEvents>`, `non_linear` for `<NonLinearAds>/<TrackingEvents>`, `companion` for `<CompanionAds>/<Companion>/<TrackingEvents>`. Defaults to `linear`. Existing 3.x assets remain structurally permissive; a tracker execution contract applies the standards-valid event/target matrix when matching a creative to a product.
+   */
+  target?: 'linear' | 'non_linear' | 'companion';
+  provenance?: Provenance;
+} & {
+  /**
+   * Discriminator identifying this as a VAST tracker asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'vast_tracker';
+  /**
+   * The VAST tracking event this URL fires on. Maps 1:1 to the VAST `Tracking event="..."` attribute inside `TrackingEvents`. MUST NOT be `impression` (belongs in the VAST `Impression` element — model as a `url` asset with `url_type: "tracker_pixel"`), `clickTracking` / `customClick` (belong in `VideoClicks`), `error` (VAST `Error` element), or any of `viewable` / `notViewable` / `viewUndetermined` / `measurableImpression` / `viewableImpression` (children of the VAST `ViewableImpression` element, not `TrackingEvents`).
+   */
+  vast_event: VASTTrackingEvent & {
+  };
+  url: MacroBearingURL7;
+  /**
+   * Exact tokens in `url` and their resolver/encoding contracts.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
+  /**
+   * VAST `offset` attribute. Required when `vast_event` is `progress`; ignored otherwise for compatibility with existing 3.x manifests. Format matches the VAST 4.2 XSD `Tracking@offset` pattern: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted — the VAST 4.2 XSD pattern does not allow a leading minus.
+   */
+  offset?: string;
+  /**
+   * Which VAST creative element this tracker scopes to — `linear` for `<Linear>/<TrackingEvents>`, `non_linear` for `<NonLinearAds>/<TrackingEvents>`, `companion` for `<CompanionAds>/<Companion>/<TrackingEvents>`. Defaults to `linear`. Existing 3.x assets remain structurally permissive; a tracker execution contract applies the standards-valid event/target matrix when matching a creative to a product.
+   */
+  target?: 'linear' | 'non_linear' | 'companion';
+  provenance?: Provenance;
 };
 /**
  * Re-export of `MacroBearingURL` under the legacy codegen artifact name.
@@ -14820,6 +15324,80 @@ export type MacroBearingURL7 = MacroBearingURL;
  * A single tracker URL bound to a DAAST `TrackingEvents` event. Audio-side analogue of vast-tracker-asset. The `Impression` URL MUST be modeled as a `url` asset with `url_type: "tracker_pixel"`, not as a daast_tracker with `daast_event: "impression"`.
  */
 export type DAASTTrackerAsset = {
+} & {
+  /**
+   * Discriminator identifying this as a DAAST tracker asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'daast_tracker';
+  /**
+   * The DAAST tracking event this URL fires on. MUST NOT be `impression` (model as `url` asset with `url_type: "tracker_pixel"`), `clickTracking` / `customClick` (click-tracking trackers go on their own URL asset), `error`, or any of the `ViewableImpression`-element children (`viewable`, `notViewable`, `viewUndetermined`, `measurableImpression`, `viewableImpression`).
+   */
+  daast_event: DAASTTrackingEvent & {
+  };
+  url: MacroBearingURL8;
+  /**
+   * Exact tokens in `url` and their resolver/encoding contracts.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
+  /**
+   * DAAST `offset` attribute. Required when `daast_event` is `progress` (DAAST 1.1 §3.2.4.3); ignored otherwise for compatibility with existing 3.x manifests. Same format as VAST 4.2 `Tracking@offset`: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted.
+   */
+  offset?: string;
+  /**
+   * Which DAAST creative element this tracker scopes to — `linear` for `<Linear>/<TrackingEvents>` (DAAST 1.1 §3.2.1.7), `companion` for `<CompanionAds>/<Companion>/<TrackingEvents>` (DAAST 1.1 §3.2.2.7). DAAST has no `<NonLinearAds>` element. Defaults to `linear`. Existing 3.x assets remain structurally permissive; a tracker execution contract applies the standards-valid event/target matrix when matching a creative to a product.
+   */
+  target?: 'linear' | 'companion';
+  provenance?: Provenance;
+} & {
+  /**
+   * Discriminator identifying this as a DAAST tracker asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'daast_tracker';
+  /**
+   * The DAAST tracking event this URL fires on. MUST NOT be `impression` (model as `url` asset with `url_type: "tracker_pixel"`), `clickTracking` / `customClick` (click-tracking trackers go on their own URL asset), `error`, or any of the `ViewableImpression`-element children (`viewable`, `notViewable`, `viewUndetermined`, `measurableImpression`, `viewableImpression`).
+   */
+  daast_event: DAASTTrackingEvent & {
+  };
+  url: MacroBearingURL8;
+  /**
+   * Exact tokens in `url` and their resolver/encoding contracts.
+   *
+   * @minItems 1
+   */
+  macro_declarations?: [
+    MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    },
+    ...(MacroDeclaration & {
+      location?: {
+        field?: 'url';
+      };
+    })[]
+  ];
+  /**
+   * DAAST `offset` attribute. Required when `daast_event` is `progress` (DAAST 1.1 §3.2.4.3); ignored otherwise for compatibility with existing 3.x manifests. Same format as VAST 4.2 `Tracking@offset`: `HH:MM:SS` or `HH:MM:SS.mmm` for absolute time (two-digit hours, minutes 00–59, seconds 00–59), or an integer percentage 0–100 suffixed with `%`. Negative offsets are NOT permitted.
+   */
+  offset?: string;
+  /**
+   * Which DAAST creative element this tracker scopes to — `linear` for `<Linear>/<TrackingEvents>` (DAAST 1.1 §3.2.1.7), `companion` for `<CompanionAds>/<Companion>/<TrackingEvents>` (DAAST 1.1 §3.2.2.7). DAAST has no `<NonLinearAds>` element. Defaults to `linear`. Existing 3.x assets remain structurally permissive; a tracker execution contract applies the standards-valid event/target matrix when matching a creative to a product.
+   */
+  target?: 'linear' | 'companion';
+  provenance?: Provenance;
 } & {
   /**
    * Discriminator identifying this as a DAAST tracker asset. See /schemas/creative/asset-types for the registry.
@@ -21212,6 +21790,16 @@ export interface ReportingCanonicalContentDigest {
   canonicalization_sha256: string;
 }
 /**
+ * The row's `qualifier`, repeated verbatim when the row carries one. Omit when the row has none.
+ */
+export interface Qualifier {
+  viewability_standard?: ViewabilityStandard;
+  completion_source?: CompletionSource;
+  attribution_methodology?: AttributionMethodology;
+  attribution_window?: Duration;
+  lift_dimension?: LiftDimension;
+}
+/**
  * Evidence artifact for this event (completion photograph); capture time and location ride the artifact
  */
 export interface PlacementEvidence {
@@ -21297,16 +21885,6 @@ export interface VendorMetricProvenance {
    */
   deduplicated?: boolean;
   ext?: ExtensionObject;
-}
-/**
- * The row's `qualifier`, repeated verbatim when the row carries one, so provenance joins on `(vendor, metric_id, qualifier)`. Omit when the row has none.
- */
-export interface Qualifier {
-  viewability_standard?: ViewabilityStandard;
-  completion_source?: CompletionSource;
-  attribution_methodology?: AttributionMethodology;
-  attribution_window?: Duration;
-  lift_dimension?: LiftDimension;
 }
 /**
  * Optional seller projection of where this package's delivery will end up at flight end. Forward-looking counterpart to the backward-looking `pacing_index`, and the numeric counterpart to the categorical `pacing_risk` indicator on `get_media_buys`. Experimental: sellers that emit it MUST list `media_buy.delivery_projection` in `experimental_features`. An advisory forecast, not a delivery record: it carries no contractual meaning on its own, and any commercial use is governed by the parties' terms. Defined on top-level `by_package[]` rows of GET responses; it is not part of the `windows[].by_package` or exact `reporting_revision_id` contracts, and this field does not define webhook use. Sellers that do not project omit it; absence carries no meaning.
@@ -26661,7 +27239,7 @@ export type CreativeStagedUpdate = {
   rejection_reason?: string;
 };
 /**
- * An asset inside a materialized creative locale variant. Text and markdown assets may omit language when they make no language claim. When language is present, it MUST use the shared AdCP BCP 47 wire profile; conformance additionally requires exact equality with the enclosing variant locale.
+ * Deprecated in 3.3, removed in 4.0. The single-value form: send a one-item array instead.
  */
 export type LocalizedCreativeAsset = AssetVariant & {
 };
@@ -30596,7 +31174,7 @@ export interface PolicyEntry {
   category?: PolicyCategory;
   enforcement: PolicyEnforcementLevel;
   /**
-   * When true, plans subject to this policy MUST set plan.human_review_required = true. Use for policies that mandate human oversight of decisions affecting data subjects — e.g., GDPR Article 22 (solely automated decisions with legal or similarly significant effects) and EU AI Act Annex III high-risk categories (credit, insurance pricing, recruitment, housing allocation). Governance agents MUST escalate any plan action whose resolved policies include requires_human_review: true. Unlike `enforcement`, this flag applies as soon as the policy is resolved — it is NOT gated by `effective_date`. Art 22 GDPR and similar foundational obligations may predate an AI-Act-specific effective date; the human-review requirement fires regardless.
+   * When true, the governance agent MUST set plan.human_review_required = true on plans subject to this policy. Use for policies that mandate human oversight of decisions affecting data subjects — e.g., GDPR Article 22 (solely automated decisions with legal or similarly significant effects) and EU AI Act Annex III high-risk categories (credit, insurance pricing, recruitment, housing allocation). Governance agents MUST escalate any plan action whose resolved policies include requires_human_review: true. Unlike `enforcement`, this flag applies as soon as the policy is resolved — it is NOT gated by `effective_date`. Art 22 GDPR and similar foundational obligations may predate an AI-Act-specific effective date; the human-review requirement fires regardless.
    */
   requires_human_review?: boolean;
   /**
@@ -30900,7 +31478,7 @@ export interface CreateContentStandardsRequest {
   ext?: ExtensionObject;
 }
 /**
- * Full artifact with pre-extracted content (text, images, video, audio)
+ * Content artifact for safety and suitability evaluation. An artifact represents content adjacent to an ad placement - a news article, podcast segment, video chapter, or social post. Artifacts are collections of assets (text, images, video, audio) plus metadata and signals.
  */
 export interface Artifact1 {
   /**
@@ -32061,7 +32639,7 @@ export interface SyncPlansRequest {
    */
   plans: {
     /**
-     * Unique identifier for this plan.
+     * Identifier for this plan, unique per owner principal. Two principals may use the same `plan_id`; neither can read, change or detect the other's plan.
      */
     plan_id: string;
     brand: BrandReference;
@@ -32092,7 +32670,7 @@ export interface SyncPlansRequest {
            */
           per_seller_max_pct?: number;
           /**
-           * Amount above which budget reallocations require human escalation. The orchestrator can reallocate spend across sellers, channels, or purchase types up to this threshold per change without asking a human. Set equal to `total` for effectively unlimited reallocation; set to 0 to require approval for every reallocation. Separate from `plan.human_review_required`, which governs decisions affecting data subjects (targeting, creative, delivery) under GDPR Art 22 / EU AI Act Annex III. Denominated in `budget.currency`.
+           * Amount above which budget reallocations require human escalation. The orchestrator can reallocate spend across sellers, channels, or purchase types up to this threshold per change without asking a human. Set to 0 to require approval for every reallocation. For unlimited reallocation use `reallocation_unlimited`; a threshold equal to `total` has the same effect only until `total` changes. Separate from `plan.human_review_required`, which governs decisions affecting data subjects (targeting, creative, delivery) under GDPR Art 22 / EU AI Act Annex III. Denominated in `budget.currency`.
            * @minimum 0
            */
           reallocation_threshold: number;
@@ -32318,7 +32896,7 @@ export interface SyncPlansRequest {
        */
       markets?: string[];
       /**
-       * When this delegation expires. After expiration, the governance agent denies actions from this agent.
+       * When this delegation expires. After expiration this agent is no longer a current delegate. Its intent re-check that presents a `consultation_context` issued for the plan, and an execution check on an action it proposed, are `denied` with a `delegation_authority` finding. Any other check from this agent returns `PLAN_NOT_FOUND`, as for a plan that does not exist.
        * @format date-time
        */
       expires_at?: string;
@@ -35988,6 +36566,8 @@ export type ReportingDeliveryCapabilities = {
 export type ReportingDeliveryOffering = {
 } & {
 } & {
+} & {
+} & {
   offering_id: string;
   feed_purpose: ReportingFeedPurpose;
   /**
@@ -35995,7 +36575,7 @@ export type ReportingDeliveryOffering = {
    */
   report_definition_id: string;
   /**
-   * Experimental (media_buy.reporting_subscriptions). The offering's breakdown mapped onto the standard reporting dimension vocabulary, so a buyer can resolve a subscription selector's match from the wire. Empty for an offering that reports totals only. Sellers advertising media_buy.reporting_subscriptions MUST include it on every offering.
+   * Experimental (media_buy.reporting_subscriptions). The offering's breakdown mapped onto the standard reporting dimension vocabulary, so a buyer can resolve a subscription selector's match from the wire. Empty for an offering that reports totals only. Sellers advertising media_buy.reporting_subscriptions MUST include it on every offering. A contract_version 1.2 report definition names each geography dimension it maps with its standard name and fills it with codes, never display names (reporting-report-definition.json dimensions).
    *
    * @maxItems 16
    */
@@ -36008,6 +36588,7 @@ export type ReportingDeliveryOffering = {
    */
   unmapped_dimensions?:
     string[];
+  dimension_systems?: ReportingDimensionSystems;
   /**
    * Experimental (media_buy.reporting_subscriptions). When this offering became, or becomes, available. Before it the offering is not a candidate for subscription resolution or configuration. Absent: available since before any retained obligation.
    */
@@ -36093,7 +36674,7 @@ export type ReportingDeliveryOffering = {
    */
   report_definition_id: string;
   /**
-   * Experimental (media_buy.reporting_subscriptions). The offering's breakdown mapped onto the standard reporting dimension vocabulary, so a buyer can resolve a subscription selector's match from the wire. Empty for an offering that reports totals only. Sellers advertising media_buy.reporting_subscriptions MUST include it on every offering.
+   * Experimental (media_buy.reporting_subscriptions). The offering's breakdown mapped onto the standard reporting dimension vocabulary, so a buyer can resolve a subscription selector's match from the wire. Empty for an offering that reports totals only. Sellers advertising media_buy.reporting_subscriptions MUST include it on every offering. A contract_version 1.2 report definition names each geography dimension it maps with its standard name and fills it with codes, never display names (reporting-report-definition.json dimensions).
    *
    * @maxItems 16
    */
@@ -36106,6 +36687,7 @@ export type ReportingDeliveryOffering = {
    */
   unmapped_dimensions?:
     string[];
+  dimension_systems?: ReportingDimensionSystems;
   /**
    * Experimental (media_buy.reporting_subscriptions). When this offering became, or becomes, available. Before it the offering is not a candidate for subscription resolution or configuration. Absent: available since before any retained obligation.
    */
@@ -38317,6 +38899,20 @@ export interface AgentOnboardingTier {
     AgentOnboardingRequirement[];
   ext?: ExtensionObject;
 }
+/**
+ * Experimental (media_buy.reporting_subscriptions). The metro system, and the postal countries and systems, this offering reports in. Required when standard_dimensions includes metro or postal_area, so a buyer knows which codes the rows carry and a subscription selector can name them.
+ */
+export interface ReportingDimensionSystems {
+  metro?: MetroAreaSystem;
+  /**
+   * Countries and their postal systems in the postal_area breakdown, each a valid country-local pairing from postal-country-system.json, the same pairing geo-delivery-metrics.json and postal targeting use. Required on an offering whose standard_dimensions include postal_area.
+   *
+   * @minItems 1
+   * @maxItems 16
+   */
+  postal_area?:
+    PostalCountrySystem[];
+}
 export interface ReportingReliabilityMeasurementPeriod {
   start: string;
   end: string;
@@ -39039,6 +39635,7 @@ export type ReportingSubscription = {
      * exact selects the offering whose dimension set equals dimensions; native dimensions that do not map to the vocabulary count as distinct, so package by device does not equal package. finest selects the single offering with the most mapped dimensions among those including every selector dimension. Ties under exact and finest go to the lowest offering_id in byte order. all selects every offering including every selector dimension, each with its own obligations. Defaults to exact when dimensions is present and finest when it is absent. With match exact and no dimensions, every candidate qualifies and the lowest offering_id wins. Matching reads each offering's standard_dimensions and unmapped_dimensions. Billing subscriptions MUST use exact with dimensions, so a billing feed's breakdown never depends on which offerings happen to exist.
      */
     match?: 'exact' | 'finest' | 'all';
+    dimension_systems?: ReportingDimensionSystems;
     /**
      * IANA timezone override for period boundaries. Only valid when scope.account_ids names exactly one account. An account_timezone offering matches and uses this zone in place of the account's. A utc offering matches only when this is exactly UTC or Etc/UTC; other names that tzdata links to UTC, such as Etc/GMT, GMT, Etc/Universal, or Zulu, do not match. A source_timezone or fixed billing_cycle offering matches only when its published period_timezone equals this one. A billing_cycle offering whose anchor the buyer configures never matches a subscription, which has no way to supply the anchor.
      */
@@ -42253,7 +42850,7 @@ export interface ComplyTestControllerRequest {
         | {
             vendor: BrandReference;
             metric_id: VendorMetricID;
-            qualifier?: Qualifier1;
+            qualifier?: Qualifier2;
           }[]
         | undefined;
     };
@@ -42382,6 +42979,29 @@ export interface DoohMetrics {
    * Per-row supplementary methodology notes for DOOH impression calculation (e.g., 'rotation-based; 6-second slot weighted by 70% audience overlap'). Free-form prose for context that doesn't fit the structured measurement-vendor surface. Canonical methodology declarations belong on the measurement vendor's `get_adcp_capabilities.measurement.metrics[]` block where they're discoverable once and inherited across delivery rows; this field is for row-specific context (a particular daypart's calculation, a venue-mix exception) rather than the seller's general methodology.
    */
   calculation_notes?: string;
+  impression_basis?: ImpressionEstimationBasis;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). The row's `impressions / plays`, rounded, so a buyer can compare rows. `impressions` is authoritative: a receiver MUST NOT reject a multiplier that differs from `impressions / plays` only by rounding. On `sensor_measured` and `hybrid` rows sellers SHOULD include it, and it is the realised ratio for the period, which varies by row. On `currency_measured` rows it is optional. A row that reports `impression_basis_breakdown` SHOULD omit it and give each entry's multiplier instead: a multiplier blended across tiers mixes different units and misleads.
+   */
+  audience_multiplier?: number;
+  /**
+   * Experimental (media_buy.dooh_impression_basis). On rows whose impressions are, wholly or through an `impression_basis_breakdown` entry, `sensor_measured` or `hybrid`, the `vendor_metric_values[]` row the sensor audience derives from, joined on `(vendor, metric_id, qualifier)`. That row carries the coverage (`measurable_plays`) and the seller–vendor relationship, and the vendor catalog the methodology. When `basis_metric` is present, a matching row MUST be present in the `vendor_metric_values[]` of the delivery row that carries this `dooh_metrics`. Totals and package rows MAY omit it when the rows below them carry it.
+   */
+  basis_metric?: {
+    vendor: BrandReference;
+    metric_id: VendorMetricID;
+    qualifier?: Qualifier;
+  };
+  /**
+   * Experimental (media_buy.dooh_impression_basis). For a row that aggregates plays estimated on different tiers — a product mixing sensor-equipped screens and screens without a sensor, or a sensor-equipped screen whose fallback plays, estimated while its sensor was not reporting, are `seller_modeled` — one entry per tier present: at least two entries, whose tiers MUST be distinct and whose `plays` and `impressions` MUST sum exactly to the row's. Each entry of a parent row (totals, a package) MUST equal the sum of its child rows' entries for that tier, a single-tier child counting as one entry. A row never carries both this and `impression_basis`. Tiers are different units with no exchange rate, so compare impressions within a tier (and for `sensor_measured`, within the same `basis_metric`), and plays and spend across tiers. Billing is unchanged: a CPM bills the row's total `impressions`, all tiers together. Sellers that emit it MUST list `media_buy.dooh_impression_basis` in `experimental_features`.
+   *
+   * @minItems 2
+   */
+  impression_basis_breakdown?: [
+    ImpressionBasisBreakdownEntry,
+    ImpressionBasisBreakdownEntry,
+    ...ImpressionBasisBreakdownEntry[]
+  ];
   /**
    * Per-venue performance breakdown
    */
@@ -42410,12 +43030,17 @@ export interface DoohMetrics {
      * Number of screens used at this venue
      */
     screens_used?: number;
+    impression_basis?: ImpressionEstimationBasis;
+    /**
+     * Experimental (media_buy.dooh_impression_basis). Plays at this venue, counted like the delivery row's `plays`: raw plays before any impression multiplier, not `loop_plays`. Each screen that played the spot counts one play, so a spot shown at once on three synchronized screens is three plays. A venue row carries no multiplier; its audience per play is `impressions / plays`.
+     */
+    plays?: number;
   }[];
 }
 /**
  * Qualifier for the exact committed vendor-metric row whose measurement is deferred.
  */
-export interface Qualifier1 {
+export interface Qualifier2 {
   viewability_standard?: ViewabilityStandard;
   completion_source?: CompletionSource;
   attribution_methodology?: AttributionMethodology;

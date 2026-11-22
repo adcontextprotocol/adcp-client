@@ -68,7 +68,7 @@
     "update_media_buy": {},
     "validate_content_delivery": {}
   },
-  "3.3.0-rc.0": {
+  "3.3.0-rc.3": {
     "activate_signal": {},
     "build_creative": {},
     "calibrate_content": {},

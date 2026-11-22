@@ -30,8 +30,8 @@ const {
 const { executeStoryboardTask } = require('../../dist/lib/testing/storyboard/task-map.js');
 const { comply } = require('../../dist/lib/testing/compliance/comply.js');
 
-const PREVIEW_PIN = '3.3.0-rc.0';
-const PREVIEW_WIRE = '3.3-rc.0';
+const PREVIEW_PIN = '3.3.0-rc.3';
+const PREVIEW_WIRE = '3.3-rc.3';
 
 const CAPABILITIES = {
   adcp: {

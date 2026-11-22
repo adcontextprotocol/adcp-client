@@ -1,8 +1,8 @@
 {
   "repository": "adcontextprotocol/adcp",
   "pr": 9049,
-  "tag": null,
-  "sha": "a1cebda977083dbb5af53e436dd83654e7ee404a",
+  "tag": "v3.3.0-rc.3",
+  "sha": "c5f39849d5be6d8521d089ba35fe7faaa1b68380",
   "path": "static/compliance/source/test-vectors/reporting-subscriptions",
   "vendored": "Byte-for-byte copies of the listed files at the pinned commit (the README stays upstream). test/lib/reporting-subscription-coverage.test.js fails when a file's sha256 differs from this pin. Refresh with: npm run sync:reporting-subscription-vectors -- --commit <sha> [--from <spec checkout>]. The Python SDK runs the same vectors.",
   "sha256": {

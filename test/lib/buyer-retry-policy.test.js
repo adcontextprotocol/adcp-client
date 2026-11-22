@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 
 const { decideRetry, BuyerRetryPolicy } = require('../../dist/lib/utils/buyer-retry-policy');
 const { ErrorCodeValues } = require('../../dist/lib/types/enums.generated');
+const { STANDARD_ERROR_CODES } = require('../../dist/lib/types/error-codes');
 
 const err = (code, extra = {}) => ({
   code,
@@ -101,6 +102,22 @@ describe('decideRetry — operator-grade defaults', () => {
       const d = decideRetry(err('TERMS_REJECTED'));
       assert.equal(d.action, 'mutate-and-retry');
       assert.equal(d.reason, 'requote');
+    });
+
+    it('PROPOSAL_TERMS_CHANGED is a standard correctable code → mutate-and-retry (requote), then escalates at the cap', () => {
+      assert.ok('PROPOSAL_TERMS_CHANGED' in STANDARD_ERROR_CODES);
+      assert.equal(STANDARD_ERROR_CODES.PROPOSAL_TERMS_CHANGED.recovery, 'correctable');
+
+      const d = decideRetry(err('PROPOSAL_TERMS_CHANGED'));
+      assert.equal(d.action, 'mutate-and-retry');
+      assert.equal(d.reason, 'requote');
+      assert.notEqual(d.reason, 'validation');
+      assert.equal(d.sameIdempotencyKey, false);
+
+      assert.equal(decideRetry(err('PROPOSAL_TERMS_CHANGED'), { attempt: 1 }).action, 'mutate-and-retry');
+      const capped = decideRetry(err('PROPOSAL_TERMS_CHANGED'), { attempt: 2 });
+      assert.equal(capped.action, 'escalate');
+      assert.equal(capped.reason, 'attempts_exhausted');
     });
 
     it('UNSUPPORTED_FEATURE → mutate-and-retry (capability)', () => {

@@ -1347,6 +1347,20 @@ describe('Response Unwrapper', () => {
       );
     });
 
+    test('get_content_standards success body keeps advisory errors[]; errors-only stays terminal', () => {
+      const advisory = [{ code: 'STALE_RESPONSE', message: 'Standards may be out of date', recovery: 'terminal' }];
+      const success = { status: 'completed', standards_id: 's-1', errors: advisory };
+
+      assert.strictEqual(hasAdvisorySuccessPayload(success, 'get_content_standards'), true);
+      assert.strictEqual(isTerminalAdcpError(success, 'get_content_standards'), false);
+      assert.strictEqual(isAdcpSuccess(success, 'get_content_standards'), true);
+
+      const errorsOnly = { errors: advisory };
+      assert.strictEqual(hasAdvisorySuccessPayload(errorsOnly, 'get_content_standards'), false);
+      assert.strictEqual(isTerminalAdcpError(errorsOnly, 'get_content_standards'), true);
+      assert.strictEqual(isAdcpSuccess(errorsOnly, 'get_content_standards'), false);
+    });
+
     test('explicit terminal status wins over advisory success fields', () => {
       const terminalPayload = {
         status: 'failed',

@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.3.0-rc.0/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.3.0-rc.3/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.3.0-rc.0.
+ * Manifest-derived constants for AdCP 3.3.0-rc.3.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.3.0-rc.0/manifest.json` (adcp_version: 3.3.0-rc.0, generated_at:
- * 2026-11-16T19:45:12.091Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.3.0-rc.3/manifest.json` (adcp_version: 3.3.0-rc.3, generated_at:
+ * 2026-11-22T18:24:07.643Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -497,6 +497,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "The referenced proposal_id is not recognized by the seller — it belongs to a different tenant, was never issued, or was evicted from the seller's session cache before consumption. Distinct from `PROPOSAL_EXPIRED` (a known proposal whose `expires_at` window has passed) and `PROPOSAL_NOT_COMMITTED` (a known proposal still in `draft`).",
     recovery: "correctable",
     suggestion: "request and finalize a fresh proposal, then retry"
+  },
+  "PROPOSAL_TERMS_CHANGED": {
+    description: "The proposal_terms_digest on an accept_proposal request does not match the current terms_digest of the committed proposal named by proposal_id. The buyer recorded the digest before the seller committed different terms under the same proposal_id, sent a stale or wrong digest, or the proposal was already accepted under a different digest. Nothing was accepted: no MediaBuy was created, amended, or cancelled, and the proposal's status is unchanged. Sellers SHOULD set error.field to 'proposal_terms_digest'. Idempotency checks (`IDEMPOTENCY_CONFLICT`) and the proposal-state codes (`PROPOSAL_NOT_FOUND`, `PROPOSAL_EXPIRED`, `PROPOSAL_NOT_COMMITTED`, and `INVALID_STATE` for a declined or withdrawn proposal) take precedence; this code applies to a committed proposal, or to one already accepted under a different digest. Distinct from `CONFLICT` (a transient concurrent write; resending the same digest can never succeed here) and `INVALID_REQUEST` (the request is well-formed; it names a different version of the terms). Sellers on releases before 3.3 may report this case with another code, so buyers act on recovery and error.field.",
+    recovery: "correctable",
+    suggestion: "re-read the proposal; if it is accepted, do not accept again, and find the existing MediaBuy through get_media_buys; otherwise, if its current terms are acceptable, accept them with the current terms_digest and a fresh idempotency_key. Never resend the rejected digest"
   },
   "PROVENANCE_CLAIM_CONTRADICTED": {
     description: "Seller invoked a governance agent from `creative_policy.accepted_verifiers` via `get_creative_features` and the verifier's result contradicts the buyer's provenance claim - e.g., buyer claims `digital_source_type: digital_capture` but the AI-detection feature returns `ai_generated: true` above the seller's confidence threshold. Distinct from the `PROVENANCE_*_MISSING` family (structural absence) by being an active refutation. `error.details` SHOULD be limited to the audit-safe allowlist `{ agent_url, feature_id, claimed_value, observed_value, confidence }`; sellers MUST NOT forward arbitrary verifier extension fields, `detail_url`, or any verifier response shape that may carry cross-tenant or PII data. When the seller calls a different on-list agent than the buyer nominated (the seller is the verifier-of-record), `error.details.agent_url` is the agent the seller actually called and `error.details.substituted_for` SHOULD carry the buyer's nominated `agent_url` so the buyer can reconcile.",

@@ -199,6 +199,9 @@ const EXPLICIT_CODE_POLICY: Partial<Record<ErrorCode, CodePolicy>> = {
   TERMS_REJECTED: { action: 'mutate-and-retry', attemptCap: 3, reason: 'requote', baseDelayMs: 250 },
   REQUOTE_REQUIRED: { action: 'mutate-and-retry', attemptCap: 3, reason: 'requote', baseDelayMs: 250 },
   PROPOSAL_NOT_COMMITTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'requote', baseDelayMs: 250 },
+  // AdCP 3.3: re-read the proposal. If it is already accepted, find the MediaBuy instead of accepting
+  // again; otherwise accept the current terms_digest with a fresh idempotency_key.
+  PROPOSAL_TERMS_CHANGED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'requote', baseDelayMs: 250 },
   IO_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'requote', baseDelayMs: 250 },
 
   // Budget — adjust and retry.
