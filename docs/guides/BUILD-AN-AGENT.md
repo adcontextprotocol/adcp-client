@@ -739,16 +739,32 @@ createAdcpServerFromPlatform(platform, {
 `push_notification_config.url`, the server must have a terminal task-webhook
 delivery owner. Configure `webhooks` for framework delivery, or omit
 `push_notification_config` and let the buyer poll. A server without either
-returns structured `UNSUPPORTED_FEATURE` before creating a task or starting the
-handoff callback. The platform handler has already run to return its marker, so
-keep irreversible effects in the handoff callback; framework-managed proposal
+refuses with structured `UNSUPPORTED_FEATURE` before creating a task or starting
+the handoff callback. The refusal is thrown by the `ctx.handoffToTask(...)` call
+itself, so code after that call in your handler does not run. Call
+`handoffToTask` before work a refusal would waste, or ask first with
+`ctx.canHandoffToTask(options)`, which returns `{ ok: true }` or
+`{ ok: false, error }` with the same `AdcpError`. Framework-managed proposal
 reservations are unwound. Buyers changing the request must use a new
 `idempotency_key`. Synchronous responses are unaffected.
 
 This applies to `handoffToTask(..., { settlement: 'external' })` too: external
 producers have no SDK terminal-delivery path, so they must omit
 `push_notification_config` and use polling. A framework emitter does not make
-an externally settled task deliverable.
+an externally settled task deliverable. A handler that proxies to a remote
+agent should check before calling it:
+
+```ts
+requestProposals: async (req, ctx) => {
+  const availability = ctx.canHandoffToTask({ settlement: 'external' });
+  if (!availability.ok) throw availability.error; // before the remote agent starts work
+  const ack = await callRemoteAgent(req);
+  if (ack.status !== 'submitted') return ack;
+  return ctx.handoffToTask(async taskCtx => db.enqueuePending(taskCtx.taskRef, ack.task_id), {
+    settlement: 'external',
+  });
+};
+```
 
 **Production key storage.** For outbound request or webhook signing, prefer a KMS-backed `SigningProvider` over in-process JWKs. See [SIGNING-GUIDE.md § Production Key Storage](./SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full walkthrough including a reference GCP KMS adapter. Production webhook servers must provide a shared durable `deliveryStore` plus `deliveryRecovery`, a durable outbox that checkpoints the exact destination, payload/timestamp, authentication reference, and retry policy before delivery and recovers unsettled snapshots after restart. The SDK supplies PostgreSQL and Redis delivery stores, recovery backends, migrations, and a bounded recovery polling API; applications supply the KMS/secret adapter and operational scheduler. Tenant namespaces are derived from trusted resolved request context.
 

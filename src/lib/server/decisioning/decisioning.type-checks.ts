@@ -628,8 +628,12 @@ function _sales_platform_handler_results_accept_external_task_handoff() {
         },
         { settlement: 'external' }
       ),
-    createMediaBuy: async (_req, ctx) =>
-      ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' }),
+    createMediaBuy: async (_req, ctx) => {
+      const availability = ctx.canHandoffToTask({ settlement: 'external' });
+      // The refusal arm carries the exact AdcpError handoffToTask would throw.
+      if (!availability.ok) throw availability.error;
+      return ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' });
+    },
     updateMediaBuy: async (_buyId, _patch, ctx) =>
       ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' }),
     getMediaBuyDelivery: async () => ({

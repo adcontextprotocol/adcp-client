@@ -1267,3 +1267,54 @@ test('e2e: HITL handoff result strips ctx_metadata + implementation_config befor
     `tasks/get HITL result leaked ctx_metadata: ${taskJson.slice(0, 500)}`
   );
 });
+
+test('e2e: finalize intercept refuses an undeliverable push handoff at the call (#3761)', async () => {
+  const store = new InMemoryProposalStore();
+  store.putDraft({
+    proposalId: 'p1',
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: 'p1', name: 'draft' },
+  });
+  let afterHandoff = false;
+  let handoffRan = false;
+  const proposalManager = {
+    capabilities: { salesSpecialism: 'sales-guaranteed', finalize: true },
+    getProducts: async () => ({ products: [], proposals: [] }),
+    finalizeProposal: async (_req, ctx) => {
+      const handoff = ctx.handoffToTask(async () => {
+        handoffRan = true;
+        return { proposal: { proposal_id: 'p1' }, expiresAt: new Date(Date.now() + 3_600_000) };
+      });
+      afterHandoff = true;
+      return handoff;
+    },
+  };
+  const server = createAdcpServerFromPlatform(buildPlatform({ proposalManager, sales: {} }), {
+    name: 'e2e-finalize-call-time',
+    version: '1.0',
+    proposalStore: store,
+    idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+    resolveSessionKey: () => 'finalize-call-time',
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const result = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          buying_mode: 'refine',
+          refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
+          push_notification_config: { url: 'https://buyer.example/hook', operation_id: 'finalize-op' },
+        },
+      },
+    },
+    { authInfo }
+  );
+  assert.strictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  assert.strictEqual(result.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+  assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config');
+  assert.strictEqual(afterHandoff, false, 'finalizeProposal code after handoffToTask must not run');
+  assert.strictEqual(handoffRan, false);
+});

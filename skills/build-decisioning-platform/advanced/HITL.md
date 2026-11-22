@@ -35,14 +35,18 @@ framework fails closed with `UNSUPPORTED_FEATURE` unless SDK task webhooks are
 configured. Remove the push config for polling-only work and retry the modified
 request with a new `idempotency_key`.
 
-The platform method has already run when this boundary is checked—it returned
-the handoff marker—but the framework has not created a task or run the handoff
-callback. Keep irreversible effects in that callback. Proposal-backed framework
-reservations are unwound on this refusal.
+The refusal is thrown synchronously by the `ctx.handoffToTask(...)` call, before
+the framework creates a task or runs the handoff callback, and before any code
+after that call in your method. Let it propagate. To check without building a
+marker, call `ctx.canHandoffToTask(options)`: it returns `{ ok: true }` or
+`{ ok: false, error }`, where `error` is the same `AdcpError`. Check before a
+side effect the refusal would waste, such as calling a remote agent.
+Proposal-backed framework reservations are unwound on this refusal.
 
 External settlement (`handoffToTask(..., { settlement: 'external' })`) is
 polling-only. It cannot use `push_notification_config`, even when framework
 webhooks are configured, because its producer is not the SDK delivery path.
+`ctx.canHandoffToTask({ settlement: 'external' })` reports this refusal up front.
 
 ## When a tool is HITL-capable
 

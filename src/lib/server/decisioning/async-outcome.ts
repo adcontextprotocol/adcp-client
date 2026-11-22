@@ -243,6 +243,16 @@ export interface ExternalTaskHandoffOptions extends TaskHandoffOptions {
   readonly settlement: 'external';
 }
 
+/**
+ * Answer from `ctx.canHandoffToTask(options)`: whether the framework would
+ * accept a handoff of that kind for the current request. `error` is the exact
+ * structured refusal `ctx.handoffToTask(...)` would throw, so a handler can
+ * `throw availability.error` before it starts work it would otherwise waste.
+ *
+ * @public
+ */
+export type TaskHandoffAvailability = { readonly ok: true } | { readonly ok: false; readonly error: AdcpError };
+
 type AnyTaskHandoffOptions = TaskHandoffOptions | ExternalTaskHandoffOptions;
 
 type TaskHandoffEntry = {

@@ -5533,6 +5533,389 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(producerCalled, false);
   });
 
+  describe('call-time handoff refusal (#3761)', () => {
+    const EXTERNAL_PUSH_REFUSAL_MESSAGE =
+      'This seller cannot submit an externally settled task with push_notification_config because the SDK cannot deliver its terminal webhook. ' +
+      'Remove push_notification_config to use polling, or use framework task settlement with configured task webhooks.';
+    const PUSH = {
+      url: 'https://buyer.example/hook',
+      token: 'buyer-validation-token-0123456789',
+      operation_id: 'op-1',
+    };
+    const okEmitter = () => ({
+      emitted: [],
+      emit: async function (params) {
+        this.emitted.push(params);
+        return {
+          delivery_id: params.delivery_id,
+          idempotency_key: 'unused',
+          attempts: 1,
+          delivered: true,
+          errors: [],
+        };
+      },
+    });
+    const countingDurableRegistry = () => {
+      const registry = { ...createInMemoryTaskRegistry(), durability: 'durable' };
+      const create = registry.create.bind(registry);
+      registry.createCalls = 0;
+      registry.create = async args => {
+        registry.createCalls += 1;
+        return create(args);
+      };
+      return registry;
+    };
+
+    it('throws the structured refusal from ctx.handoffToTask before later handler code or the producer runs', async () => {
+      let thrown;
+      let remoteCalled = false;
+      let producerCalled = false;
+      const taskRegistry = countingDurableRegistry();
+      const emitter = okEmitter();
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            let handoff;
+            try {
+              handoff = ctx.handoffToTask(
+                async () => {
+                  producerCalled = true;
+                },
+                { settlement: 'external' }
+              );
+            } catch (error) {
+              thrown = error;
+              throw error;
+            }
+            // Stands in for the remote-agent call the refusal must preempt.
+            remoteCalled = true;
+            return handoff;
+          },
+        }),
+        {
+          name: 'call-time-external-refusal',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          taskRegistry,
+          // A framework emitter does not make an external task deliverable.
+          taskWebhookEmitter: { emit: params => emitter.emit(params) },
+        }
+      );
+
+      const result = await dispatchCreate(server, { push_notification_config: PUSH });
+
+      assert.ok(thrown instanceof AdcpError, 'handoffToTask must throw an AdcpError synchronously');
+      assert.strictEqual(thrown.code, 'UNSUPPORTED_FEATURE');
+      assert.strictEqual(thrown.recovery, 'correctable');
+      assert.strictEqual(thrown.field, 'push_notification_config');
+      assert.deepStrictEqual(thrown.details, { feature: 'task_webhook_delivery' });
+      assert.strictEqual(thrown.message, EXTERNAL_PUSH_REFUSAL_MESSAGE);
+      assert.strictEqual(remoteCalled, false, 'handler code after handoffToTask must not run');
+      assert.strictEqual(producerCalled, false);
+      assert.strictEqual(taskRegistry.createCalls, 0);
+      assert.strictEqual(emitter.emitted.length, 0);
+
+      assert.strictEqual(result.isError, true);
+      const wire = result.structuredContent.adcp_error;
+      assert.strictEqual(wire.code, 'UNSUPPORTED_FEATURE');
+      assert.strictEqual(wire.recovery, 'correctable');
+      assert.strictEqual(wire.field, 'push_notification_config');
+      assert.strictEqual(wire.message, EXTERNAL_PUSH_REFUSAL_MESSAGE);
+    });
+
+    it('ctx.canHandoffToTask returns the same refusal without creating a handoff', async () => {
+      const seen = [];
+      let remoteCalled = false;
+      const taskRegistry = countingDurableRegistry();
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            const external = ctx.canHandoffToTask({ settlement: 'external' });
+            seen.push({ external, framework: ctx.canHandoffToTask(), frameworkWithId: ctx.canHandoffToTask({}) });
+            if (!external.ok) throw external.error;
+            remoteCalled = true;
+            return ctx.handoffToTask(async () => {}, { settlement: 'external' });
+          },
+        }),
+        {
+          name: 'can-handoff-probe',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          taskRegistry,
+          taskWebhookEmitter: { emit: okEmitter().emit },
+        }
+      );
+
+      const refused = await dispatchCreate(server, { push_notification_config: PUSH });
+      assert.strictEqual(seen[0].external.ok, false);
+      assert.ok(seen[0].external.error instanceof AdcpError);
+      assert.strictEqual(seen[0].external.error.code, 'UNSUPPORTED_FEATURE');
+      assert.strictEqual(seen[0].external.error.field, 'push_notification_config');
+      assert.deepStrictEqual(seen[0].external.error.details, { feature: 'task_webhook_delivery' });
+      assert.strictEqual(seen[0].external.error.message, EXTERNAL_PUSH_REFUSAL_MESSAGE);
+      assert.deepStrictEqual(seen[0].framework, { ok: true }, 'framework settlement with task webhooks is deliverable');
+      assert.deepStrictEqual(seen[0].frameworkWithId, { ok: true });
+      assert.strictEqual(remoteCalled, false);
+      assert.strictEqual(refused.isError, true);
+      assert.strictEqual(refused.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+      assert.strictEqual(taskRegistry.createCalls, 0);
+
+      // Polling-only external settlement is still accepted.
+      const accepted = await dispatchCreate(server, { idempotency_key: '9f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d' });
+      assert.deepStrictEqual(seen[1].external, { ok: true });
+      assert.strictEqual(remoteCalled, true);
+      assert.notStrictEqual(accepted.isError, true, JSON.stringify(accepted.structuredContent));
+      assert.strictEqual(accepted.structuredContent.status, 'submitted');
+      assert.strictEqual(taskRegistry.createCalls, 1);
+    });
+
+    it('ctx.canHandoffToTask reports a framework handoff without a task webhook path, and validates options', async () => {
+      const seen = [];
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            seen.push(ctx.canHandoffToTask());
+            assert.throws(() => ctx.canHandoffToTask({ settlement: 'framework' }), /settlement must be 'external'/);
+            assert.throws(() => ctx.canHandoffToTask({ task_id: '' }), /task_id must be a non-empty string/);
+            return { media_buy_id: 'mb_sync' };
+          },
+        }),
+        {
+          name: 'can-handoff-framework-no-emitter',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+        }
+      );
+      const result = await dispatchCreate(server, { push_notification_config: PUSH });
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.strictEqual(seen[0].ok, false);
+      assert.strictEqual(seen[0].error.code, 'UNSUPPORTED_FEATURE');
+      assert.match(seen[0].error.message, /no task webhook delivery path is configured/);
+    });
+
+    it('keeps framework settlement with configured task webhooks unchanged', async () => {
+      const emitter = okEmitter();
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_framework_push' })),
+        }),
+        {
+          name: 'framework-push-unchanged',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          taskWebhookEmitter: { emit: params => emitter.emit(params) },
+        }
+      );
+      const result = await dispatchCreate(server, { push_notification_config: PUSH });
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.strictEqual(result.structuredContent.status, 'submitted');
+      await server.awaitTaskUnsafe(result.structuredContent.task_id);
+      assert.strictEqual(emitter.emitted.length, 1);
+      assert.strictEqual(emitter.emitted[0].url, PUSH.url);
+      assert.strictEqual(emitter.emitted[0].payload.status, 'completed');
+      assert.strictEqual(emitter.emitted[0].payload.operation_id, PUSH.operation_id);
+    });
+
+    it('refuses external settlement on a process-local registry at call time', async () => {
+      let remoteCalled = false;
+      let probeThrew = false;
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            try {
+              ctx.canHandoffToTask({ settlement: 'external' });
+            } catch (error) {
+              probeThrew = error.message;
+            }
+            const handoff = ctx.handoffToTask(async () => {}, { settlement: 'external' });
+            remoteCalled = true;
+            return handoff;
+          },
+        }),
+        {
+          name: 'call-time-process-local',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          taskRegistry: createInMemoryTaskRegistry(),
+        }
+      );
+      const result = await dispatchCreate(server);
+      assert.match(
+        String(probeThrew),
+        /durable task registry/,
+        'a misconfiguration is thrown, not reported as ok: false'
+      );
+      assert.strictEqual(remoteCalled, false);
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    });
+
+    it('arms the call-time refusal on the signals dispatcher too', async () => {
+      let remoteCalled = false;
+      const platform = buildHitlPlatform();
+      platform.sales = undefined;
+      platform.capabilities = { specialisms: ['signal-marketplace'], config: {} };
+      platform.signals = {
+        getSignals: async (_request, ctx) => {
+          const handoff = ctx.handoffToTask(async () => {}, { settlement: 'external' });
+          remoteCalled = true;
+          return handoff;
+        },
+        activateSignal: async () => ({ deployments: [] }),
+      };
+      const server = createAdcpServerFromPlatform(platform, {
+        name: 'signals-call-time-refusal',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry: countingDurableRegistry(),
+      });
+      const result = await dispatchGetSignals(server, { push_notification_config: PUSH });
+      assert.strictEqual(remoteCalled, false);
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config');
+    });
+
+    it('reaches a forwarded or spread ctx', async () => {
+      const seen = [];
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            const spread = { ...ctx };
+            const forward = c => c;
+            seen.push(spread.canHandoffToTask({ settlement: 'external' }));
+            assert.throws(
+              () => forward(spread).handoffToTask(async () => {}, { settlement: 'external' }),
+              err => err instanceof AdcpError && err.code === 'UNSUPPORTED_FEATURE'
+            );
+            return { media_buy_id: 'mb_sync' };
+          },
+        }),
+        {
+          name: 'spread-ctx',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          taskRegistry: countingDurableRegistry(),
+        }
+      );
+      const result = await dispatchCreate(server, { push_notification_config: PUSH });
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.strictEqual(seen[0].ok, false);
+      assert.strictEqual(seen[0].error.code, 'UNSUPPORTED_FEATURE');
+    });
+
+    it('keeps the dispatch-time refusal as a backstop for a marker the call-time check did not see', async () => {
+      // A context kept from an earlier request carries that request's armed
+      // check (no push config). Returning its marker from a push request must
+      // still be refused before task creation.
+      let keptCtx;
+      let producerCalled = false;
+      const taskRegistry = countingDurableRegistry();
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            if (!keptCtx) {
+              keptCtx = ctx;
+              return { media_buy_id: 'mb_first' };
+            }
+            return keptCtx.handoffToTask(
+              async () => {
+                producerCalled = true;
+              },
+              { settlement: 'external' }
+            );
+          },
+        }),
+        {
+          name: 'dispatch-backstop',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          taskRegistry,
+        }
+      );
+      const first = await dispatchCreate(server);
+      assert.notStrictEqual(first.isError, true, JSON.stringify(first.structuredContent));
+      const second = await dispatchCreate(server, {
+        idempotency_key: 'af4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
+        push_notification_config: PUSH,
+      });
+      assert.strictEqual(second.isError, true);
+      assert.strictEqual(second.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+      assert.strictEqual(second.structuredContent.adcp_error.message, EXTERNAL_PUSH_REFUSAL_MESSAGE);
+      assert.strictEqual(taskRegistry.createCalls, 0);
+      assert.strictEqual(producerCalled, false);
+    });
+
+    it('refuses the proposal-backed external handoff at the call, ahead of the push refusal', async () => {
+      const { InMemoryProposalStore } = require('../dist/lib/server/index.js');
+      const store = new InMemoryProposalStore();
+      store.putDraft({
+        proposalId: 'prop_1',
+        accountId: 'acc_1',
+        recipes: new Map(),
+        proposalPayload: { proposal_id: 'prop_1' },
+      });
+      store.commit('prop_1', {
+        expectedAccountId: 'acc_1',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        proposalPayload: { proposal_id: 'prop_1', proposal_status: 'committed' },
+      });
+      let thrown;
+      let remoteCalled = false;
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          createMediaBuy: async (_req, ctx) => {
+            try {
+              const handoff = ctx.handoffToTask(async () => {}, { settlement: 'external' });
+              remoteCalled = true;
+              return handoff;
+            } catch (error) {
+              thrown = error;
+              throw error;
+            }
+          },
+        }),
+        {
+          name: 'proposal-external-call-time',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          proposalStore: store,
+          taskRegistry: countingDurableRegistry(),
+        }
+      );
+      const result = await dispatchCreate(server, { proposal_id: 'prop_1', push_notification_config: PUSH });
+      assert.strictEqual(remoteCalled, false);
+      assert.ok(thrown, JSON.stringify(result.structuredContent));
+      assert.strictEqual(thrown.code, 'INVALID_REQUEST');
+      assert.strictEqual(thrown.field, 'proposal_id');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'proposal_id');
+      const record = store.get('prop_1', { expectedAccountId: 'acc_1' });
+      assert.strictEqual(record.state, 'committed', 'the reservation is released when the call is refused');
+    });
+
+    it('refuses a wholesale get_products handoff at the call', async () => {
+      let remoteCalled = false;
+      let probe;
+      const server = createAdcpServerFromPlatform(
+        buildHitlPlatform({
+          getProducts: async (_req, ctx) => {
+            probe = ctx.canHandoffToTask();
+            const handoff = ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' }));
+            remoteCalled = true;
+            return handoff;
+          },
+        }),
+        { name: 'wholesale-call-time', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+      );
+      const result = await dispatchGetProducts(server, { buying_mode: 'wholesale', brief: undefined });
+      assert.strictEqual(probe.ok, false);
+      assert.strictEqual(probe.error.field, 'buying_mode');
+      assert.strictEqual(remoteCalled, false);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'buying_mode');
+    });
+  });
+
   it('polling-only external handoff producer failure rejects the initial invocation without exposing queue details', async () => {
     const errors = [];
     let failedTaskRef;
@@ -10355,5 +10738,169 @@ describe('signed-requests specialism forwarding (#1886)', () => {
         validation: { requests: 'off', responses: 'off' },
       })
     );
+  });
+});
+
+describe('call-time handoff refusal on every handoff dispatch site (#3761)', () => {
+  const PUSH = { url: 'https://buyer.example/hook', operation_id: 'op-call-time' };
+  const AUTH = {
+    authInfo: { token: 'redacted', scopes: [], credential: { kind: 'api_key', key_id: 'buyer-key-1' } },
+  };
+  const durableRegistry = () => ({ ...createInMemoryTaskRegistry(), durability: 'durable' });
+
+  // Each handler builds an external handoff, then records that it went on to
+  // "call the remote agent". The refusal must stop it before that line.
+  function externalThenRemote(state) {
+    return (...args) => {
+      const ctx = args[args.length - 1];
+      const handoff = ctx.handoffToTask(async () => {}, { settlement: 'external' });
+      state.remoteCalled = true;
+      return handoff;
+    };
+  }
+
+  const cases = [
+    {
+      tool: 'request_proposals',
+      platform: state =>
+        buildPlatform({ mediaBuyLifecycle: { requestProposals: async (...a) => externalThenRemote(state)(...a) } }),
+      args: { idempotency_key: 'call-time-request-proposals-01', brief: 'test', account: { account_id: 'acc_1' } },
+      auth: AUTH,
+    },
+    {
+      tool: 'refine_proposals',
+      platform: state =>
+        buildPlatform({
+          mediaBuyLifecycle: {
+            proposalRefinement: { supported_dimensions: [] },
+            refineProposals: async (...a) => externalThenRemote(state)(...a),
+          },
+        }),
+      args: { idempotency_key: 'call-time-refine-proposals-01', refinements: [] },
+      auth: AUTH,
+    },
+    {
+      tool: 'get_products',
+      platform: state =>
+        buildPlatform({
+          sales: { ...buildPlatform().sales, getProducts: async (...a) => externalThenRemote(state)(...a) },
+        }),
+      args: { buying_mode: 'brief', brief: 'premium', account: { account_id: 'acc_1' } },
+    },
+    {
+      tool: 'update_media_buy',
+      platform: state =>
+        buildPlatform({
+          sales: { ...buildPlatform().sales, updateMediaBuy: async (...a) => externalThenRemote(state)(...a) },
+        }),
+      args: {
+        media_buy_id: 'mb_1',
+        idempotency_key: '33333333-3333-3333-3333-333333333334',
+        account: { account_id: 'acc_1' },
+      },
+    },
+    {
+      tool: 'sync_creatives',
+      label: 'sync_creatives (sales)',
+      platform: state =>
+        buildPlatform({
+          sales: { ...buildPlatform().sales, syncCreatives: async (...a) => externalThenRemote(state)(...a) },
+        }),
+      args: {
+        idempotency_key: '44444444-4444-4444-4444-444444444444',
+        creatives: [],
+        account: { account_id: 'acc_1' },
+      },
+    },
+    {
+      tool: 'sync_creatives',
+      label: 'sync_creatives (creative)',
+      platform: state => ({
+        capabilities: { specialisms: ['creative-template'], config: {} },
+        accounts: { resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }) },
+        creative: {
+          buildCreativeLegacy: async () => ({ manifest_id: 'mf_1', assets: [] }),
+          syncCreatives: async (...a) => externalThenRemote(state)(...a),
+        },
+      }),
+      args: {
+        idempotency_key: '55555555-5555-5555-5555-555555555555',
+        creatives: [],
+        account: { account_id: 'acc_1' },
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    it(`${testCase.label ?? testCase.tool}: refuses an external push handoff before later handler code`, async () => {
+      const state = { remoteCalled: false };
+      const server = createAdcpServerFromPlatform(testCase.platform(state), {
+        name: `call-time-${testCase.tool}`,
+        version: '1.0.0',
+        adcpVersion: '3.2.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry: durableRegistry(),
+      });
+      const result = await server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: { name: testCase.tool, arguments: { ...testCase.args, push_notification_config: PUSH } },
+        },
+        testCase.auth
+      );
+      assert.strictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config');
+      assert.strictEqual(state.remoteCalled, false, 'handler code after handoffToTask must not run');
+    });
+  }
+
+  it('get_products without a resolved account refuses at the call with the missing-account error', async () => {
+    const state = { remoteCalled: false };
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      accounts: { ...base.accounts, resolution: 'explicit', resolve: async () => null },
+      sales: { ...base.sales, getProducts: async (...a) => externalThenRemote(state)(...a) },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'call-time-no-account',
+      version: '1.0.0',
+      adcpVersion: '3.2.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskRegistry: durableRegistry(),
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { buying_mode: 'brief', brief: 'x', push_notification_config: PUSH } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.notStrictEqual(result.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE', 'account error comes first');
+    assert.strictEqual(state.remoteCalled, false);
+  });
+
+  it('canHandoffToTask refuses on a tool that does not accept a task handoff', async () => {
+    let probe;
+    const platform = buildPlatform({
+      sales: {
+        ...buildPlatform().sales,
+        getMediaBuyDelivery: async (_req, ctx) => {
+          probe = ctx.canHandoffToTask();
+          return { media_buy_deliveries: [] };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'probe-unarmed',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_media_buy_delivery', arguments: { account: { account_id: 'acc_1' } } },
+    });
+    assert.ok(probe, 'getMediaBuyDelivery must run');
+    assert.strictEqual(probe.ok, false);
+    assert.strictEqual(probe.error.code, 'UNSUPPORTED_FEATURE');
+    assert.deepStrictEqual(probe.error.details, { feature: 'task_handoff' });
   });
 });

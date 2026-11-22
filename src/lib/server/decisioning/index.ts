@@ -23,6 +23,7 @@ export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-out
 export type {
   ExternalTaskHandoffOptions,
   ExternalTaskHandoffContext,
+  TaskHandoffAvailability,
   TaskHandoffOptions,
   TaskHandoffProgress,
   TaskHandoffContext,
