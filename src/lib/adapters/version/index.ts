@@ -40,6 +40,7 @@ export type { VersionAdapter, VersionDrift } from './types';
 export type { AccountIdentityDowngrade, RequestTranslation, ResponseTranslation, TranslationStep } from './translate';
 export { translationSteps } from './translate';
 export {
+  advertisesExactAdcpRelease,
   capabilityDiscoveryEnvelope,
   negotiateAdcpRelease,
   isNegotiationFailure,
