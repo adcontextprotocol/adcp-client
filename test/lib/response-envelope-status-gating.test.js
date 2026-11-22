@@ -181,6 +181,44 @@ describe('3.2.x serves the published arms without status: they keep validating',
     }
     assert.strictEqual(omitsEnvelopeStatusForRelease('list_products', undefined), false);
   });
+
+  // adcp-client#3751: judged by the served release's own schema, the payload
+  // stays as sent; only the SDK pin's Zod view is shown the implied status.
+  test('a view for the served release schema leaves a 3.2 response as sent', () => {
+    assert.strictEqual(
+      prepareResponseForSchemaValidation('decline_proposals', declineBody, '3.2', '3.2').status,
+      undefined
+    );
+    assert.strictEqual(
+      prepareResponseForSchemaValidation('decline_proposals', declineBody, '3.2', LEGACY).status,
+      undefined
+    );
+  });
+
+  test('the storyboard strict check grades a 3.2 decline_proposals answer as its schema does', () => {
+    const { runValidations } = require('../../dist/lib/testing/index.js');
+    const grade = (data, served) =>
+      runValidations([{ check: 'response_schema', description: 'Response matches decline-proposals-response.json' }], {
+        taskName: 'decline_proposals',
+        adcpVersion: served,
+        responseAdcpVersion: served,
+        responseSchemaRef: 'media-buy/decline-proposals-response.json',
+        strictResponseSchemaValidation: true,
+        taskResult: { success: true, data },
+      })[0];
+
+    const resultsOnly = grade(declineBody, '3.2');
+    assert.strictEqual(resultsOnly.passed, true, resultsOnly.error);
+    // 3.2.x forbids status on the synchronous arm (`not: required status`).
+    assert.strictEqual(grade({ ...declineBody, status: 'completed' }, '3.2').passed, false);
+
+    if (pinComposes) {
+      // A release that composes the envelope requires status.
+      assert.strictEqual(grade(declineBody, CURRENT).passed, false);
+      const withStatus = grade({ ...declineBody, status: 'completed' }, CURRENT);
+      assert.strictEqual(withStatus.passed, true, withStatus.error);
+    }
+  });
 });
 
 describe('envelope handling in the schema loader', () => {
