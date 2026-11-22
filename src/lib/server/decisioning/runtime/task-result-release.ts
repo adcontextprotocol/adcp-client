@@ -5,11 +5,9 @@
  * webhook has the same shape whichever path settles the task.
  */
 import { downgradeResponse, type VersionDrift } from '../../../adapters/version';
-import { parseAdcpRelease } from '../../../adapters/version/negotiate';
 import { translationSteps } from '../../../adapters/version/translate';
 import { projectErrorsForRelease } from '../../error-release-projection';
 import { hasSchemaBundle } from '../../../validation/schema-loader';
-import { ADCP_VERSION } from '../../../version';
 
 /**
  * Convert `result` for task type `tool` from `fromVersion` (the server's
@@ -30,12 +28,13 @@ export function projectTaskResultForRelease(
 /**
  * Convert a bound task's result for its webhook, from the server's release
  * recorded at handoff to the served release. The settling worker may run a
- * later SDK than the one that bound the task, and the SDK packages one
- * preview per minor line, so a recorded preview may have no schemas here. The
- * result is then converted from the release this SDK ships on the same minor
- * line, as a `get_task_status` poll converts a stored result from the
- * server's current release. Throws when a release the conversion needs has no
- * schemas, rather than return a result the served release cannot express.
+ * later SDK than the one that bound the task. Previews are not additive over
+ * each other and the SDK packages one per minor line, so a result shaped by a
+ * preview this SDK no longer packages has no faithful conversion: another
+ * release's schemas would keep a field the preview later withdrew. Throws
+ * when any release the conversion needs is not packaged, rather than return a
+ * result the served release cannot express. A stable release resolves to its
+ * minor line's packaged bundle.
  */
 export function projectBoundTaskResultForRelease(
   tool: string,
@@ -43,27 +42,15 @@ export function projectBoundTaskResultForRelease(
   recordedServerVersion: string,
   servedVersion: string
 ): unknown {
-  if (translationSteps(recordedServerVersion, servedVersion).length === 0) return result;
-  const fromVersion = shippedSourceRelease(recordedServerVersion);
-  if (fromVersion === undefined) {
-    throw new Error(`No AdCP ${recordedServerVersion} schemas (or another release on its minor line) are available`);
-  }
-  for (const step of translationSteps(fromVersion, servedVersion)) {
+  const steps = translationSteps(recordedServerVersion, servedVersion);
+  if (steps.length === 0) return result;
+  for (const step of steps) {
     for (const version of [step.upper, step.lower]) {
-      if (!hasSchemaBundle(version)) throw new Error(`No AdCP ${version} schemas are available`);
+      if (!hasSchemaBundle(version)) throw new Error(`AdCP ${version} schemas are not packaged in this SDK`);
     }
   }
-  return projectTaskResultForRelease(tool, result, { fromVersion, toVersion: servedVersion }).data;
-}
-
-function shippedSourceRelease(recorded: string): string | undefined {
-  if (hasSchemaBundle(recorded)) return recorded;
-  const release = parseAdcpRelease(recorded);
-  const current = parseAdcpRelease(ADCP_VERSION);
-  if (!release) return undefined;
-  if (current && current.major === release.major && current.minor === release.minor && hasSchemaBundle(ADCP_VERSION)) {
-    return ADCP_VERSION;
-  }
-  const line = `${release.major}.${release.minor}`;
-  return hasSchemaBundle(line) ? line : undefined;
+  return projectTaskResultForRelease(tool, result, {
+    fromVersion: recordedServerVersion,
+    toVersion: servedVersion,
+  }).data;
 }

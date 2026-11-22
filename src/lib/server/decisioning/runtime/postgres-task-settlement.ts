@@ -574,9 +574,9 @@ export function createPostgresTaskSettlementCoordinator(
     // converted as the in-process task webhook converts it (DR-0024). The
     // task row keeps the server-release result, which a poll converts on
     // read. When this SDK cannot convert it, no new webhook is checkpointed
-    // (see the outbox insert below); an exact retry of a settlement that is
-    // already checkpointed still succeeds, because the intent fingerprint
-    // covers the source result rather than its conversion.
+    // (here and at the outbox insert below); an exact retry of a settlement
+    // that is already checkpointed still succeeds, because the intent
+    // fingerprint covers the source result rather than its conversion.
     let webhookResult = result;
     let webhookResultError: unknown;
     if (resultAdcpVersion !== undefined && clonedPush.servedAdcpVersion !== undefined) {
@@ -603,6 +603,7 @@ export function createPostgresTaskSettlementCoordinator(
         'Terminal task has no atomic webhook delivery checkpoint; refusing to create a duplicate notification'
       );
     }
+    if (webhookResultError !== undefined && !observedOutbox) unconvertibleWebhookResult(webhookResultError);
     const existingTimestamp =
       observedOutbox?.state === 'pending' ? observedOutbox.snapshot.payload.timestamp : undefined;
     const payload: Record<string, unknown> = {
@@ -613,7 +614,10 @@ export function createPostgresTaskSettlementCoordinator(
       status: clonedTerminal.status,
       timestamp: typeof existingTimestamp === 'string' ? existingTimestamp : new Date().toISOString(),
       protocol: protocolForTool(observed.tool),
-      result: webhookResult,
+      // An unconverted result is never checkpointed. Leave it out, so the
+      // snapshot prepared only to fingerprint a retry is not held to the
+      // snapshot size limit by a result that was converted when checkpointed.
+      ...(webhookResultError === undefined && { result: webhookResult }),
       ...(clonedPush.token !== undefined && { token: clonedPush.token }),
       ...(clonedTerminal.status === 'failed' && { message: error!.message }),
       ...(clonedTerminal.status === 'rejected' && reason !== undefined && { message: reason }),
@@ -722,13 +726,7 @@ export function createPostgresTaskSettlementCoordinator(
       }
 
       if (!existing) {
-        if (webhookResultError !== undefined) {
-          throw new TaskPushSettlementConfigurationError(
-            `Task terminal result cannot be converted to AdCP ${clonedPush.servedAdcpVersion}, the release the ` +
-              'request was served at; settle with an SDK that packages the schemas the conversion needs',
-            { cause: webhookResultError }
-          );
-        }
+        if (webhookResultError !== undefined) unconvertibleWebhookResult(webhookResultError);
         const write = await client.query(
           `INSERT INTO ${outboxTable} (
              publisher_scope, tenant_scope, delivery_id, snapshot, snapshot_fingerprint,
@@ -1021,13 +1019,20 @@ function taskPushIntentFingerprint(
 ): string {
   const { timestamp: _generatedTimestamp, ...storedPayload } = snapshot.payload;
   const payload = structuredClone(storedPayload);
-  if (Object.hasOwn(payload, 'result')) {
-    payload.result = sanitizeTaskResultForWire(
-      sourceResult === undefined ? payload.result : structuredClone(sourceResult),
-      ref
-    );
+  if (sourceResult !== undefined) {
+    payload.result = sanitizeTaskResultForWire(structuredClone(sourceResult), ref);
+  } else if (Object.hasOwn(payload, 'result')) {
+    payload.result = sanitizeTaskResultForWire(payload.result, ref);
   }
   return taskPushIntentFingerprintForPayload(snapshot, payload);
+}
+
+function unconvertibleWebhookResult(cause: unknown): never {
+  throw new TaskPushSettlementConfigurationError(
+    'Task terminal result cannot be converted to the AdCP release the request was served at. Settle it with an ' +
+      'SDK that packages the AdCP release recorded at handoff and every release down to the served one',
+    { cause }
+  );
 }
 
 function taskPushLegacyIntentFingerprint(snapshot: StoredWebhookDeliverySnapshot, storedResult: unknown): string {
