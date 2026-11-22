@@ -1,5 +1,20 @@
 # Changelog
 
+## 17.0.0-beta.34
+
+### Patch Changes
+
+- f4cd027: `ctx.handoffToTask(...)` now refuses a handoff the framework cannot dispatch when it is called, not after the handler returns (#3761). For a request that carries `push_notification_config`, an external handoff (`{ settlement: 'external' }`), or a framework handoff on a server without task webhooks, throws the same structured `AdcpError` (`UNSUPPORTED_FEATURE`, `recovery: 'correctable'`, `field: 'push_notification_config'`, `details: { feature: 'task_webhook_delivery' }`) from the `handoffToTask` call, so handler code after it, such as a call to a remote agent, does not run. The tool's other request-determined handoff refusals move to the call too, checked first in dispatch order: a wholesale `get_products` / `get_signals` request, an external handoff on a proposal-backed `create_media_buy`, and a request with no resolved account. External settlement on a process-local registry also fails at the call. Because the check runs at the call, a handler that builds a marker eagerly and then answers synchronously (`const h = ctx.handoffToTask(fn); if (fast) return sync; return h;`) now fails with `UNSUPPORTED_FEATURE` when the request carries `push_notification_config` and the server has no task webhooks. Call `handoffToTask` only on the path that returns it. New `ctx.canHandoffToTask(options)` returns `{ ok: true }` or `{ ok: false, error }` with that error, so a proxying handler can check before it starts remote work. On a tool that does not accept a handoff, it returns `ok: false`. Dispatch still runs the same check as a backstop. `RequestContext` gains the required `canHandoffToTask` member, so a hand-built `RequestContext` test double needs it too.
+- 07262da: `createAdcpServer` and `createAdcpServerFromPlatform` now convert errors and task results that the framework builds itself to the release a caller is served, as DR-0024 requires. Before, a caller pinned below the server's release could receive fields its release does not define. Examples are AdCP 3.3's `error.mutation_outcome` on a 3.2 caller, and 3.2's `error.buyer_reason` on a 3.1 caller.
+  - **Errors.** Every error is converted against `core/error.json`, one release step at a time, with the same schema diff that task responses get. That covers the envelope `adcp_error` and each `errors[]` item, whether the framework built it (validation, version, idempotency, account and refusal errors) or a handler returned or threw it. The conversion runs before the two-layer mirror, so both layers agree. Declared-input rejections and the `tasks_get` polling tool get it too.
+  - **Error-classified responses.** A handler's `errors[]` arm, and any response whose `status` is `failed`, `rejected` or `canceled`, now go through the same response conversion as successful responses. Before, they skipped it.
+  - **Task polls.** `get_task_status` and `tasks_get` now convert the stored `result` of failed and rejected tasks, not only completed ones. They also convert a failed task's `error` summary.
+  - **Task webhooks.** The terminal task webhook's `result` is converted from the server's release to the release the originating request was served. That covers completed and rejected results, and the `errors[]` of a failed task.
+  - **`mutation_outcome` on `errors[]`.** At the server's release, a handler's standard-code `errors[]` item and the `errors[]` the framework mirrors from `adcp_error` now keep `mutation_outcome`. Before, both dropped it, so the two error layers disagreed.
+  - **Reporting.** Every removal is reported to `onVersionTranslation`, and in task webhooks to the logger, as `version_downgrade_fields_dropped` drift.
+
+  Responses to callers at the server's release are unchanged.
+
 ## 17.0.0-beta.33
 
 ### Minor Changes
