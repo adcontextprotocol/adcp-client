@@ -14,7 +14,7 @@
  */
 
 import { adcpMinorLine, parseAdcpRelease } from './negotiate';
-import { projectToolPayload, type ProjectionDrop } from './schema-projection';
+import { projectSchemaPayload, projectToolPayload, type ProjectionDrop } from './schema-projection';
 import type { VersionAdapter, VersionDrift } from './types';
 
 /**
@@ -266,6 +266,33 @@ export function convertResponseToRelease<T>(
       ...droppedDrift(toolName, projected.dropped, step),
       message:
         `${toolName}: removed ${projected.dropped.length} response field(s) AdCP ` +
+        `${adcpMinorLine(step.lower) ?? step.lower} cannot express: ${projected.dropped.map(d => d.path).join(', ')}.`,
+    });
+  }
+  return { data: current as T, drifts };
+}
+
+/**
+ * Server side: convert one AdCP error object (`core/error.json`: an envelope
+ * `adcp_error`, or an `errors[]` item) from the server's release down to the
+ * served release, removing and reporting what each older release's error
+ * schema does not declare. `toolName` only labels the drift.
+ */
+export function convertErrorToRelease<T>(
+  toolName: string,
+  error: T,
+  options: { fromVersion: string; toVersion: string }
+): { data: T; drifts: VersionDrift[] } {
+  const drifts: VersionDrift[] = [];
+  let current: unknown = error;
+  for (const step of translationSteps(options.fromVersion, options.toVersion)) {
+    const projected = projectSchemaPayload('core/error.json', current, step.upper, step.lower);
+    if (projected.dropped.length === 0) continue;
+    current = projected.value;
+    drifts.push({
+      ...droppedDrift(toolName, projected.dropped, step),
+      message:
+        `${toolName}: removed ${projected.dropped.length} error field(s) AdCP ` +
         `${adcpMinorLine(step.lower) ?? step.lower} cannot express: ${projected.dropped.map(d => d.path).join(', ')}.`,
     });
   }
