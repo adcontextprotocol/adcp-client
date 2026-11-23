@@ -11,7 +11,7 @@ const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server
 const { InMemoryStateStore } = require('../../dist/lib/server/state-store.js');
 const { downgradeResponse } = require('../../dist/lib/adapters/version/index.js');
 const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
-const { ADCP_VERSION } = require('../../dist/lib/index.js');
+const { ADCP_VERSION, adcpError } = require('../../dist/lib/index.js');
 const { toReleasePrecisionVersion } = require('../../dist/lib/version.js');
 
 // A bare '3.3' pin may be served at 3.2, so the 3.3 caller pins the served release.
@@ -167,14 +167,11 @@ describe('other decision tasks through createAdcpServer', () => {
     it(`acquire_rights ${rightsStatus}: 3.0 reads status, ${SERVED} keeps rights_status`, async () => {
       const at30 = await call(rightsServer(rightsStatus), 'acquire_rights', rightsArgs('3.0'));
       const sc = at30.structuredContent;
-      // A 3.0 `rejected` is classified as an error by the dispatcher, like a 3.0 create_media_buy rejection.
       assert.equal(sc.status, rightsStatus, JSON.stringify(sc));
       assert.equal('rights_status' in sc, false);
-      if (rightsStatus !== 'rejected') {
-        assert.ok(!at30.isError, JSON.stringify(sc));
-        const valid = validateResponse('acquire_rights', sc, '3.0');
-        assert.equal(valid.valid, true, JSON.stringify(valid.issues));
-      }
+      assert.ok(!at30.isError, JSON.stringify(sc));
+      const valid = validateResponse('acquire_rights', sc, '3.0');
+      assert.equal(valid.valid, true, JSON.stringify(valid.issues));
 
       const at33 = await call(rightsServer(rightsStatus), 'acquire_rights', rightsArgs(SERVED));
       assert.equal(at33.structuredContent.rights_status, rightsStatus);
@@ -313,5 +310,112 @@ describe('3.0 decision-status adapters', () => {
     const input = { plans: [{ plan_id: 'p', status: 'active', entries: [{ id: 'o', type: 'outcome' }] }] };
     const { data } = down('get_plan_audit_logs', input);
     assert.equal(data, input);
+  });
+});
+
+describe('a 3.0 decision status is a result, not a failed task', () => {
+  const REJECTED = { rights_id: 'rt_1', brand_id: 'brand_1', rights_status: 'rejected', reason: 'Not available.' };
+  const rightsArgs = (version, key) => ({
+    adcp_version: version,
+    rights_id: 'rt_1',
+    buyer: { domain: 'buyer.example.com' },
+    campaign: { description: 'x', uses: ['likeness'] },
+    revocation_webhook: { url: 'https://buyer.example.com/hook', authentication: { schemes: ['HMAC-SHA256'] } },
+    idempotency_key: key,
+  });
+  const rejectedRightsServer = (calls, body = REJECTED) =>
+    buildServer(ADCP_VERSION, {
+      brandRights: {
+        acquireRights: async () => {
+          calls.n++;
+          return body;
+        },
+      },
+    });
+
+  for (const [label, pin, field] of [
+    ['3.0', '3.0', 'status'],
+    [SERVED, SERVED, 'rights_status'],
+  ]) {
+    it(`acquire_rights rejected at ${label}: a same-key retry replays without re-running the handler`, async () => {
+      const calls = { n: 0 };
+      const server = rejectedRightsServer(calls);
+      const args = rightsArgs(pin, newKey());
+      const first = await call(server, 'acquire_rights', args);
+      const second = await call(server, 'acquire_rights', args);
+      assert.equal(calls.n, 1);
+      assert.notEqual(first.structuredContent.replayed, true);
+      assert.equal(second.structuredContent.replayed, true, JSON.stringify(second.structuredContent));
+      assert.equal(first.structuredContent[field], 'rejected');
+      assert.equal(second.structuredContent[field], 'rejected');
+    });
+  }
+
+  for (const [label, pin] of [
+    ['3.0', '3.0'],
+    [SERVED, SERVED],
+  ]) {
+    it(`acquire_rights rejected without reason is a VALIDATION_ERROR at ${label}`, async () => {
+      const { reason: _reason, ...noReason } = REJECTED;
+      const res = await call(rejectedRightsServer({ n: 0 }, noReason), 'acquire_rights', rightsArgs(pin, newKey()));
+      assert.equal(res.isError, true, JSON.stringify(res.structuredContent));
+      assert.equal(res.structuredContent.adcp_error?.code, 'VALIDATION_ERROR', JSON.stringify(res.structuredContent));
+    });
+  }
+
+  const mediaBuyServer = (calls, create) =>
+    buildServer(ADCP_VERSION, {
+      mediaBuy: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => {
+          calls.n++;
+          return create();
+        },
+      },
+    });
+  const createArgs = (version, key) => ({
+    adcp_version: version,
+    account: { account_id: 'acc_1' },
+    promoted_offering: 'x',
+    packages: [],
+    idempotency_key: key,
+  });
+
+  it('create_media_buy rejected at 3.0: wire status is rejected and a same-key retry replays', async () => {
+    const calls = { n: 0 };
+    const server = mediaBuyServer(calls, () => ({
+      media_buy_id: 'mb_1',
+      media_buy_status: 'rejected',
+      confirmed_at: '2026-04-29T00:00:00Z',
+      revision: 1,
+      packages: [],
+    }));
+    const args = createArgs('3.0', newKey());
+    const first = await call(server, 'create_media_buy', args);
+    const second = await call(server, 'create_media_buy', args);
+    assert.equal(first.structuredContent.status, 'rejected', JSON.stringify(first.structuredContent));
+    assert.equal(second.structuredContent.status, 'rejected');
+    assert.equal(calls.n, 1);
+    assert.equal(second.structuredContent.replayed, true, JSON.stringify(second.structuredContent));
+  });
+
+  it('a real error at 3.0 is not cached: a same-key retry runs the handler again', async () => {
+    const calls = { n: 0 };
+    const server = buildServer(ADCP_VERSION, {
+      brandRights: {
+        acquireRights: async () => {
+          calls.n++;
+          return adcpError('POLICY_VIOLATION', { message: 'no', recovery: 'terminal' });
+        },
+      },
+    });
+    const args = rightsArgs('3.0', newKey());
+    const first = await call(server, 'acquire_rights', args);
+    const second = await call(server, 'acquire_rights', args);
+    assert.equal(first.isError, true);
+    assert.equal(second.isError, true);
+    assert.equal(first.structuredContent.adcp_error.code, 'POLICY_VIOLATION');
+    assert.equal(calls.n, 2);
+    assert.notEqual(second.structuredContent.replayed, true);
   });
 });
