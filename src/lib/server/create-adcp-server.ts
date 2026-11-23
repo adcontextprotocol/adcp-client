@@ -2851,13 +2851,27 @@ function hasUncacheableSyncAccountRejection(response: McpToolResponse): boolean 
   });
 }
 
-function shouldCacheIdempotencyResponse(response: McpToolResponse): boolean {
+/** An `adcp_error` envelope, without reading `status`. */
+function isErrorEnvelope(response: McpToolResponse): boolean {
+  if (response.isError === true) return true;
+  const sc = response.structuredContent;
+  return sc !== null && typeof sc === 'object' && 'adcp_error' in sc;
+}
+
+/**
+ * `failed` is the handler outcome classified before the response was
+ * converted to an older release, where a decision can occupy `status`.
+ * The finished response is still checked for an error envelope: `finalize`
+ * adds `adcp_error` to a payload-only `errors[]` arm, and a response enhancer
+ * can mark an error.
+ */
+function shouldCacheIdempotencyResponse(response: McpToolResponse, failed = isErrorResponse(response)): boolean {
   // COMMITTED_RESOURCE_PURGED is an error envelope but also a durable
   // committed-outcome tombstone. Releasing its claim would let an exact retry
   // execute a financial mutation that already committed.
   return (
     isAdcpErrorCode(response, 'COMMITTED_RESOURCE_PURGED') ||
-    (!isErrorResponse(response) && !hasUncacheableSyncAccountRejection(response))
+    (!failed && !isErrorEnvelope(response) && !hasUncacheableSyncAccountRejection(response))
   );
 }
 
@@ -8032,8 +8046,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // Only stamp `replayed: true` on success envelopes — the
               // field is defined for successful replays, and transient
               // error cache entries (VALIDATION_ERROR from strict-mode
-              // drift) are retry-storm guards, not spec replays.
-              if (!isErrorResponse(cachedFormatted) || isAdcpErrorCode(cachedFormatted, 'COMMITTED_RESOURCE_PURGED')) {
+              // drift) are retry-storm guards, not spec replays. Those are
+              // error envelopes; a cached `status` can be a 3.0 decision
+              // such as a rejected `acquire_rights`, which is a success.
+              if (!isErrorEnvelope(cachedFormatted) || isAdcpErrorCode(cachedFormatted, 'COMMITTED_RESOURCE_PURGED')) {
                 stampReplayed(cachedFormatted);
               }
               // The cached envelope has already passed through the adopter's
@@ -8881,6 +8897,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
           }
 
+          // Classify the handler's outcome in the server's release, where a
+          // task's own decision is not its status. AdCP 3.0 carries some
+          // decisions in `status` (a rejected `acquire_rights` or media buy),
+          // and that business outcome is still validated and cached for
+          // replay like any other completed task (adcp-client#3743).
+          const handlerFailed = isErrorResponse(formatted);
+
           // Convert the handler's response down to the served release before
           // validating it against that release. Every removed field is logged.
           // Error-classified bodies (an `errors[]` arm, a failed, rejected or
@@ -8923,7 +8946,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // Runs on the structured payload the handler produced. Errors
           // have their own envelope (`adcp_error`) and are skipped here —
           // their shape is enforced by the adcpError() builder.
-          if (responseValidationMode !== 'off' && !isErrorResponse(formatted)) {
+          if (responseValidationMode !== 'off' && !handlerFailed) {
             const payload = formatted.structuredContent;
             const outcome = validateFrameworkPayload(
               toolName,
@@ -9028,7 +9051,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // replay" contract. Caching the formatted envelope pins those
           // fields to their first-execution values.
           if (idempotencyCheck && idempotency) {
-            if (shouldCacheIdempotencyResponse(formatted)) {
+            if (shouldCacheIdempotencyResponse(formatted, handlerFailed)) {
               try {
                 // Strip `context` before caching — it's a per-request echo
                 // field (buyer's correlation_id), not part of the cached

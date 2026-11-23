@@ -1,4 +1,10 @@
 import { createMediaBuyAdapter, updateMediaBuyAdapter, downgradeCreativeTrackers } from './brand-fields';
+import {
+  acquireRightsAdapter,
+  checkGovernanceAdapter,
+  getPlanAuditLogsAdapter,
+  reportPlanOutcomeAdapter,
+} from './decision-status';
 import { getProductsAdapter } from './get-products';
 import { getSignalsAdapter } from './get-signals';
 import { syncAccountsAdapter } from './sync-accounts';
@@ -15,4 +21,8 @@ export const v30Adapters: ReadonlyArray<VersionAdapter> = [
   getProductsAdapter,
   getSignalsAdapter,
   syncAccountsAdapter,
+  checkGovernanceAdapter,
+  reportPlanOutcomeAdapter,
+  getPlanAuditLogsAdapter,
+  acquireRightsAdapter,
 ];
