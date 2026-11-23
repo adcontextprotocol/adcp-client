@@ -4578,8 +4578,10 @@ function injectEnvelopeStatusIntoResponse(response: McpToolResponse, toolName: s
   // `decline_proposals` have no `status` (closed arms), so a seller serving
   // 3.2 or earlier omits it; from 3.3 the envelope is composed, `status` is
   // required and is preserved or stamped like every other task response.
+  // A submitted task keeps its `status`: 3.2 `decline_proposals` answers an
+  // async decline with `compact-task-submitted`, which requires it.
   if (omitsEnvelopeStatusForRelease(toolName, servedVersion)) {
-    if ('status' in sc) {
+    if ('status' in sc && sc.status !== 'submitted') {
       const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
       delete sc.status;
       syncContentJsonText(response, sc, mirrorsStructuredContent);
@@ -4598,6 +4600,17 @@ function injectEnvelopeStatusIntoResponse(response: McpToolResponse, toolName: s
   const mirrorsStructuredContent = contentTextMirrorsStructuredContent(response, sc);
   sc.status = status;
   syncContentJsonText(response, sc, mirrorsStructuredContent);
+}
+
+/**
+ * Apply the served release's envelope `status` rules: split a media-buy
+ * lifecycle out of `status`, then stamp or remove the task status. Idempotent,
+ * so the success path can run it before response validation and `finalize`
+ * can run it again.
+ */
+function applyServedEnvelopeStatus(response: McpToolResponse, toolName: string, servedVersion: string): void {
+  normalizeMediaBuyStatusCollision(response, toolName, servedVersion);
+  injectEnvelopeStatusIntoResponse(response, toolName, servedVersion);
 }
 
 const MEDIA_BUY_RESPONSE_TOOLS_REQUIRING_STATUS_SPLIT = new Set([
@@ -6907,8 +6920,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // the allowlist-filtered envelope; BEFORE context/version
           // injection so those run on the final two-layer payload.
           enrichErrorTwoLayer(response, toolName, requestRelease.validationVersion);
-          normalizeMediaBuyStatusCollision(response, toolName, requestRelease.validationVersion);
-          injectEnvelopeStatusIntoResponse(response, toolName, requestRelease.validationVersion);
+          applyServedEnvelopeStatus(response, toolName, requestRelease.validationVersion);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, requestRelease.wireVersion);
           return response;
@@ -8898,6 +8910,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 drifts: downgraded.drifts,
               });
             }
+          }
+          // The status above was stamped at the server's release. Restamp it at
+          // the served release before validating, as `finalize` will, so the
+          // payload validated is the one sent: 3.2 `decline_proposals` has no
+          // completed `status` (adcp-client#3754).
+          if (!isErrorResponse(formatted)) {
+            applyServedEnvelopeStatus(formatted, toolName, requestRelease.validationVersion);
           }
 
           // --- Response schema validation (opt-in) ---
