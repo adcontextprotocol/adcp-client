@@ -1,5 +1,31 @@
 # Changelog
 
+## 17.0.0-beta.37
+
+### Minor Changes
+
+- 56d566e: Reliable Reporting buyer reconciliation: expected periods can describe a configuration registered with `scope: { all_media_buys: true }`, where the seller freezes the buy set at `period.end`.
+  - `ExpectedReportingPeriod.membership` (`ExpectedReportingMembership`) is `{ kind: 'media_buy_ids' }` by default, which keeps today's exact `mediaBuyIds` and `coverage` equality, or `{ kind: 'all_media_buys', requiredMediaBuyIds? }`. An `all_media_buys` expectation omits `mediaBuyIds` and `coverage`; sending either, an unknown kind, or a `requiredMediaBuyIds` that is not an array of non-empty strings throws `ReportingReconciliationError` `INVALID_EXPECTED_MEMBERSHIP` before any seller read. Such a period matches an obligation on its identity alone, so an existing obligation is never reported missing. To be definitive, the obligation has to carry valid coverage evidence whose partition equals its own `media_buy_ids`, with `scope_resolved_at` and `coverage.evaluated_at` at the instant `period.end` (compared by value, not spelling), and meet `coverageRequirement`. A failure is a blocking reason on the matched obligation (`SCOPE_CUTOFF_MISMATCH`, `COVERAGE_SCOPE_MISMATCH`, `COVERAGE_REQUIREMENT_NOT_MET`). An empty set with full coverage is an explicitly evaluated zero-buy period.
+  - A `requiredMediaBuyIds` entry the seller omitted is a blocking per-buy issue on `ObligationReconciliation.issues` (`ReportingMembershipIssueV1`, code `REPORTING_SCOPE_MEMBER_MISSING`, `blocking: true`). The obligation still matches and is consumed for the buys it lists, but the result's `definitive` is false, and the omitted buy must never be marked reported or covered for that period.
+  - Type change: `ExpectedReportingPeriod` is now a union over membership, so reading `mediaBuyIds` or `coverage` from an un-narrowed value gives `string[] | undefined` and `ExpectedReportingCoverage | undefined`. Objects built with `mediaBuyIds` and `coverage` type-check unchanged. `SubscriptionExpectationTemplateV1` does not accept `membership`, and `toExpectedReportingPeriodsV1` strips one a template supplies at runtime, because subscription obligations always carry a buyer-computed set.
+  - `@adcp/reporting-storage`: the GCS delivery fence binds an exact buy set and coverage, so it does not support `all_media_buys`. The adapter still refuses an expectation without `mediaBuyIds` and `coverage` with `HOST_CALLBACK_FAILED`, as before. An expectation that sends `all_media_buys` together with those pins now fails the fence with `CONTENT_CONFLICT`.
+
+### Patch Changes
+
+- 275d30d: A caller pinned to AdCP 3.0 now receives each task's decision in the 3.0 `status` field. AdCP 3.1 renamed these fields off `status` without changing their values. Converting a response down to 3.0 dropped the 3.1 field and left the task status `completed` in its place. The affected fields are `check_governance` `verdict`, `report_plan_outcome` `outcome_state`, `acquire_rights` `rights_status`, and each `get_plan_audit_logs` check entry's `verdict`. A 3.0 caller could not tell `approved` from `denied`, and strict response validation rejected the response.
+
+  The 3.0 conversion now moves the decision into `status` and reports a `pre31_decision_status_moved` drift. A response that carries only the task status `completed` and no decision has that status removed, so it is never read as a decision. The conversion applies to tool responses, task polls and task webhooks.
+
+  The dispatcher now classifies a handler's outcome before the response is converted, at the server's release, where a decision is not the task status. At 3.0, a business outcome in `status` (a rejected `acquire_rights`, or a media buy whose `media_buy_status` is `rejected` or `canceled`) used to read as a failed task. Strict response validation skipped it, and its idempotency claim was released, so a retry with the same key ran the handler again. Such a response is now validated, cached and replayed with `replayed: true`, as it already was at 3.1 and later.
+
+  Fixes #3743.
+
+- 07d1193: `createAdcpServer` now validates a response with the envelope `status` of the release it serves, not the server's own release. The status was stamped at the server's release before the response was converted down, and the served release's rules applied only after validation. So a 3.2 `decline_proposals` answer carried `status: "completed"`, which the 3.2 schema forbids, and failed response validation with `VALIDATION_ERROR`. The status is now set at the served release before validation, the same way `finalize` sets it.
+
+  A submitted task also keeps `status: "submitted"` at 3.2. The 3.2 `decline_proposals` async arm (`compact-task-submitted`) requires it, but the 3.2 status removal deleted it.
+
+  Fixes #3754.
+
 ## 17.0.0-beta.36
 
 ### Minor Changes
