@@ -1,6 +1,6 @@
 import { canonicalize } from '@adcp/sdk';
 import type { ReportingManagedDeliveryAdapterV1 } from '../managed/runtime';
-import type { ExpectedReportingPeriod } from '@adcp/sdk/reporting/consumer';
+import type { ExpectedReportingCoverage, ExpectedReportingPeriod } from '@adcp/sdk/reporting/consumer';
 import { ReportingGcsFenceError } from './errors';
 type DeliveryInput = Parameters<ReportingManagedDeliveryAdapterV1['deliver']>[0];
 
@@ -15,6 +15,12 @@ export function assertExpectedBinding(input: DeliveryInput, expected: ExpectedRe
     /^[a-fA-F0-9]{64}$/.test(a) &&
     /^[a-fA-F0-9]{64}$/.test(b) &&
     a.toLowerCase() === b.toLowerCase();
+  // The fence pins an exact buy set and coverage. An all_media_buys expectation
+  // has neither, so it cannot bind a delivery here.
+  const pinnedMediaBuyIds = expected.mediaBuyIds;
+  const pinnedCoverage = expected.coverage;
+  if (expected.membership?.kind === 'all_media_buys' || !pinnedMediaBuyIds || !pinnedCoverage)
+    throw new ReportingGcsFenceError('CONTENT_CONFLICT');
   if (
     expected.verificationProfile !== binding.verification_profile ||
     expected.destinationRef !== binding.destination_ref ||
@@ -28,7 +34,7 @@ export function assertExpectedBinding(input: DeliveryInput, expected: ExpectedRe
     expected.requiredFinality !== obligation.requiredFinality ||
     expected.periodStart !== r.period.start ||
     expected.periodEnd !== r.period.end ||
-    canonicalize([...expected.mediaBuyIds].sort()) !== canonicalize([...r.media_buy_ids].sort()) ||
+    canonicalize([...pinnedMediaBuyIds].sort()) !== canonicalize([...r.media_buy_ids].sort()) ||
     expected.reportDefinitionUri !== r.report_definition_uri ||
     !shaMatches(r.report_definition_sha256, expected.reportDefinitionSha256) ||
     expected.schemaUri !== r.schema_uri ||
@@ -42,13 +48,13 @@ export function assertExpectedBinding(input: DeliveryInput, expected: ExpectedRe
         expected.officialFinality.basis !== r.finality_basis))
   )
     throw new ReportingGcsFenceError('CONTENT_CONFLICT');
-  const coverage = (value: typeof expected.coverage) =>
+  const coverage = (value: ExpectedReportingCoverage) =>
     Object.fromEntries(
       Object.entries(value)
         .filter(([key]) => !['evaluated_at', 'limitations'].includes(key))
         .map(([key, item]) => [key, Array.isArray(item) ? [...item].sort() : item])
     );
-  if (canonicalize(coverage(expected.coverage)) !== canonicalize(coverage(r.coverage)))
+  if (canonicalize(coverage(pinnedCoverage)) !== canonicalize(coverage(r.coverage)))
     throw new ReportingGcsFenceError('CONTENT_CONFLICT');
   if (expected.verificationProfile === 'canonical_digest') {
     const pin = expected.canonicalization,

@@ -69,6 +69,9 @@ export function reportingSubscriptionVersionRecordsV1(input: {
 /**
  * Per-offering pins an obligation must match beyond what coverage determines.
  *
+ * Subscription obligations carry the buy set coverage computed, so they always use the default
+ * `media_buy_ids` membership; `membership` is not a template pin.
+ *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export type SubscriptionExpectationTemplateV1 = Omit<
@@ -76,6 +79,7 @@ export type SubscriptionExpectationTemplateV1 = Omit<
   | 'deliveryConfigId'
   | 'deliveryConfigVersion'
   | 'reportDefinitionId'
+  | 'membership'
   | 'mediaBuyIds'
   | 'periodStart'
   | 'periodEnd'

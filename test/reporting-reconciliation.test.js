@@ -3575,3 +3575,286 @@ test('portable inspection fixture: observed row mismatch submits one exact rejec
   assert.equal(result.submittedReceipts[0].status, 'rejected');
   assert.deepEqual(result.submittedReceipts[0].rejection_codes, ['ROW_COUNT_MISMATCH']);
 });
+
+// ---------------------------------------------------------------------------
+// all_media_buys membership: the seller freezes the buy set at period.end, so
+// the buyer cannot pin it in advance.
+// ---------------------------------------------------------------------------
+
+function allMediaBuysExpectation(membership = {}, overrides = {}) {
+  const expected = expectedPeriod(overrides);
+  delete expected.mediaBuyIds;
+  delete expected.coverage;
+  return { ...expected, membership: { kind: 'all_media_buys', ...membership } };
+}
+
+function frozenCoverage(mediaBuyIds, packageIds = mediaBuyIds.map((_, index) => `package-${index + 1}`)) {
+  return {
+    status: 'full',
+    evaluated_at: period.end,
+    media_buy_ids: [...mediaBuyIds],
+    fully_covered_media_buy_ids: [...mediaBuyIds],
+    partially_covered_media_buy_ids: [],
+    unsupported_media_buy_ids: [],
+    unknown_media_buy_ids: [],
+    package_ids: [...packageIds],
+    covered_package_ids: [...packageIds],
+    unsupported_package_ids: [],
+    unknown_package_ids: [],
+    limitations: [],
+  };
+}
+
+/** Rewrite the seller's frozen membership on the obligation and its revision. */
+function withFrozenMembership(raw, mediaBuyIds, coverageEvidence = frozenCoverage(mediaBuyIds)) {
+  raw.periods[0].media_buy_ids = [...mediaBuyIds];
+  raw.periods[0].coverage = structuredClone(coverageEvidence);
+  for (const item of raw.revisions) {
+    item.media_buy_ids = [...mediaBuyIds];
+    item.coverage = structuredClone(coverageEvidence);
+  }
+  return raw;
+}
+
+async function reconcileAllMediaBuys(mediaBuyIds, expected) {
+  let recordedReceipt;
+  const contexts = [];
+  const client = {
+    async getReportingStatus() {
+      return withFrozenMembership(response(recordedReceipt ? [recordedReceipt] : []), mediaBuyIds);
+    },
+    async syncReportingReceipts(request) {
+      recordedReceipt = { ...request.receipts[0], received_at: '2026-09-02T00:01:00Z' };
+      return { status: 'completed', results: [{ result: 'recorded', receipt: recordedReceipt }] };
+    },
+  };
+  const result = await reconcileReporting({
+    client,
+    request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
+    expectedPeriods: [expected],
+    now: new Date('2026-09-03T00:00:00Z'),
+    async inspect(context) {
+      contexts.push(context);
+      return { rowCount: 7, controlTotals: totals, canonicalContentDigest: digest };
+    },
+  });
+  return { result, contexts };
+}
+
+test('all_media_buys: a seller-frozen set of N buys matches without a pinned buy set or coverage', async () => {
+  const expected = allMediaBuysExpectation();
+  const { result, contexts } = await reconcileAllMediaBuys(['buy-1', 'buy-2', 'buy-3'], expected);
+
+  assert.equal(result.definitive, true, JSON.stringify(result.obligations));
+  assert.deepEqual(result.missingExpectedPeriods, []);
+  assert.equal(result.submittedReceipts.length, 1);
+  assert.equal(result.submittedReceipts[0].status, 'accepted');
+  assert.equal(contexts.length, 1, 'the consumer contract resolves, so the revision is inspected');
+  assert.equal(contexts[0].expected.membership.kind, 'all_media_buys');
+  assert.deepEqual(contexts[0].obligation.media_buy_ids, ['buy-1', 'buy-2', 'buy-3']);
+  assert.ok(!('issues' in result.obligations[0]), 'no required buys, no membership issues');
+});
+
+test('all_media_buys: an explicitly evaluated zero-buy period with full coverage matches', async () => {
+  const { result } = await reconcileAllMediaBuys([], allMediaBuysExpectation());
+
+  assert.equal(result.definitive, true, JSON.stringify(result.obligations));
+  assert.deepEqual(result.missingExpectedPeriods, []);
+  assert.equal(result.submittedReceipts.length, 1);
+  assert.equal(result.submittedReceipts[0].status, 'accepted');
+});
+
+test('all_media_buys: a required buy the seller omitted is a blocking per-buy issue, not a failed match', async () => {
+  const { result } = await reconcileAllMediaBuys(
+    ['buy-1', 'buy-2'],
+    allMediaBuysExpectation({ requiredMediaBuyIds: ['buy-2', 'buy-9'] })
+  );
+
+  // The obligation still matches and is consumed for the buys it lists.
+  assert.deepEqual(result.missingExpectedPeriods, []);
+  assert.deepEqual(result.obligations[0].reasons, []);
+  assert.equal(result.obligations[0].definitive, true);
+  assert.equal(result.submittedReceipts.length, 1);
+  assert.equal(result.submittedReceipts[0].status, 'accepted');
+  // The omitted buy is exposed and blocks a definitive result.
+  assert.equal(result.definitive, false, 'a seller omission is never accepted silently');
+  assert.deepEqual(
+    result.obligations[0].issues.map(issue => [issue.code, issue.blocking, issue.mediaBuyId]),
+    [['REPORTING_SCOPE_MEMBER_MISSING', true, 'buy-9']]
+  );
+  assert.equal(typeof result.obligations[0].issues[0].message, 'string');
+});
+
+test('all_media_buys: required buys that are all frozen raise no issue', async () => {
+  const { result } = await reconcileAllMediaBuys(
+    ['buy-1', 'buy-2'],
+    allMediaBuysExpectation({ requiredMediaBuyIds: ['buy-1', 'buy-2'] })
+  );
+  assert.equal(result.definitive, true, JSON.stringify(result.obligations));
+  assert.ok(!('issues' in result.obligations[0]));
+});
+
+test('all_media_buys: a required buy omitted from a zero-buy period is blocking', () => {
+  const raw = withFrozenMembership(response([]), []);
+  const result = evaluateReportingLedger(
+    asLedger(raw),
+    [allMediaBuysExpectation({ requiredMediaBuyIds: ['buy-1'] })],
+    reportingNow
+  );
+  assert.deepEqual(result.missingExpectedPeriods, []);
+  assert.equal(result.definitive, false);
+  assert.deepEqual(
+    result.obligations[0].issues.map(issue => issue.mediaBuyId),
+    ['buy-1']
+  );
+});
+
+test('all_media_buys: coverage evaluated at another instant than scope_resolved_at does not match', () => {
+  const raw = withFrozenMembership(response([]), ['buy-1', 'buy-2'], {
+    ...frozenCoverage(['buy-1', 'buy-2']),
+    evaluated_at: '2026-09-01T00:00:01Z',
+  });
+  assert.equal(raw.periods[0].scope_resolved_at, period.end);
+
+  const result = evaluateReportingLedger(asLedger(raw), [allMediaBuysExpectation()], reportingNow);
+  assert.equal(result.definitive, false);
+  assert.equal(result.missingExpectedPeriods.length, 1);
+  assert.ok(result.obligations[0].reasons.includes('COVERAGE_SCOPE_MISMATCH'));
+});
+
+test('all_media_buys: a scope resolved after period.end does not match (equality, not >=)', () => {
+  const late = '2026-09-01T00:00:01Z';
+  const raw = withFrozenMembership(response([]), ['buy-1', 'buy-2'], {
+    ...frozenCoverage(['buy-1', 'buy-2']),
+    evaluated_at: late,
+  });
+  raw.periods[0].scope_resolved_at = late;
+
+  const result = evaluateReportingLedger(asLedger(raw), [allMediaBuysExpectation()], reportingNow);
+  assert.equal(result.missingExpectedPeriods.length, 1);
+  assert.ok(result.obligations[0].reasons.includes('SCOPE_CUTOFF_MISMATCH'));
+});
+
+test('all_media_buys: a coverage partition that does not sum to its denominator does not match', () => {
+  const broken = {
+    ...frozenCoverage(['buy-1', 'buy-2']),
+    fully_covered_media_buy_ids: ['buy-1'],
+  };
+  const raw = withFrozenMembership(response([]), ['buy-1', 'buy-2'], broken);
+
+  const result = evaluateReportingLedger(
+    asLedger(raw),
+    [allMediaBuysExpectation({}, { coverageRequirement: 'allow_partial' })],
+    reportingNow
+  );
+  assert.equal(result.missingExpectedPeriods.length, 1);
+  assert.ok(result.obligations[0].reasons.includes('COVERAGE_SCOPE_MISMATCH'));
+});
+
+test('all_media_buys: partial and none coverage fail a full coverage requirement', () => {
+  const partial = {
+    ...frozenCoverage(['buy-1', 'buy-2']),
+    status: 'partial',
+    fully_covered_media_buy_ids: ['buy-1'],
+    partially_covered_media_buy_ids: ['buy-2'],
+    covered_package_ids: ['package-1'],
+    unsupported_package_ids: ['package-2'],
+  };
+  const none = {
+    ...frozenCoverage(['buy-1', 'buy-2']),
+    status: 'none',
+    fully_covered_media_buy_ids: [],
+    unsupported_media_buy_ids: ['buy-1', 'buy-2'],
+    covered_package_ids: [],
+    unsupported_package_ids: ['package-1', 'package-2'],
+  };
+  for (const evidence of [partial, none]) {
+    const raw = withFrozenMembership(response([]), ['buy-1', 'buy-2'], evidence);
+    const full = evaluateReportingLedger(asLedger(raw), [allMediaBuysExpectation()], reportingNow);
+    assert.equal(full.missingExpectedPeriods.length, 1, evidence.status);
+    assert.ok(full.obligations[0].reasons.includes('COVERAGE_REQUIREMENT_NOT_MET'), evidence.status);
+
+    const allowPartial = evaluateReportingLedger(
+      asLedger(raw),
+      [allMediaBuysExpectation({}, { coverageRequirement: 'allow_partial' })],
+      reportingNow
+    );
+    assert.deepEqual(allowPartial.missingExpectedPeriods, [], evidence.status);
+  }
+});
+
+test('all_media_buys: a denominator not frozen at period.end does not match', () => {
+  const raw = withFrozenMembership(response([]), ['buy-1', 'buy-2'], {
+    ...frozenCoverage(['buy-1', 'buy-2']),
+    evaluated_at: '2026-08-31T23:59:59Z',
+  });
+  raw.periods[0].scope_resolved_at = '2026-08-31T23:59:59Z';
+
+  const result = evaluateReportingLedger(asLedger(raw), [allMediaBuysExpectation()], reportingNow);
+  assert.equal(result.definitive, false);
+  assert.equal(result.missingExpectedPeriods.length, 1);
+  assert.ok(result.obligations[0].reasons.includes('SCOPE_CUTOFF_MISMATCH'));
+});
+
+test('all_media_buys: a coverage partition that differs from the frozen buy set does not match', () => {
+  const raw = withFrozenMembership(response([]), ['buy-1', 'buy-2'], frozenCoverage(['buy-1'], ['package-1']));
+
+  const result = evaluateReportingLedger(asLedger(raw), [allMediaBuysExpectation()], reportingNow);
+  assert.equal(result.definitive, false);
+  assert.equal(result.missingExpectedPeriods.length, 1);
+  assert.ok(result.obligations[0].reasons.includes('COVERAGE_SCOPE_MISMATCH'));
+});
+
+test('all_media_buys: unknown coverage fails a full coverage requirement as it does today', () => {
+  const unknownCoverage = {
+    ...frozenCoverage(['buy-1', 'buy-2']),
+    status: 'unknown',
+    fully_covered_media_buy_ids: [],
+    unknown_media_buy_ids: ['buy-1', 'buy-2'],
+    covered_package_ids: [],
+    unknown_package_ids: ['package-1', 'package-2'],
+  };
+  const raw = withFrozenMembership(response([]), ['buy-1', 'buy-2'], unknownCoverage);
+
+  const full = evaluateReportingLedger(asLedger(raw), [allMediaBuysExpectation()], reportingNow);
+  assert.equal(full.definitive, false);
+  assert.equal(full.missingExpectedPeriods.length, 1);
+  assert.ok(full.obligations[0].reasons.includes('COVERAGE_REQUIREMENT_NOT_MET'));
+  assert.ok(!full.obligations[0].reasons.includes('EXPECTED_COVERAGE_MISMATCH'));
+
+  const partial = evaluateReportingLedger(
+    asLedger(raw),
+    [allMediaBuysExpectation({}, { coverageRequirement: 'allow_partial' })],
+    reportingNow
+  );
+  assert.deepEqual(partial.missingExpectedPeriods, []);
+  assert.ok(!partial.obligations[0].reasons.includes('COVERAGE_REQUIREMENT_NOT_MET'));
+});
+
+test('media_buy_ids membership (explicit or default) keeps exact buy-set and coverage equality', () => {
+  const ledger = asLedger(response([]));
+  const implicit = evaluateReportingLedger(ledger, [expectedPeriod()], reportingNow);
+  const explicit = evaluateReportingLedger(
+    ledger,
+    [expectedPeriod({ membership: { kind: 'media_buy_ids' } })],
+    reportingNow
+  );
+  assert.deepEqual(explicit.obligations, implicit.obligations);
+  assert.deepEqual(explicit.missingExpectedPeriods.length, implicit.missingExpectedPeriods.length);
+  assert.ok(!('issues' in implicit.obligations[0]));
+
+  const otherCampaign = evaluateReportingLedger(
+    ledger,
+    [expectedPeriod({ membership: { kind: 'media_buy_ids' }, mediaBuyIds: ['buy-1', 'buy-3'] })],
+    reportingNow
+  );
+  assert.equal(otherCampaign.missingExpectedPeriods.length, 1);
+
+  const reshapedCoverage = evaluateReportingLedger(
+    asLedger(withFrozenMembership(response([]), ['buy-1', 'buy-2', 'buy-3'])),
+    [expectedPeriod()],
+    reportingNow
+  );
+  assert.equal(reshapedCoverage.missingExpectedPeriods.length, 1);
+  assert.ok(reshapedCoverage.obligations[0].reasons.includes('EXPECTED_COVERAGE_MISMATCH'));
+});

@@ -238,13 +238,15 @@ interface ExpectedReportingPeriodBase {
   reportDefinitionId: string;
   feedPurpose: ReportingObligation['feed_purpose'];
   reportingProfile: string;
-  mediaBuyIds: string[];
   destinationRef: string;
   deliveryMethod: ReportingMaterialization['method'];
   requiredFinality: ReportingObligation['required_finality'];
   reconciliationMode: ReportingObligation['reconciliation_mode'];
+  /**
+   * `full` requires the obligation's `coverage.status` to be `full`, under
+   * either membership. An explicitly evaluated zero-buy period (`[]`) is full.
+   */
   coverageRequirement: 'full' | 'allow_partial';
-  coverage: ExpectedReportingCoverage;
   reportDefinitionUri: string;
   reportDefinitionSha256: string;
   schemaVersion: string;
@@ -322,11 +324,113 @@ interface ExpectedCanonicalization {
   primaryKeys: string[];
 }
 
+/**
+ * Which media buys an expected period covers, and so how an obligation's
+ * `media_buy_ids` are matched.
+ *
+ * - `media_buy_ids` (the default when `membership` is omitted): the buyer
+ *   registered an exact buy set (`scope: { media_buy_ids }`), so the
+ *   obligation must carry exactly `mediaBuyIds`, and its coverage must equal
+ *   the expected `coverage`.
+ * - `all_media_buys`: the buyer registered `scope: { all_media_buys: true }`,
+ *   so the seller freezes the set at `period.end`. The buyer cannot pin it in
+ *   advance: the obligation instead has to carry valid coverage evidence whose
+ *   partition equals its own `media_buy_ids`, resolved at `period.end`, and
+ *   meet `coverageRequirement`. `[]` is an explicitly evaluated zero-buy
+ *   period. Set `requiredMediaBuyIds` only to buys that unambiguously belong
+ *   (seller-confirmed before `period.start`, flight covering the whole
+ *   period). One the seller did not freeze is a blocking per-buy issue in
+ *   `ObligationReconciliation.issues` (`REPORTING_SCOPE_MEMBER_MISSING`): the
+ *   obligation still matches for the buys it lists, but the result is not
+ *   definitive and the omitted buy must never be treated as reported.
+ */
+export type ExpectedReportingMembership =
+  | { kind: 'media_buy_ids' }
+  | {
+      kind: 'all_media_buys';
+      /** Buys that unambiguously belong to the period; each one the seller omits is a blocking issue. */
+      requiredMediaBuyIds?: string[];
+    };
+
+type ExpectedReportingMembershipPins =
+  | {
+      membership?: { kind: 'media_buy_ids' };
+      mediaBuyIds: string[];
+      coverage: ExpectedReportingCoverage;
+    }
+  | {
+      membership: Extract<ExpectedReportingMembership, { kind: 'all_media_buys' }>;
+      /** The seller chooses the set; there is none to pin. */
+      mediaBuyIds?: never;
+      /** The seller's coverage is validated against its own frozen set instead. */
+      coverage?: never;
+    };
+
 export type ExpectedReportingPeriod = ExpectedReportingPeriodBase &
+  ExpectedReportingMembershipPins &
   (
     | { verificationProfile: 'canonical_digest'; canonicalization: ExpectedCanonicalization }
     | { verificationProfile: 'manifest_checksums' | 'native_commit'; canonicalization?: never }
   );
+
+/**
+ * A blocking per-buy finding about an obligation's seller-frozen membership.
+ *
+ * The obligation still matches its expected period and stays definitive for
+ * the buys it lists, because that is what the seller attested. The named buy
+ * is not reported and not covered for this period: never mark it reported or
+ * fully covered from this obligation. Any such issue makes
+ * `ReportingReconciliationResult.definitive` false.
+ */
+export interface ReportingMembershipIssueV1 {
+  /** A `requiredMediaBuyIds` entry is absent from the obligation's frozen `media_buy_ids`. */
+  code: 'REPORTING_SCOPE_MEMBER_MISSING';
+  blocking: true;
+  mediaBuyId: string;
+  message: string;
+}
+
+/** The exact buy set and coverage the buyer pinned, or `undefined` when the seller chooses them. */
+function pinnedMembership(
+  expected: ExpectedReportingPeriod
+): { mediaBuyIds: string[]; coverage: ExpectedReportingCoverage } | undefined {
+  if (expected.membership?.kind === 'all_media_buys') return undefined;
+  return { mediaBuyIds: expected.mediaBuyIds!, coverage: expected.coverage! };
+}
+
+/**
+ * An `all_media_buys` obligation's own evidence: valid coverage whose
+ * denominator is the obligation's frozen set, resolved and evaluated at
+ * `period.end`. The checks `selectCurrent` reports as `SCOPE_CUTOFF_MISMATCH`
+ * and `COVERAGE_SCOPE_MISMATCH`.
+ */
+function sellerFrozenMembershipValid(obligation: ManagedReportingObligation): boolean {
+  return (
+    Array.isArray(obligation.media_buy_ids) &&
+    isReportingCoverageEvidence(obligation.coverage) &&
+    obligation.scope_resolved_at === obligation.period?.end &&
+    obligation.coverage.evaluated_at === obligation.scope_resolved_at &&
+    sameStringSet(obligation.coverage.media_buy_ids, obligation.media_buy_ids)
+  );
+}
+
+function membershipIssues(
+  obligation: ManagedReportingObligation,
+  expected: ExpectedReportingPeriod | undefined
+): ReportingMembershipIssueV1[] {
+  const membership = expected?.membership;
+  if (membership?.kind !== 'all_media_buys' || !Array.isArray(membership.requiredMediaBuyIds)) return [];
+  if (!Array.isArray(obligation.media_buy_ids)) return [];
+  const frozen = new Set(obligation.media_buy_ids);
+  return [...new Set(membership.requiredMediaBuyIds)]
+    .filter(id => !frozen.has(id))
+    .map(id => ({
+      code: 'REPORTING_SCOPE_MEMBER_MISSING' as const,
+      blocking: true as const,
+      mediaBuyId: id,
+      message: `required media buy ${boundedDiagnostic(id)} is absent from the seller's frozen all_media_buys set: it is not reported or covered for this period`,
+    }));
+}
 
 export interface ReportingObservation {
   rowCount: number;
@@ -455,6 +559,13 @@ export interface ObligationReconciliation {
   reportingRevisionId?: string;
   reportingMaterializationId?: string;
   reasons: string[];
+  /**
+   * Blocking per-buy membership findings for an `all_media_buys` expectation.
+   * Present only when non-empty. They leave this obligation's `definitive`
+   * (which covers the buys it lists) unchanged and make the result's
+   * `definitive` false.
+   */
+  issues?: ReportingMembershipIssueV1[];
 }
 
 /**
@@ -1672,9 +1783,13 @@ function selectCurrent(
     ) {
       reasons.push('EXPECTED_CONTRACT_MISMATCH');
     }
+    // Under all_media_buys the seller chooses the set, so there is no pinned
+    // coverage to compare; its own evidence is checked above.
+    const pinned = pinnedMembership(expected);
     if (
-      !isReportingCoverageEvidence(obligation.coverage) ||
-      !coverageMatchesExpected(obligation.coverage, expected.coverage)
+      pinned &&
+      (!isReportingCoverageEvidence(obligation.coverage) ||
+        !coverageMatchesExpected(obligation.coverage, pinned.coverage))
     ) {
       reasons.push('EXPECTED_COVERAGE_MISMATCH');
     }
@@ -2889,6 +3004,7 @@ function expectedPeriodMatches(
   // and lose the record of durable work. Classified like the other malformed
   // ledger payloads instead.
   if (!isReportingPeriodShape(obligation.period)) return false;
+  const pinned = pinnedMembership(expected);
   if (
     obligation.delivery_config_id !== expected.deliveryConfigId ||
     obligation.delivery_config_version !== expected.deliveryConfigVersion ||
@@ -2896,7 +3012,7 @@ function expectedPeriodMatches(
     obligation.feed_purpose !== expected.feedPurpose ||
     obligation.reporting_profile !== expected.reportingProfile ||
     !Array.isArray(obligation.media_buy_ids) ||
-    !same([...obligation.media_buy_ids].sort(), [...expected.mediaBuyIds].sort()) ||
+    (pinned && !same([...obligation.media_buy_ids].sort(), [...pinned.mediaBuyIds].sort())) ||
     obligation.destination_ref !== expected.destinationRef ||
     obligation.required_finality !== expected.requiredFinality ||
     obligation.reconciliation_mode !== expected.reconciliationMode ||
@@ -2904,7 +3020,7 @@ function expectedPeriodMatches(
     obligation.period.start !== expected.periodStart ||
     obligation.period.end !== expected.periodEnd ||
     !isReportingCoverageEvidence(obligation.coverage) ||
-    !coverageMatchesExpected(obligation.coverage, expected.coverage)
+    (pinned ? !coverageMatchesExpected(obligation.coverage, pinned.coverage) : !sellerFrozenMembershipValid(obligation))
   ) {
     return false;
   }
@@ -3084,12 +3200,14 @@ export function evaluateReportingLedger(
         reasons.push('MISSING_MATCHING_ADJUSTMENT_RECEIPT');
       }
     }
+    const issues = membershipIssues(obligation, expected);
     obligationResults.push({
       reportingObligationId: obligation.reporting_obligation_id,
       definitive: reasons.length === 0,
       reportingRevisionId: selected.revision?.reporting_revision_id,
       reportingMaterializationId: selected.materialization?.reporting_materialization_id,
       reasons,
+      ...(issues.length > 0 ? { issues } : {}),
     });
   }
 
@@ -3104,7 +3222,7 @@ export function evaluateReportingLedger(
       expectedPeriods !== undefined &&
       scopeDefinitive &&
       missingExpectedPeriods.length === 0 &&
-      obligationResults.every(item => item.definitive),
+      obligationResults.every(item => item.definitive && !item.issues?.length),
     ledger,
     obligations: obligationResults,
     missingExpectedPeriods,
