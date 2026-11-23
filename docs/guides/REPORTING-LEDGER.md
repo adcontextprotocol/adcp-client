@@ -1757,6 +1757,7 @@ only for health changes:
 import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';
 import { PostgresReportingLedgerStore } from '@adcp/reporting-storage';
 import {
+  ReportingNotificationUnsettledError,
   createPostgresReportingNotificationActivityRuntime,
   createPostgresReportingNotificationAttemptCheckpoint,
 } from '@adcp/reporting-storage/notifications';
@@ -1818,7 +1819,12 @@ await notifications.probe();
 // Run both bounded calls repeatedly from the deployment's durable scheduler.
 await reportingActivity.recoverOnce({
   ownerToken: process.env.INSTANCE_ID!,
-  onError: (error, claim) => operationalLogger.error({ error, claim }),
+  // A subscriber not accepting deliveries is an expected retry; abandonment and
+  // storage failures are not.
+  onError: (error, claim) =>
+    error instanceof ReportingNotificationUnsettledError
+      ? operationalLogger.warn({ error, claim })
+      : operationalLogger.error({ error, claim }),
 });
 await notifications.recoverOnce({ ownerToken: process.env.INSTANCE_ID! });
 ```
@@ -1970,7 +1976,8 @@ Abandoned activity is retained on the same schedule, measured from
 policy, schedule bounded `pruneProjected()` calls — which reclaims projected and
 abandoned rows alike — and retain pending rows until they are settled. The
 reporting worker retries a failed projection up to `maxAttempts` (default 100)
-and then abandons the claim; once the notification runtime has durably accepted
+and then abandons the claim, reporting `ReportingNotificationAbandonedError` to
+`onError`; once the notification runtime has durably accepted
 every matched subscriber, its own webhook outbox owns delivery retry and
 retention. Supply `recoverOnce({ onError })` to report a
 failed projection attempt without changing lease or retry semantics.
@@ -2143,9 +2150,19 @@ disposition: delivered, or deliberately not delivered. An outcome that never
 reached a subscriber — a retryable suppression, a transport error, an exhausted
 but retryable HTTP result — leaves the claim unsettled and the activity is not
 recorded as delivered. The bundled runtime raises
-`ReportingNotificationRetryableSuppressionError` for a retryable suppression.
-Custom notification runtimes must implement the same barriers and the same
-classification.
+`ReportingNotificationRetryableSuppressionError` for a retryable suppression and
+`ReportingNotificationUnsettledError` for any other outstanding recipient. The
+latter carries `transitionId`, `unsettled`, `attempt`, `maxAttempts` and up to
+ten `recipients` — scope, `subscriberId`, `destinationGeneration`, a `reason`
+(`delivery_failed`, `delivery_runtime_error` or `retryable_suppression`) and the
+final HTTP status when one was received; never the URL or a credential. It is
+an expected retry, so log it below error level: a subscriber that keeps failing
+raises it on every attempt until `maxAttempts`. When the claim is then
+abandoned the runtime reports a separate `ReportingNotificationAbandonedError`
+(`cause` is the final attempt's failure), which is the outcome an operator has
+to act on. The production service's scheduler `onError` receives the error
+alone, so these fields are the way to find the subscriber. Custom notification
+runtimes must implement the same barriers and the same classification.
 
 Intent is stored relationally, one row per recipient, keyed by a bounded 64-hex
 fingerprint; only that fingerprint is indexed, so an individual recipient
