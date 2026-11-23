@@ -334,10 +334,13 @@ interface ExpectedCanonicalization {
  *   the expected `coverage`.
  * - `all_media_buys`: the buyer registered `scope: { all_media_buys: true }`,
  *   so the seller freezes the set at `period.end`. The buyer cannot pin it in
- *   advance: the obligation instead has to carry valid coverage evidence whose
- *   partition equals its own `media_buy_ids`, resolved at `period.end`, and
- *   meet `coverageRequirement`. `[]` is an explicitly evaluated zero-buy
- *   period. Set `requiredMediaBuyIds` only to buys that unambiguously belong
+ *   advance, so the period matches on its identity alone and pinning
+ *   `mediaBuyIds` or `coverage` is a configuration error. To be definitive the
+ *   obligation has to carry valid coverage evidence whose partition equals its
+ *   own `media_buy_ids`, `scope_resolved_at` and `coverage.evaluated_at` at the
+ *   instant `period.end`, and meet `coverageRequirement`; a failure is a
+ *   blocking reason on the matched obligation, never a missing period.
+ *   `[]` is an explicitly evaluated zero-buy period. Set `requiredMediaBuyIds` only to buys that unambiguously belong
  *   (seller-confirmed before `period.start`, flight covering the whole
  *   period). One the seller did not freeze is a blocking per-buy issue in
  *   `ObligationReconciliation.issues` (`REPORTING_SCOPE_MEMBER_MISSING`): the
@@ -399,19 +402,44 @@ function pinnedMembership(
 }
 
 /**
- * An `all_media_buys` obligation's own evidence: valid coverage whose
- * denominator is the obligation's frozen set, resolved and evaluated at
- * `period.end`. The checks `selectCurrent` reports as `SCOPE_CUTOFF_MISMATCH`
- * and `COVERAGE_SCOPE_MISMATCH`.
+ * Refuse a membership the reconciler would otherwise have to guess about:
+ * an `all_media_buys` expectation that also pins a buy set or coverage
+ * (silently dropping the pins would weaken the check the caller asked for),
+ * an unknown kind, or a malformed `requiredMediaBuyIds`.
  */
-function sellerFrozenMembershipValid(obligation: ManagedReportingObligation): boolean {
-  return (
-    Array.isArray(obligation.media_buy_ids) &&
-    isReportingCoverageEvidence(obligation.coverage) &&
-    obligation.scope_resolved_at === obligation.period?.end &&
-    obligation.coverage.evaluated_at === obligation.scope_resolved_at &&
-    sameStringSet(obligation.coverage.media_buy_ids, obligation.media_buy_ids)
-  );
+function assertExpectedMemberships(expectedPeriods: readonly ExpectedReportingPeriod[] | undefined): void {
+  for (const expected of expectedPeriods ?? []) {
+    const membership: unknown = (expected as { membership?: unknown } | undefined)?.membership;
+    if (membership === undefined) continue;
+    const refuse = (detail: string): never => {
+      throw new ReportingReconciliationError(
+        'INVALID_EXPECTED_MEMBERSHIP',
+        `Expected period ${boundedDiagnostic(String(expected.deliveryConfigId))} ${boundedDiagnostic(String(expected.periodStart))}: ${detail}`
+      );
+    };
+    if (!membership || typeof membership !== 'object' || Array.isArray(membership)) {
+      refuse('membership must be an object');
+    }
+    const { kind, requiredMediaBuyIds } = membership as { kind?: unknown; requiredMediaBuyIds?: unknown };
+    if (kind === 'media_buy_ids') continue;
+    if (kind !== 'all_media_buys') refuse("membership.kind must be 'media_buy_ids' or 'all_media_buys'");
+    const pins = expected as { mediaBuyIds?: unknown; coverage?: unknown };
+    if (pins.mediaBuyIds !== undefined || pins.coverage !== undefined) {
+      refuse('an all_media_buys expectation cannot also pin mediaBuyIds or coverage');
+    }
+    if (
+      requiredMediaBuyIds !== undefined &&
+      (!Array.isArray(requiredMediaBuyIds) || !requiredMediaBuyIds.every(id => typeof id === 'string' && id.length > 0))
+    ) {
+      refuse('membership.requiredMediaBuyIds must be an array of non-empty strings');
+    }
+  }
+}
+
+/** Two RFC 3339 instants that name the same moment, whatever their formatting. */
+function sameInstant(left: unknown, right: unknown): boolean {
+  const normalized = normalizedInstant(left);
+  return normalized !== undefined && normalized === normalizedInstant(right);
 }
 
 function membershipIssues(
@@ -1758,10 +1786,15 @@ function selectCurrent(
   ) {
     reasons.push('REVISION_SCOPE_MISMATCH');
   }
-  if (obligation.scope_resolved_at !== obligation.period?.end) reasons.push('SCOPE_CUTOFF_MISMATCH');
+  // Under all_media_buys these are the only checks on the seller's frozen
+  // set, so they compare instants rather than spellings: `…00.000Z` and
+  // `…00Z` are the same cutoff. The default path keeps its exact comparison.
+  const allMediaBuys = expected?.membership?.kind === 'all_media_buys';
+  const sameCutoff = (left: unknown, right: unknown) => (allMediaBuys ? sameInstant(left, right) : left === right);
+  if (!sameCutoff(obligation.scope_resolved_at, obligation.period?.end)) reasons.push('SCOPE_CUTOFF_MISMATCH');
   if (
     !isReportingCoverageEvidence(obligation.coverage) ||
-    obligation.coverage.evaluated_at !== obligation.scope_resolved_at ||
+    !sameCutoff(obligation.coverage.evaluated_at, obligation.scope_resolved_at) ||
     !sameStringSet(obligation.coverage.media_buy_ids, obligation.media_buy_ids ?? []) ||
     !isReportingCoverageEvidence(revision.coverage) ||
     !same(revision.coverage, obligation.coverage)
@@ -3004,6 +3037,11 @@ function expectedPeriodMatches(
   // and lose the record of durable work. Classified like the other malformed
   // ledger payloads instead.
   if (!isReportingPeriodShape(obligation.period)) return false;
+  // Under all_media_buys the seller's frozen set is not something the buyer
+  // can expect, so it is not part of the match: an existing obligation is
+  // never reported missing over it. Its cutoff, coverage partition and
+  // coverage requirement surface as non-definitive reasons from
+  // `selectCurrent` instead.
   const pinned = pinnedMembership(expected);
   if (
     obligation.delivery_config_id !== expected.deliveryConfigId ||
@@ -3011,16 +3049,18 @@ function expectedPeriodMatches(
     obligation.report_definition_id !== expected.reportDefinitionId ||
     obligation.feed_purpose !== expected.feedPurpose ||
     obligation.reporting_profile !== expected.reportingProfile ||
-    !Array.isArray(obligation.media_buy_ids) ||
-    (pinned && !same([...obligation.media_buy_ids].sort(), [...pinned.mediaBuyIds].sort())) ||
+    (pinned &&
+      (!Array.isArray(obligation.media_buy_ids) ||
+        !same([...obligation.media_buy_ids].sort(), [...pinned.mediaBuyIds].sort()))) ||
     obligation.destination_ref !== expected.destinationRef ||
     obligation.required_finality !== expected.requiredFinality ||
     obligation.reconciliation_mode !== expected.reconciliationMode ||
-    (expected.coverageRequirement === 'full' && obligation.coverage?.status !== 'full') ||
+    (pinned && expected.coverageRequirement === 'full' && obligation.coverage?.status !== 'full') ||
     obligation.period.start !== expected.periodStart ||
     obligation.period.end !== expected.periodEnd ||
-    !isReportingCoverageEvidence(obligation.coverage) ||
-    (pinned ? !coverageMatchesExpected(obligation.coverage, pinned.coverage) : !sellerFrozenMembershipValid(obligation))
+    (pinned &&
+      (!isReportingCoverageEvidence(obligation.coverage) ||
+        !coverageMatchesExpected(obligation.coverage, pinned.coverage)))
   ) {
     return false;
   }
@@ -3092,6 +3132,7 @@ export function evaluateReportingLedger(
    */
   operationsContact?: { url?: string; email?: string }
 ): Omit<ReportingReconciliationResult, 'submittedReceipts' | 'submittedAdjustmentReceipts'> {
+  assertExpectedMemberships(expectedPeriods);
   assertDirectReportingLedgerGraph(ledger);
   const obligationResults: ObligationReconciliation[] = [];
   const uniqueRevisions = new Map<string, ManagedReportingRevision>();
@@ -3501,6 +3542,7 @@ export async function reconcileReporting<TCredential = unknown>(
       'inspectionRetryBaseDelayMs must be an integer from 0 through 60000'
     );
   }
+  assertExpectedMemberships(options.expectedPeriods);
   let ledger = await loadReportingLedger(
     options.client,
     options.request,

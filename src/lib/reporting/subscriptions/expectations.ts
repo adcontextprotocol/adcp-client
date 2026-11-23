@@ -108,7 +108,16 @@ export function toExpectedReportingPeriodsV1(
 ): ExpectedReportingPeriod[] {
   return obligations.map(obligation => {
     const pins = template(obligation);
-    const { coverage, ...rest } = pins;
+    // `membership` is stripped, not spread: a template that smuggles in
+    // `all_media_buys` (it type-checks through a spread) would otherwise skip
+    // the buy-set and coverage comparison this obligation's frozen set needs.
+    const {
+      coverage,
+      membership: _membership,
+      ...rest
+    } = pins as SubscriptionExpectationTemplateV1 & {
+      membership?: unknown;
+    };
     if (!coverage || typeof coverage !== 'object') {
       throw new TypeError(
         `The expectation template must supply coverage for ${obligation.subscription_id} ${obligation.period_start}`
