@@ -1,3 +1,4 @@
+import { isCorrelationHeader } from '../protocols/mcp-call-context';
 import { mcpConnectionPartitionKey } from '../protocols/mcp-connection-policy';
 import { createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
@@ -179,12 +180,21 @@ export function buildAgentSigningContext(
  * principal. Basic and routing credentials live in headers, while OAuth
  * credentials live outside `auth_token`; hashing the complete scope prevents
  * one principal from reusing another principal's signing policy.
+ *
+ * Per-request correlation headers (`traceparent`, `x-request-id`,
+ * `x-<vendor>-debug-id`, ...) name one call, not a principal, so they stay out
+ * of the scope, as they do for the shared discovery cache. A client that sends
+ * a fresh value on every call would otherwise miss this cache on every call and
+ * re-read `get_adcp_capabilities` before each signed request. Credential and
+ * routing headers still split the scope, since `isCorrelationHeader` never
+ * treats a header that names credentials or tenant selection as correlation.
  */
 function capabilityPrincipalScope(agent: AgentConfig, connectionPartitionKey?: string): string | undefined {
   const credentials = agent.oauth_client_credentials;
   const headers = agent.headers
     ? Object.fromEntries(
         Object.entries(agent.headers)
+          .filter(([name]) => !isCorrelationHeader(name))
           .map(([name, value]) => [name.toLowerCase(), value] as const)
           .sort(([a], [b]) => a.localeCompare(b))
       )
