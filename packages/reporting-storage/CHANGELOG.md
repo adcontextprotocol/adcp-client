@@ -1,5 +1,20 @@
 # @adcp/reporting-storage
 
+## 0.3.0-beta.8
+
+### Patch Changes
+
+- 56d566e: Reliable Reporting buyer reconciliation: expected periods can describe a configuration registered with `scope: { all_media_buys: true }`, where the seller freezes the buy set at `period.end`.
+  - `ExpectedReportingPeriod.membership` (`ExpectedReportingMembership`) is `{ kind: 'media_buy_ids' }` by default, which keeps today's exact `mediaBuyIds` and `coverage` equality, or `{ kind: 'all_media_buys', requiredMediaBuyIds? }`. An `all_media_buys` expectation omits `mediaBuyIds` and `coverage`; sending either, an unknown kind, or a `requiredMediaBuyIds` that is not an array of non-empty strings throws `ReportingReconciliationError` `INVALID_EXPECTED_MEMBERSHIP` before any seller read. Such a period matches an obligation on its identity alone, so an existing obligation is never reported missing. To be definitive, the obligation has to carry valid coverage evidence whose partition equals its own `media_buy_ids`, with `scope_resolved_at` and `coverage.evaluated_at` at the instant `period.end` (compared by value, not spelling), and meet `coverageRequirement`. A failure is a blocking reason on the matched obligation (`SCOPE_CUTOFF_MISMATCH`, `COVERAGE_SCOPE_MISMATCH`, `COVERAGE_REQUIREMENT_NOT_MET`). An empty set with full coverage is an explicitly evaluated zero-buy period.
+  - A `requiredMediaBuyIds` entry the seller omitted is a blocking per-buy issue on `ObligationReconciliation.issues` (`ReportingMembershipIssueV1`, code `REPORTING_SCOPE_MEMBER_MISSING`, `blocking: true`). The obligation still matches and is consumed for the buys it lists, but the result's `definitive` is false, and the omitted buy must never be marked reported or covered for that period.
+  - Type change: `ExpectedReportingPeriod` is now a union over membership, so reading `mediaBuyIds` or `coverage` from an un-narrowed value gives `string[] | undefined` and `ExpectedReportingCoverage | undefined`. Objects built with `mediaBuyIds` and `coverage` type-check unchanged. `SubscriptionExpectationTemplateV1` does not accept `membership`, and `toExpectedReportingPeriodsV1` strips one a template supplies at runtime, because subscription obligations always carry a buyer-computed set.
+  - `@adcp/reporting-storage`: the GCS delivery fence binds an exact buy set and coverage, so it does not support `all_media_buys`. The adapter still refuses an expectation without `mediaBuyIds` and `coverage` with `HOST_CALLBACK_FAILED`, as before. An expectation that sends `all_media_buys` together with those pins now fails the fence with `CONTENT_CONFLICT`.
+
+- Updated dependencies [275d30d]
+- Updated dependencies [56d566e]
+- Updated dependencies [07d1193]
+  - @adcp/sdk@17.0.0-beta.37
+
 ## 0.3.0-beta.7
 
 ### Minor Changes
