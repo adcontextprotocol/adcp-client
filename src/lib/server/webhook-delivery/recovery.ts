@@ -52,8 +52,11 @@ export interface WebhookAuthenticationContext {
    * Domain-separates task payload validation tokens. Undefined is the
    * original transport-authentication context and is intentionally preserved
    * so pending encrypted snapshots remain decryptable across SDK upgrades.
+   * `task_push_binding` protects a buyer token the SDK bound to an externally
+   * settled task (`createAdcpServerFromPlatform({ taskSettlementCoordinator })`);
+   * its key is registry-scoped rather than outbox-scoped.
    */
-  purpose?: 'payload_token';
+  purpose?: 'payload_token' | 'task_push_binding';
   snapshotContextFingerprint: string;
 }
 
@@ -738,6 +741,14 @@ function snapshotFingerprint(snapshot: StoredWebhookDeliverySnapshot): string {
     ...(snapshot.payloadToken && { payloadToken: { fingerprint: snapshot.payloadToken.fingerprint } }),
   });
 }
+
+/**
+ * Protect one credential through the application's adapter with the same
+ * fingerprint and no-cleartext checks the outbox applies to its snapshots.
+ *
+ * @internal Used by the task push-binding store.
+ */
+export const _protectWebhookAuthentication = protectAuthentication;
 
 async function protectAuthentication(
   adapter: WebhookAuthenticationAdapter,

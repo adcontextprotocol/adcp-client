@@ -397,6 +397,7 @@ export {
   getDecisioningTaskRegistryMigration,
   getDecisioningTaskRegistryScopeV1Upgrade,
   getDecisioningTaskRegistryStatusWidenV61Migration,
+  getTaskPushBindingMigration,
   type CreatePostgresTaskRegistryOptions,
   type DecisioningTaskRegistryScopeV1Upgrade,
   type DecisioningTaskRegistryScopeV1UpgradeOptions,
@@ -406,10 +407,14 @@ export {
   type PgTransactionalPool,
 } from './runtime/postgres-task-registry';
 export {
+  completeBoundPushTask,
   completeScopedPushTask,
   createPostgresTaskSettlementCoordinator,
+  failBoundPushTask,
   failScopedPushTask,
+  rejectBoundPushTask,
   rejectScopedPushTask,
+  TaskPushBindingMismatchError,
   TaskPushSettlementConfigurationError,
   type PostgresTaskSettlementCoordinator,
   type PostgresTaskSettlementCoordinatorOptions,

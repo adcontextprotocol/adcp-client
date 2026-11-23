@@ -255,16 +255,21 @@ queue, task result, logs, metrics, or dead-letter metadata.
 
 `updateScopedTaskProgress()` remains available for push-enabled tasks because
 progress does not create a terminal delivery obligation. Use
-`{ settlement: 'external' }` only for polling-only framework handoffs; omit
-`push_notification_config`. Its registry must declare `durability: 'durable'`
+`{ settlement: 'external' }` for polling-only framework handoffs, or, when the
+server has `taskSettlementCoordinator`, for push-enabled ones (see
+[Durable task settlement](./guides/DURABLE-TASK-SETTLEMENT.md#external-framework-handoffs-with-push)).
+Its registry must declare `durability: 'durable'`
 and issue a stable `registryId`; the built-in in-memory registry is process-local
 and is rejected before the producer runs or the buyer receives `submitted`. Its
 producer callback may enqueue work but cannot return a terminal artifact; even
 if that callback throws, the framework rejects the initial invocation, leaves
 the task internally submitted, and writes no webhook. The buyer never receives
 an acknowledgment before recoverable work exists. The push coordinator helpers
-above are instead for application-managed tasks and protected registrations;
-they do not make an external framework handoff push-capable.
+above (`completeScopedPushTask()` and friends) are for application-managed
+tasks and protected registrations. An external framework handoff with push
+settles with `completeBoundPushTask()` / `failBoundPushTask()` /
+`rejectBoundPushTask()`, which read the route the SDK bound at handoff; the
+older helpers refuse a route that differs from that binding.
 
 The framework owns normal in-process handoff settlement. The direct registry
 surface is specifically for trusted webhook/queue workers and explicit

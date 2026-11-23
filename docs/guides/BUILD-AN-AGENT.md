@@ -748,11 +748,14 @@ itself, so code after that call in your handler does not run. Call
 reservations are unwound. Buyers changing the request must use a new
 `idempotency_key`. Synchronous responses are unaffected.
 
-This applies to `handoffToTask(..., { settlement: 'external' })` too: external
-producers have no SDK terminal-delivery path, so they must omit
-`push_notification_config` and use polling. A framework emitter does not make
-an externally settled task deliverable. A handler that proxies to a remote
-agent should check before calling it:
+For `handoffToTask(..., { settlement: 'external' })` a framework emitter is not
+a delivery path. An external handoff with `push_notification_config` needs
+`taskSettlementCoordinator` on the server: the SDK binds the buyer's route to the
+task in Postgres before acknowledging it, and the worker settles with
+`completeBoundPushTask()`, which delivers through the coordinator's outbox. See
+[Durable task settlement](./DURABLE-TASK-SETTLEMENT.md#external-framework-handoffs-with-push).
+Without one, it is refused. A handler that proxies to a remote agent should
+check before calling it:
 
 ```ts
 requestProposals: async (req, ctx) => {
