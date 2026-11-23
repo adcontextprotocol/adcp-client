@@ -2861,13 +2861,17 @@ function isErrorEnvelope(response: McpToolResponse): boolean {
 /**
  * `failed` is the handler outcome classified before the response was
  * converted to an older release, where a decision can occupy `status`.
+ * The finished response is still checked for an error envelope: `finalize`
+ * adds `adcp_error` to a payload-only `errors[]` arm, and a response enhancer
+ * can mark an error.
  */
 function shouldCacheIdempotencyResponse(response: McpToolResponse, failed = isErrorResponse(response)): boolean {
   // COMMITTED_RESOURCE_PURGED is an error envelope but also a durable
   // committed-outcome tombstone. Releasing its claim would let an exact retry
   // execute a financial mutation that already committed.
   return (
-    isAdcpErrorCode(response, 'COMMITTED_RESOURCE_PURGED') || (!failed && !hasUncacheableSyncAccountRejection(response))
+    isAdcpErrorCode(response, 'COMMITTED_RESOURCE_PURGED') ||
+    (!failed && !isErrorEnvelope(response) && !hasUncacheableSyncAccountRejection(response))
   );
 }
 
