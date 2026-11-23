@@ -33,7 +33,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
   let attemptCheckpoint;
   let notificationsWithoutCheckpoint;
   let failNextFetch = false;
-  // Persistent per-request fetch override (return a response, or throw to simulate a transport error).
+  // Persistent per-request fetch override by URL (return a response, or throw to simulate a transport error).
   let fetchHook;
   let checkpointCalls = 0;
   const checkpoints = new Map();
@@ -134,7 +134,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
             return { status: 503, headers: { get: () => undefined } };
           }
           if (fetchHook) {
-            const hooked = await fetchHook(url, body);
+            const hooked = await fetchHook(url);
             if (hooked) return hooked;
           }
           fetchCalls.push({ url, body });
