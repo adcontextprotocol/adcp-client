@@ -70,6 +70,7 @@ import {
   creativeStartPolicyOptInFields,
 } from '../media-buy/creative-start-policy';
 import {
+  advertisesExactAdcpRelease,
   capabilityDiscoveryEnvelope,
   convertRequest,
   convertResponse,
@@ -2019,6 +2020,30 @@ function isCapabilityEvidence(value: unknown): value is AdcpCapabilities {
     candidate.extensions.every(extension => typeof extension === 'string') &&
     typeof candidate._synthetic === 'boolean'
   );
+}
+
+/**
+ * Whether an unpinned capabilities answer lists the exact preview `pin` in
+ * `supported_versions` while it was served at another release.
+ */
+function advertisesPreviewElsewhere(result: TaskResult<unknown>, pin: string): boolean {
+  if (!result.success || result.status !== 'completed') return false;
+  const data = result.data as { adcp_version?: unknown; adcp?: { supported_versions?: unknown } } | null | undefined;
+  const advertised = data?.adcp?.supported_versions;
+  return (
+    Array.isArray(advertised) &&
+    advertisesExactAdcpRelease(pin, advertised) &&
+    !advertisesExactAdcpRelease(pin, [data?.adcp_version])
+  );
+}
+
+/** Collapse a full-semver `adcp_version` param to its wire form: `3.3.0-rc.3` → `3.3-rc.3`. */
+function withReleasePrecisionVersion<T extends { adcp_version?: unknown }>(params: T): T {
+  const version = params?.adcp_version;
+  if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+    return params;
+  }
+  return { ...params, adcp_version: toReleasePrecisionWire(version) };
 }
 
 function productHasPricingOptions(product: unknown): boolean {
@@ -10058,6 +10083,25 @@ export class SingleAgentClient {
   /**
    * Get AdCP capabilities
    *
+   * A client pinned to a preview release (e.g. `adcpVersion: '3.3.0-rc.3'`)
+   * discovers unpinned first, so a seller that does not offer the preview still
+   * answers. When that answer lists the exact preview in
+   * `adcp.supported_versions`, the client asks again pinned to it and returns
+   * the pinned answer, so preview-only `experimental_features` are declared.
+   * If the pinned request fails, the unpinned answer is returned.
+   *
+   * To pin one call, pass `adcp_version` in `params` at release precision
+   * (`'3.3-rc.3'`); a full-semver value (`'3.3.0-rc.3'`) is collapsed to that
+   * form. A pinned call is not re-probed or retried: a seller without that
+   * release answers `VERSION_UNSUPPORTED`, with its releases in
+   * `adcpError.details.supported_versions`.
+   *
+   * To see which release answered, read `result.metadata.adcpVersion`: the
+   * seller's echoed release, also `data.adcp_version`. Compare it with your pin
+   * at release precision; a different release means the seller did not answer
+   * at your pin. On a re-probed answer, `result.metadata.wireAdcpVersion` also
+   * carries the client pin the re-probe was sent at.
+   *
    * @param params - Capabilities request parameters
    * @param inputHandler - Handler for clarification requests
    * @param options - Task execution options
@@ -10079,10 +10123,11 @@ export class SingleAgentClient {
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
     const scopeKey = this.config._reuseConfiguredDiscovery?.() ? this.getCapabilityEvidenceScope().scopeKey : undefined;
     const agent = await this.ensureEndpointDiscovered(options);
-    this.executor.validateRequest('get_adcp_capabilities', params);
+    const request = withReleasePrecisionVersion(params);
+    this.executor.validateRequest('get_adcp_capabilities', request);
     const result = await this.executeCapabilityDiscovery<GetAdCPCapabilitiesResponse>(
       agent,
-      params,
+      request,
       inputHandler,
       options,
       options.versionEnvelope ?? this.config.versionEnvelope
@@ -10091,7 +10136,7 @@ export class SingleAgentClient {
       this.config._reuseConfiguredDiscovery?.() &&
       !this.usesScopedDiscoveryTransport(options) &&
       scopeKey === this.getCapabilityEvidenceScope().scopeKey &&
-      Object.keys(params).length === 0 &&
+      Object.keys(request).length === 0 &&
       this.runAgentInfo !== undefined &&
       result.success &&
       result.data &&
@@ -10108,14 +10153,17 @@ export class SingleAgentClient {
   /**
    * Dispatch `get_adcp_capabilities` under the discovery version rule.
    *
-   * A preview pin goes out unpinned (see {@link capabilityDiscoveryEnvelope}),
-   * and a pinned discovery the seller refuses with `VERSION_UNSUPPORTED` is
-   * retried once unpinned. Neither applies when the caller chose the pin, with
-   * version fields in `params` or an `explicitEnvelope`: the seller's refusal,
-   * carrying its `supported_versions` in `adcpError.details`, is the answer.
-   * A caller `operationId` also skips the retry, which would need an id of its
-   * own. Only a successful retry replaces the pinned refusal, whose diagnostics
-   * name the release actually sent.
+   * A preview pin goes out unpinned (see {@link capabilityDiscoveryEnvelope}).
+   * When that unpinned answer lists the exact preview pin in
+   * `supported_versions`, discovery is re-probed once at the pin, because a
+   * seller serves a preview only to an exact pin. A pinned discovery the seller
+   * refuses with `VERSION_UNSUPPORTED` is retried once unpinned. Neither
+   * applies when the caller chose the pin, with version fields in `params` or
+   * an `explicitEnvelope`: the seller's refusal, carrying its
+   * `supported_versions` in `adcpError.details`, is the answer. A caller
+   * `operationId` also skips both, since the second dispatch would need an id
+   * of its own. Only a successful second dispatch replaces the first answer,
+   * whose diagnostics name the release actually sent.
    */
   private async executeCapabilityDiscovery<T>(
     agent: AgentConfig,
@@ -10129,10 +10177,8 @@ export class SingleAgentClient {
       explicitEnvelope !== undefined ||
       requested.adcp_version !== undefined ||
       requested.adcp_major_version !== undefined;
-    const envelope = capabilityDiscoveryEnvelope(
-      explicitEnvelope,
-      options.wireAdcpVersion ?? this.config.wireAdcpVersion ?? this.resolvedAdcpVersion
-    );
+    const wirePin = options.wireAdcpVersion ?? this.config.wireAdcpVersion ?? this.resolvedAdcpVersion;
+    const envelope = capabilityDiscoveryEnvelope(explicitEnvelope, wirePin);
     const result = await this.executor.executeTask<T>(
       agent,
       'get_adcp_capabilities',
@@ -10140,6 +10186,18 @@ export class SingleAgentClient {
       inputHandler,
       envelope === undefined ? options : { ...options, versionEnvelope: envelope }
     );
+    if (envelope === 'none' && !callerPinned) {
+      if (options.operationId !== undefined || !advertisesPreviewElsewhere(result, wirePin)) return result;
+      throwIfAborted(options.signal);
+      // A separate physical dispatch at the pin: its own correlation id, the
+      // same deadline. `selectedAdcpVersion` reports the pin as the release sent.
+      const pinned = await this.executor.executeTask<T>(agent, 'get_adcp_capabilities', params, inputHandler, {
+        ...childTaskOptions(options),
+        versionEnvelope: 'auto',
+        selectedAdcpVersion: wirePin,
+      });
+      return pinned.success && pinned.status === 'completed' ? pinned : result;
+    }
     if (
       callerPinned ||
       envelope === 'none' ||
@@ -12228,8 +12286,7 @@ export class SingleAgentClient {
         // and callback authorization provenance. The active OpenTelemetry
         // context remains in the async chain, correlating both physical tasks.
         const callerOptions = options as CapabilityProbeRequestOptions | undefined;
-        const isPreview =
-          capabilityDiscoveryEnvelope(undefined, this.config.wireAdcpVersion ?? this.resolvedAdcpVersion) === 'none';
+        const isPreview = this.discoversPreviewRelease();
         const probeOptions: CapabilityProbeRequestOptions = {
           // Discover the seller's release window before claiming a preview
           // older sellers may reject. Ordinary calls still negotiate exact
@@ -12250,9 +12307,7 @@ export class SingleAgentClient {
           {},
           undefined,
           probeOptions,
-          // The operation's own envelope steers only a preview probe; a stable
-          // probe keeps the client's configured envelope.
-          (isPreview ? callerOptions?.versionEnvelope : undefined) ?? this.config.versionEnvelope
+          this.capabilityProbeEnvelope(options)
         );
         throwIfAborted(options?.signal);
         const requestTimeoutMs = resolveRequestTimeoutMs(
@@ -12646,16 +12701,37 @@ export class SingleAgentClient {
    * `undefined` when sharing is off or the call uses a scoped `trustedFetchFn`
    * (whose network boundary is per-call, so its evidence is never shared).
    */
+  /** Whether this client's discovery probe targets a preview release (and so goes out unpinned by default). */
+  private discoversPreviewRelease(): boolean {
+    return capabilityDiscoveryEnvelope(undefined, this.config.wireAdcpVersion ?? this.resolvedAdcpVersion) === 'none';
+  }
+
+  /**
+   * Explicit version envelope for the capability probe, if any. The operation's
+   * own envelope steers only a preview probe; a stable probe keeps the client's
+   * configured envelope.
+   */
+  private capabilityProbeEnvelope(
+    options?: ReadRequestOptions
+  ): import('../protocols').VersionEnvelopeMode | undefined {
+    const operationEnvelope = this.discoversPreviewRelease()
+      ? (options as CapabilityProbeRequestOptions | undefined)?.versionEnvelope
+      : undefined;
+    return operationEnvelope ?? this.config.versionEnvelope;
+  }
+
   private sharedDiscoveryKey(options?: ReadRequestOptions): string | undefined {
     const config = this.config.discoveryCache;
     if (!config) return undefined;
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     if (transport?.trustedFetchFn !== undefined) return undefined;
+    const versionEnvelope = this.capabilityProbeEnvelope(options);
     return agentDiscoveryCacheKey({
       protocol: this.normalizedAgent.protocol,
       agentUri: this.normalizedAgent.agent_uri,
       adcpVersion: this.resolvedAdcpVersion,
       wireAdcpVersion: this.config.wireAdcpVersion,
+      ...(versionEnvelope !== undefined && { versionEnvelope }),
       authIdentity: config.authIdentity,
       connectionPartition: transport?.connectionPartition,
       credentialKind: this.discoveryCredentialKind(),

@@ -180,6 +180,18 @@ export function capabilityDiscoveryEnvelope(
   return wirePin !== undefined && parseAdcpRelease(wirePin)?.prerelease !== undefined ? 'none' : undefined;
 }
 
+/**
+ * Whether `releases` lists `pin` exactly: the same line and, for a preview,
+ * the same prerelease tag and patch. This is the evidence a preview pin needs
+ * before it is sent (see {@link negotiateAdcpRelease}).
+ */
+export function advertisesExactAdcpRelease(pin: string, releases: readonly unknown[] | undefined): boolean {
+  const supportedVersions = (releases ?? []).filter((value): value is string => typeof value === 'string');
+  if (supportedVersions.length === 0) return false;
+  const negotiated = negotiateAdcpRelease(pin, { supportedVersions, _synthetic: false });
+  return !isNegotiationFailure(negotiated) && negotiated?.source === 'same_release';
+}
+
 export function isNegotiationFailure(
   value: NegotiatedAdcpRelease | AdcpNegotiationFailure | undefined
 ): value is AdcpNegotiationFailure {
