@@ -81,7 +81,9 @@ export type {
 export type {
   ExpectedReportingPeriod,
   ExpectedReportingCoverage,
+  ExpectedReportingMembership,
   ObligationReconciliation,
+  ReportingMembershipIssueV1,
   ReconcileReportingOptions,
   ReportingAdjustmentCheckpoint,
   ReportingAdjustmentCheckpointKey,

@@ -69,6 +69,9 @@ export function reportingSubscriptionVersionRecordsV1(input: {
 /**
  * Per-offering pins an obligation must match beyond what coverage determines.
  *
+ * Subscription obligations carry the buy set coverage computed, so they always use the default
+ * `media_buy_ids` membership; `membership` is not a template pin.
+ *
  * @experimental Low-level reporting-subscription building block, published from `@adcp/sdk/reporting/advanced`: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export type SubscriptionExpectationTemplateV1 = Omit<
@@ -76,6 +79,7 @@ export type SubscriptionExpectationTemplateV1 = Omit<
   | 'deliveryConfigId'
   | 'deliveryConfigVersion'
   | 'reportDefinitionId'
+  | 'membership'
   | 'mediaBuyIds'
   | 'periodStart'
   | 'periodEnd'
@@ -104,7 +108,16 @@ export function toExpectedReportingPeriodsV1(
 ): ExpectedReportingPeriod[] {
   return obligations.map(obligation => {
     const pins = template(obligation);
-    const { coverage, ...rest } = pins;
+    // `membership` is stripped, not spread: a template that smuggles in
+    // `all_media_buys` (it type-checks through a spread) would otherwise skip
+    // the buy-set and coverage comparison this obligation's frozen set needs.
+    const {
+      coverage,
+      membership: _membership,
+      ...rest
+    } = pins as SubscriptionExpectationTemplateV1 & {
+      membership?: unknown;
+    };
     if (!coverage || typeof coverage !== 'object') {
       throw new TypeError(
         `The expectation template must supply coverage for ${obligation.subscription_id} ${obligation.period_start}`

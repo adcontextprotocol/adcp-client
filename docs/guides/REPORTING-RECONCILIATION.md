@@ -210,6 +210,26 @@ if (!result.definitive) {
 }
 ```
 
+### Seller-chosen membership (`all_media_buys`)
+
+The example above pins the buy set the buyer registered with `scope: { media_buy_ids }`: the obligation must carry exactly `mediaBuyIds`, and its coverage must equal `coverage`. That is the default, and `membership: { kind: 'media_buy_ids' }` says the same thing explicitly.
+
+A configuration registered with `scope: { all_media_buys: true }` lets the seller freeze the set at `period.end`, so the buyer has nothing to pin. Omit `mediaBuyIds` and `coverage` and set the membership instead:
+
+```ts
+expectedPeriods: [{
+  ...billingPins, // everything above except mediaBuyIds and coverage
+  membership: { kind: 'all_media_buys', requiredMediaBuyIds: ['buy-1'] },
+  coverageRequirement: 'full',
+}],
+```
+
+Pinning `mediaBuyIds` or `coverage` next to `all_media_buys`, an unknown `kind`, or a `requiredMediaBuyIds` that is not an array of non-empty strings throws `INVALID_EXPECTED_MEMBERSHIP` before any seller read.
+
+The period matches an obligation on its identity alone: configuration generation, report definition, feed, profile, destination, finality, reconciliation mode and period. An existing obligation is therefore never reported missing over its membership. To be definitive it must also carry valid coverage evidence whose partition equals its own `media_buy_ids`, have `scope_resolved_at` and `coverage.evaluated_at` at the same instant as `period.end` (compared by value, so `…00.000Z` equals `…00Z`), and meet `coverageRequirement` (`full` means `coverage.status` is `full`; partial, none and unknown are not). A failure is a blocking reason on the matched obligation: `SCOPE_CUTOFF_MISMATCH`, `COVERAGE_SCOPE_MISMATCH` or `COVERAGE_REQUIREMENT_NOT_MET`. The obligation is then not receipted, and the result is not definitive. An empty `media_buy_ids` with full coverage is an explicitly evaluated zero-buy period and matches.
+
+Set `requiredMediaBuyIds` only to buys that unambiguously belong to the period: confirmed by the seller before `period.start`, with a flight covering the whole period. A required buy the seller omitted is a blocking per-buy issue on the obligation's `issues` (`REPORTING_SCOPE_MEMBER_MISSING`, `blocking: true`). The obligation still matches and is consumed for the buys it lists, since that is what the seller attested, but the result's `definitive` is false and the omitted buy must never be marked reported or fully covered for that period.
+
 When `inspect` is omitted, `resourceReader` enables the built-in manifest path. It verifies the exact manifest bytes before parsing, manifest identity and completeness, every object size and SHA-256, declared compression and format, the pinned row schema and report definition, row count and control totals, and the pinned RFC 8785 canonical-content contract. The bundled decoders cover JSONL and CSV with `none` or `gzip` compression. Configure format/compression decoders for Parquet, Avro, ORC, Zstandard, or Snappy. The aggregate inspection deadline covers credential lookup, reads, reference resolution, custom adapters, validation, and canonicalization.
 
 The HTTPS reader applies the SDK's DNS-pinned SSRF controls, refuses redirects and cross-origin `object_ref` values, and accepts short-lived headers only through the credential provider. `allowedOrigins` must come from the consumer's saved destination configuration; the reader refuses to send credentials to an origin named only by the seller's resource descriptor. For S3, GCS, or Azure, implement `ReportingResourceReader`; it receives the destination-bound context and opaque credentials without placing either in the ledger or receipt. Complex control totals can supply `controlTotalCalculator`; the default handles only report-definition metrics whose declared aggregation is `sum` and whose `source_expression` resolves to numeric row values.

@@ -97,3 +97,18 @@ test('producer readiness requires each independently saved contract and scope pi
   added.revision.wireRevision.coverage.new_scope = ['unexpected'];
   assert.throws(() => assertExpectedBinding(added, expected), { code: 'CONTENT_CONFLICT' });
 });
+test('the fence refuses an all_media_buys expectation even when it also carries pins', () => {
+  // The adapter already refuses an expectation without mediaBuyIds/coverage
+  // (HOST_CALLBACK_FAILED), so this branch is reached only with both present.
+  for (const requiredMediaBuyIds of [undefined, r.media_buy_ids]) {
+    assert.throws(
+      () =>
+        assertExpectedBinding(input, {
+          ...expected,
+          membership: { kind: 'all_media_buys', ...(requiredMediaBuyIds ? { requiredMediaBuyIds } : {}) },
+        }),
+      { code: 'CONTENT_CONFLICT' }
+    );
+  }
+  assert.doesNotThrow(() => assertExpectedBinding(input, { ...expected, membership: { kind: 'media_buy_ids' } }));
+});
