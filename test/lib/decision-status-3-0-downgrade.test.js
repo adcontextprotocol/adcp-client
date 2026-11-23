@@ -419,3 +419,71 @@ describe('a 3.0 decision status is a result, not a failed task', () => {
     assert.notEqual(second.structuredContent.replayed, true);
   });
 });
+
+describe('an error is never cached as an idempotent result', () => {
+  const TRANSIENT = {
+    content: [{ type: 'text', text: 'Upstream is offline.' }],
+    structuredContent: {
+      errors: [{ code: 'SERVICE_UNAVAILABLE', message: 'Upstream is offline.', recovery: 'transient' }],
+    },
+  };
+  const createArgs = (version, key) => ({
+    adcp_version: version,
+    account: { account_id: 'acc_1' },
+    promoted_offering: 'x',
+    packages: [],
+    idempotency_key: key,
+  });
+  const serverWith = (calls, create, extra = {}) =>
+    buildServer(ADCP_VERSION, {
+      mediaBuy: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => {
+          calls.n++;
+          return create();
+        },
+      },
+      ...extra,
+    });
+
+  for (const [label, pin] of [
+    ['3.0', '3.0'],
+    [SERVED, SERVED],
+  ]) {
+    it(`create_media_buy at ${label}: a formatted payload-only Error arm runs again on a same-key retry`, async () => {
+      const calls = { n: 0 };
+      const server = serverWith(calls, () => TRANSIENT);
+      const args = createArgs(pin, newKey());
+      const first = await call(server, 'create_media_buy', args);
+      const second = await call(server, 'create_media_buy', args);
+      assert.equal(calls.n, 2, JSON.stringify(second.structuredContent));
+      assert.notEqual(first.structuredContent.replayed, true);
+      assert.notEqual(second.structuredContent.replayed, true);
+    });
+  }
+
+  it('a responseEnhancer that sets isError on a success is not cached', async () => {
+    const calls = { n: 0 };
+    const server = serverWith(
+      calls,
+      () => ({
+        media_buy_id: 'mb_1',
+        media_buy_status: 'pending_creatives',
+        confirmed_at: '2026-04-29T00:00:00Z',
+        revision: 1,
+        packages: [],
+      }),
+      {
+        responseEnhancer: response => {
+          response.isError = true;
+        },
+      }
+    );
+    const args = createArgs('3.0', newKey());
+    const first = await call(server, 'create_media_buy', args);
+    const second = await call(server, 'create_media_buy', args);
+    assert.equal(calls.n, 2, JSON.stringify(second.structuredContent));
+    assert.notEqual(first.structuredContent.replayed, true);
+    assert.notEqual(second.structuredContent.replayed, true);
+  });
+});
