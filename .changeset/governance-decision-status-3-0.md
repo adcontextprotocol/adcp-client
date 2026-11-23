@@ -6,4 +6,6 @@ A caller pinned to AdCP 3.0 now receives each task's decision in the 3.0 `status
 
 The 3.0 conversion now moves the decision into `status` and reports a `pre31_decision_status_moved` drift. A response that carries only the task status `completed` and no decision has that status removed, so it is never read as a decision. The conversion applies to tool responses, task polls and task webhooks.
 
+The dispatcher now classifies a handler's outcome before the response is converted, at the server's release, where a decision is not the task status. At 3.0, a business outcome in `status` (a rejected `acquire_rights`, or a media buy whose `media_buy_status` is `rejected` or `canceled`) used to read as a failed task. Strict response validation skipped it, and its idempotency claim was released, so a retry with the same key ran the handler again. Such a response is now validated, cached and replayed with `replayed: true`, as it already was at 3.1 and later.
+
 Fixes #3743.
