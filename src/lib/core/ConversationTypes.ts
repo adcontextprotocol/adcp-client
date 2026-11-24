@@ -154,11 +154,23 @@ export type WebhookUrlTemplate =
  */
 export interface TaskOptions {
   /**
-   * Caller-supplied operation correlation id. Defaults to a generated UUID.
+   * Caller-supplied operation correlation id. It fills the `{operation_id}`
+   * webhook URL macro and, on AdCP 3.1+, `push_notification_config.operation_id`.
    * Persist it with metadata.serverTaskId to resume tracking after a restart.
-   * Use a globally unique opaque id per dispatch (UUID recommended), including
-   * across tenants sharing persistence or webhook receivers. Reuse it for tracking,
-   * not resubmission; retry dispatches use a new id and the same idempotency_key.
+   *
+   * Default: for a request that carries an idempotency key (every mutating
+   * request; the SDK generates one when you don't), `idem-` followed by 40 hex
+   * characters derived from the agent id, task name and key. Otherwise a
+   * generated UUID. A seller hashes the request, webhook registration
+   * included, under its idempotency key, so a retry must send the same
+   * operation id: retry with the same idempotency_key and the SDK derives the
+   * same id. If you pass operationId, pass the same one on the retry. Reuse is
+   * allowed once the earlier dispatch has finished; while it is in flight on
+   * this client, the call fails with a ConfigurationError, so track the
+   * existing task instead.
+   *
+   * Use a globally unique opaque id per operation (UUID recommended), including
+   * across tenants sharing persistence or webhook receivers.
    * Accepts 1–255 letters, digits, underscores, periods, colons, or hyphens.
    * Dot-only IDs and the delivery_route: prefix are reserved.
    */
