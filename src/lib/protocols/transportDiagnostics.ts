@@ -1,6 +1,8 @@
 import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import { createHmac, randomUUID } from 'node:crypto';
 import { isMCPCallCompleted } from './mcp-call-context';
+import { buildAuthFailureDiagnostics, redactReflected, signatureSecrets } from './authDiagnostics';
+import type { AuthFailureDiagnostics } from '../errors';
 
 /**
  * Lifecycle events for one transport request.
@@ -29,6 +31,8 @@ export interface TransportActivityContext {
   taskId?: string;
   contextId?: string;
   idempotencyKey?: string;
+  /** AdCP version pinned for the call, reported in `authDiagnostics`. */
+  adcpVersion?: string;
 }
 
 export interface TransportActivity {
@@ -56,6 +60,13 @@ export interface TransportActivity {
   responseHeaders?: Record<string, string>;
   responseBody?: string;
   responseBodyTruncated?: boolean;
+  /**
+   * On `response_received` with HTTP 401 or 403: allowlisted auth
+   * diagnostics. The header maps above redact or drop `Signature-Input`,
+   * `Content-Digest` and `WWW-Authenticate`; this field carries their safe,
+   * parsed parts instead. It never carries `Signature` bytes or credentials.
+   */
+  authDiagnostics?: AuthFailureDiagnostics;
   /**
    * On `response_received`: `true` when the body is streamed uncaptured, so a
    * `response_completed` event will follow once the caller finishes reading,
@@ -179,7 +190,8 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
     const transportRequestId = randomUUID();
     const method = getMethod(input, init);
     const url = sanitizeTransportUrl(getUrl(input));
-    const requestHeaders = sanitizeTransportHeaders(mergeRequestHeaders(input, init));
+    const outboundHeaders = mergeRequestHeaders(input, init);
+    const requestHeaders = sanitizeTransportHeaders(outboundHeaders);
     const requestBody = bodySnippet(init?.body);
     // Correlation fields only. The terminal stream observer outlives the
     // diagnostics scope, so it must not retain request payload previews.
@@ -216,6 +228,12 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       const response = await upstream(input, init);
       const durationMs = Date.now() - startedAtMs;
       const responseHeaders = sanitizeResponseHeaders(response.headers);
+      const authDiagnostics = buildAuthFailureDiagnostics(
+        response.status,
+        effectiveRequestHeaders(input, init),
+        response.headers,
+        slot.adcpVersion
+      );
       const responseEvent = {
         type: 'response_received',
         ...baseEvent,
@@ -224,8 +242,9 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
         httpStatus: response.status,
         statusText: response.statusText,
         responseHeaders,
+        ...(authDiagnostics && { authDiagnostics }),
       } as const;
-      const responseBody = responseBodySnippet(response);
+      const responseBody = responseBodySnippet(response, signatureSecrets(outboundHeaders));
       if (!responseBody) {
         // Non-text bodies, SSE, bodies without a finite declared size, and
         // bodies declared over the capture limit are never cloned. An absent
@@ -469,6 +488,19 @@ function mergeRequestHeaders(input: RequestInfo | URL, init?: RequestInit): Head
   return headers;
 }
 
+/**
+ * The headers fetch actually sends: `init.headers` replaces a `Request`'s own
+ * headers rather than merging with them. Structured auth evidence must not
+ * report a signature the request did not carry.
+ */
+function effectiveRequestHeaders(input: RequestInfo | URL, init?: RequestInit): Headers {
+  try {
+    return new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  } catch {
+    return new Headers();
+  }
+}
+
 function sanitizeResponseHeaders(headers: Headers): Record<string, string> {
   return sanitizeTransportHeaders(headers);
 }
@@ -521,8 +553,13 @@ function bodySnippet(body: BodyInit | null | undefined): { body: string; truncat
   return undefined;
 }
 
+/**
+ * `echoSecrets` are the forms of the `Signature` the SDK sent. They are masked
+ * after JSON normalization, so escaped echoes such as `\/` are caught too.
+ */
 function responseBodySnippet(
-  response: Response
+  response: Response,
+  echoSecrets: string[]
 ): Promise<{ body: string; truncated: boolean } | undefined> | undefined {
   const contentType = response.headers.get('content-type') ?? '';
   if (!isDiagnosticTextContentType(contentType)) return undefined;
@@ -546,7 +583,7 @@ function responseBodySnippet(
       );
       if (captured === undefined) return undefined;
       const { text, truncated } = captured;
-      return { body: redactSensitiveJsonOrText(text), truncated };
+      return { body: redactReflected(redactSensitiveJsonOrText(text), echoSecrets), truncated };
     } catch {
       return undefined;
     }

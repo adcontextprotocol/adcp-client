@@ -421,11 +421,80 @@ export interface AuthChallengeInfo {
   error_description?: string;
 }
 
+/**
+ * Allowlisted parameters of the outbound `Signature-Input` the SDK sent.
+ * Never carries the `Signature` bytes, the nonce value, or request-body data.
+ */
+export interface RequestSignatureDiagnostics {
+  /** Signature label, e.g. `sig1`. */
+  label: string;
+  keyid?: string;
+  alg?: string;
+  /** `created` parameter, in Unix seconds. */
+  created?: number;
+  /** `expires` parameter, in Unix seconds. */
+  expires?: number;
+  /** Whether a `nonce` parameter was sent. The nonce itself is never exposed. */
+  noncePresent: boolean;
+  /** `tag` parameter, e.g. `adcp/request-signing/v1`. */
+  tag?: string;
+  /** Covered component identifiers in signed order, e.g. `@method`, `@target-uri`, `content-digest`. */
+  components: string[];
+}
+
+/** Normalized `WWW-Authenticate` challenge. The raw header is never exposed. */
+export interface WwwAuthenticateDiagnostics {
+  /**
+   * Lowercased auth scheme, e.g. `signature` or `bearer`. A scheme outside
+   * the IANA registry is kept only when it is at most 32 characters and
+   * overlaps no credential-bearing request header value; otherwise `other`.
+   */
+  scheme: string;
+  /**
+   * Challenge `error` code, present only when it is a recognized AdCP
+   * request-signing code or an RFC 6750 Bearer code. Other values are omitted.
+   */
+  error?: string;
+  /**
+   * Challenge `realm`, present only when it is a token of at most 128
+   * characters (letters, digits, `.`, `_`, `:`, `/`, `@`, `-`) that does not
+   * overlap any credential-bearing request header value. On
+   * {@link AuthenticationRequiredError} it is non-enumerable, like
+   * `responseBody`: read it directly; spread and JSON serialization omit it.
+   */
+  realm?: string;
+}
+
+/**
+ * Structured diagnostics for an HTTP 401 or 403 response, built from an
+ * allowlist so every field is safe to log. It carries no `Signature` bytes,
+ * nonce value, webhook secrets, or request-body data. Every emitted value is
+ * screened against credential-named header values at any length, and other
+ * custom header values when equal or 8+ characters.
+ */
+export interface AuthFailureDiagnostics {
+  /** HTTP status, `401` or `403`. */
+  status: number;
+  /** Parsed outbound `Signature-Input`, present only when the request carried a `Signature`. */
+  requestSignature?: RequestSignatureDiagnostics;
+  /** Outbound `Content-Digest` header value (a body hash), present only when the signature covered it. */
+  contentDigest?: string;
+  /** Normalized response challenge, when the response carried `WWW-Authenticate`. */
+  wwwAuthenticate?: WwwAuthenticateDiagnostics;
+  /**
+   * AdCP version the SDK pinned for this call. It selects the wire envelope
+   * and the request-signing profile.
+   */
+  adcpVersion?: string;
+}
+
 /** Diagnostics from the original HTTP response to an SDK-signed request. */
 export interface SignedRequestRejectionInfo {
   status: number;
   /** Untrusted seller text, already bounded and redacted by the transport. */
   responseBody?: string;
+  /** Allowlisted request-signing and challenge diagnostics. */
+  authDiagnostics?: AuthFailureDiagnostics;
 }
 
 /**
@@ -477,6 +546,13 @@ export class AuthenticationRequiredError extends ADCPError {
    * Read it directly as `error.responseBody`; spread and JSON serialization omit it.
    */
   declare readonly responseBody?: string;
+  /**
+   * Allowlisted diagnostics for a rejected SDK-signed request: the outbound
+   * `Signature-Input` parameters, `Content-Digest`, the normalized challenge,
+   * and the AdCP version pin. Safe to log; see {@link AuthFailureDiagnostics}.
+   * The seller-controlled challenge `realm` is non-enumerable.
+   */
+  declare readonly authDiagnostics?: AuthFailureDiagnostics;
 
   constructor(
     public readonly agentUrl: string,
@@ -498,6 +574,7 @@ export class AuthenticationRequiredError extends ADCPError {
       if (signatureCode) this.signatureErrorCode = signatureCode;
       // Seller-controlled prose must not flow into serialized error reports.
       Object.defineProperty(this, 'responseBody', { value: signedRejection.responseBody, enumerable: false });
+      if (signedRejection.authDiagnostics) this.authDiagnostics = hideChallengeRealm(signedRejection.authDiagnostics);
       this.details = { agentUrl, challenge, requestSigned: true, status: this.status };
     }
   }
@@ -550,6 +627,18 @@ export class AuthenticationCredentialsRejectedError extends AuthenticationRequir
       });
     }
   }
+}
+
+/**
+ * The realm is seller-controlled text. Like `responseBody`, it stays readable
+ * on the error but out of spread and JSON serialization.
+ */
+function hideChallengeRealm(diagnostics: AuthFailureDiagnostics): AuthFailureDiagnostics {
+  const realm = diagnostics.wwwAuthenticate?.realm;
+  if (realm === undefined) return diagnostics;
+  const { realm: _realm, ...challenge } = diagnostics.wwwAuthenticate!;
+  Object.defineProperty(challenge, 'realm', { value: realm, enumerable: false });
+  return { ...diagnostics, wwwAuthenticate: challenge };
 }
 
 function sanitizeAgentUrlForError(value: string): string {

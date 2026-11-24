@@ -224,7 +224,50 @@ The SDK's compatibility task polls (`tasks_get` over MCP and skill `tasks/get` o
 
 For SDK client calls over A2A or MCP, a signed HTTP 401 with a `Signature` challenge (or no challenge) produces an `AuthenticationRequiredError` with `requestSigned: true` and `status: 401`. Its `code` remains `AUTHENTICATION_REQUIRED` for compatibility; `signatureErrorCode` carries a recognized seller `request_signature_*` code, and the message includes the protocol's repair hint. Check the public discovery chain, `brand_json_url` → `agents[]` → `jwks_uri`, when the seller cannot resolve your key. Explicit Bearer or Basic gateway challenges retain their existing authentication recovery. For client-credentials agents, a bare 401 still permits one token refresh; a persistent signed rejection keeps its diagnostics. Other signed bare 401s bypass unsigned authentication probes and interactive OAuth recovery, so gateways requiring those flows should send an explicit Bearer challenge.
 
-`error.responseBody` contains a bounded, redacted seller diagnostic when capture succeeds. It is non-enumerable and excluded from JSON error reports. Custom header values are conservatively treated as credentials; short values can mask matching diagnostic text. Treat it as untrusted operator diagnostic text; do not feed it to automated prompts or use it as recovery instructions. Failed `TaskResult` values preserve this error under `result.errorInstance`, so the diagnostic is available as `result.errorInstance.responseBody` after narrowing to `AuthenticationRequiredError`. Conformance raw capture uses the same bounded, redacted diagnostic rather than the original response bytes for these failures. Low-level signing fetch presets continue to return the original HTTP `Response`.
+`error.responseBody` contains a bounded, redacted seller diagnostic when capture succeeds. It is non-enumerable and excluded from JSON error reports. Custom header values are conservatively treated as credentials; short values can mask matching diagnostic text. The `Signature` the SDK sent is masked wherever a seller echoes it, both as the `sig1=:…:` header value and as bare signature bytes in either Base64 alphabet, padded or not. `Signature-Input` parameters stay visible. `onTransportActivity` response bodies get the same signature masking. Treat it as untrusted operator diagnostic text; do not feed it to automated prompts or use it as recovery instructions. Failed `TaskResult` values preserve this error under `result.errorInstance`, so the diagnostic is available as `result.errorInstance.responseBody` after narrowing to `AuthenticationRequiredError`. Conformance raw capture uses the same bounded, redacted diagnostic rather than the original response bytes for these failures. Low-level signing fetch presets continue to return the original HTTP `Response`.
+
+`error.authDiagnostics` records what the SDK signed and what the seller challenged, as structured fields built from an allowlist. Unlike `responseBody`, it is enumerable and safe to log:
+
+```typescript
+interface AuthFailureDiagnostics {
+  status: number; // 401 or 403
+  requestSignature?: {
+    label: string; // e.g. 'sig1'
+    keyid?: string;
+    alg?: string;
+    created?: number; // Unix seconds
+    expires?: number; // Unix seconds
+    noncePresent: boolean; // never the nonce value
+    tag?: string;
+    components: string[]; // covered components, in signed order
+  };
+  contentDigest?: string; // outbound Content-Digest value (a body hash)
+  wwwAuthenticate?: { scheme: string; error?: string; realm?: string };
+  adcpVersion?: string; // AdCP version pin; selects the wire envelope and signing profile
+}
+```
+
+It never includes `Signature` bytes, the nonce value, webhook secrets, or request-body data. Every emitted value is screened against the request's protected values:
+- These are matched anywhere, at any length:
+  - credential header values: names containing `auth`, `token`, `key`, `secret`, `cookie`, `session`, `password`, `credential`, or `signature`, with separators ignored, so `X-AuthToken` counts
+  - the bearer or basic credential
+  - the nonce
+  - the signature bytes
+- Other custom header values are matched when equal, or anywhere once they are 8 or more characters long.
+
+A matching string reads `[redacted]`, and a matching number or digest is omitted. One limitation follows from the second rule. If you send a credential shorter than 8 characters under a header name that matches none of those words, and also embed it in your own `keyid` or `tag`, it is not detected. Give credential headers a credential-like name. `requestSignature` is parsed from the outbound `Signature-Input` and is present only when the request carried a `Signature`. `contentDigest` is present only when that signature covered it. `wwwAuthenticate.scheme` is a registered scheme name, or a short seller scheme that overlaps no request credential; anything else reads `other`. `wwwAuthenticate.error` is present only for a recognized `request_signature_*` code or an RFC 6750 Bearer code. `wwwAuthenticate.realm` is present only when it is a short token that overlaps no credential-bearing request header value. Because the realm is seller-controlled text, it is non-enumerable on the error, like `responseBody`: read `error.authDiagnostics.wwwAuthenticate.realm` directly, because spread and JSON serialization omit it. The raw challenge never appears. A seller that answers a signed request with `401` and `WWW-Authenticate: Signature error="request_signature_required"` therefore reports `wwwAuthenticate.error: 'request_signature_required'` alongside the `keyid`, `tag`, and covered components the SDK actually sent.
+
+The same object reaches `onTransportActivity` as `event.authDiagnostics` on every `response_received` event with HTTP 401 or 403, signed or not. Use it there for 403 responses, which do not throw `AuthenticationRequiredError`. The event's `requestHeaders` and `responseHeaders` maps still redact `Signature` and `Signature-Input` and drop `Content-Digest` and `WWW-Authenticate`.
+
+```typescript
+const client = new ADCPMultiAgentClient(agents, {
+  onTransportActivity: event => {
+    if (event.authDiagnostics) {
+      console.warn(JSON.stringify({ transportRequestId: event.transportRequestId, ...event.authDiagnostics }));
+    }
+  },
+});
+```
 
 ## Step 3.5: Production Key Storage — KMS / HSM / Vault
 

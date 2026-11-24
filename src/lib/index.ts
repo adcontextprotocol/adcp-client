@@ -790,6 +790,9 @@ export {
 } from './errors';
 export type {
   OAuthMetadataInfo,
+  AuthFailureDiagnostics,
+  RequestSignatureDiagnostics,
+  WwwAuthenticateDiagnostics,
   ClientPreflightAdcpErrorInfo,
   ClientPreflightAdcpErrorRecovery,
   FeatureUnsupportedErrorOptions,

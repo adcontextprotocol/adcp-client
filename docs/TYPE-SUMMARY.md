@@ -80,6 +80,7 @@ interface TransportActivity {
   streaming?: boolean; // Uncaptured body: terminal observation follows consumption or abort
   outcome?: TransportResponseOutcome; // response_completed only
   bytes?: number; // Bytes forwarded before the terminal outcome; no stream payload retained
+  authDiagnostics?: AuthFailureDiagnostics; // 401/403 only: Signature-Input params, Content-Digest, challenge code; no secrets
 }
 
 // Share discovery across request-local clients using an application-owned authorization identity.
