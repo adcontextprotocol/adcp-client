@@ -1154,23 +1154,37 @@ const SDK_ERROR_PROTOTYPES: ReadonlySet<unknown> = new Set(
 );
 const NATIVE_ERROR_STACK_GETTER = Object.getOwnPropertyDescriptor(new Error(), 'stack')?.get;
 
+/**
+ * Formatted stack text from a data property or V8's native lazy accessor. The
+ * native getter can run an adopter `Error.prepareStackTrace`, which may throw
+ * or return a non-string; either way the stack is omitted.
+ */
+function errorStackText(error: Error, descriptor: PropertyDescriptor): string | undefined {
+  if ('value' in descriptor) return typeof descriptor.value === 'string' ? descriptor.value : undefined;
+  if (NATIVE_ERROR_STACK_GETTER === undefined || descriptor.get !== NATIVE_ERROR_STACK_GETTER) return undefined;
+  try {
+    const stack: unknown = NATIVE_ERROR_STACK_GETTER.call(error);
+    return typeof stack === 'string' ? stack : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Clone a typed error without retaining legacy identity in reflective own fields. */
 function canonicalCreativeErrorInstance<T extends Error>(error: T, legacySource?: unknown): T {
   const own: Record<string, unknown> = {};
   const descriptors: Record<string, PropertyDescriptor> = Object.getOwnPropertyDescriptors(error);
   for (const [key, descriptor] of Object.entries(descriptors)) {
-    // Invoking an adopter-defined accessor while sanitizing is unsafe. Prototype
-    // accessors remain available; reflective own accessors are omitted.
-    if ('value' in descriptor) own[key] = descriptor.value;
-    else if (
-      key === 'stack' &&
-      NATIVE_ERROR_STACK_GETTER !== undefined &&
-      descriptor.get === NATIVE_ERROR_STACK_GETTER
-    ) {
-      // V8's lazy stack accessor is not adopter code. Read the text once so it
-      // is sanitized like `message` and copied as data.
-      own[key] = NATIVE_ERROR_STACK_GETTER.call(error);
-      descriptors[key] = { value: own[key], writable: true, enumerable: false, configurable: true };
+    if (key === 'stack') {
+      // Only formatted text crosses, sanitized like `message` and copied as data.
+      const stack = errorStackText(error, descriptor);
+      if (stack === undefined) continue;
+      own.stack = stack;
+      descriptors.stack = { value: stack, writable: true, enumerable: false, configurable: true };
+    } else if ('value' in descriptor) {
+      // Invoking an adopter-defined accessor while sanitizing is unsafe. Prototype
+      // accessors remain available; reflective own accessors are omitted.
+      own[key] = descriptor.value;
     }
   }
   const { legacySource: _dropLegacySource, own: safeOwn } = stripLegacyCreativeIdentity({ own, legacySource }) as {
