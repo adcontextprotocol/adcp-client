@@ -168,6 +168,8 @@ for (const version of ['3.1', '3.2', toReleasePrecisionWire(ADCP_VERSION)]) {
           writes++;
           return { ...row, ctx_metadata: { secret: 'must-not-echo' } };
         };
+        // The platform server declares its releases on the platform, not in its options.
+        const { capabilities, ...platformOptions } = options;
         const server =
           kind === 'direct'
             ? createAdcpServer({ ...options, accounts: { syncAccounts: async () => ({ accounts: [handler()] }) } })
@@ -179,12 +181,13 @@ for (const version of ['3.1', '3.2', toReleasePrecisionWire(ADCP_VERSION)]) {
                     channels: ['display'],
                     pricingModels: ['cpm'],
                     supportedBillings: ['operator'],
+                    supported_versions: capabilities.supported_versions,
                     config: {},
                   },
                   sales: {},
                   accounts: { resolve: async () => null, upsert: async () => [handler()] },
                 },
-                options
+                platformOptions
               );
         t.after(() => server.close());
         const request = {
