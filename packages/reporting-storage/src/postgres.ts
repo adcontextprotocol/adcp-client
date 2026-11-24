@@ -5,6 +5,7 @@ import type { ReportingAdjustmentReceipt, ReportingMaterialization, ReportingRec
 import { canonicalJsonV1, ReportingInstantV1Schema } from '@adcp/sdk/reporting/source';
 import {
   isWellFormedUnicodeString,
+  normalizeReportingUnreadableMarkWriteV1,
   evaluateReportingLedgerCoverageV1,
   assertReportingLedgerHistoryDoesNotOverlap,
   reportingLedgerEffectivePeriod,
@@ -1246,6 +1247,7 @@ ${managedDueArm}       )
           if (issue.reporting_obligation_id !== obligation.reporting_obligation_id) {
             throw new Error('Reporting issue must belong to the leased obligation');
           }
+          issue = await this.normalizeUnreadableMarkOn(client, issue);
           const issueResult = await client.query(
             `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
              VALUES ($1, $2, $3::jsonb, $4, $5)
@@ -1268,6 +1270,7 @@ ${managedDueArm}       )
             ]
           );
           if (issueResult.rowCount !== 1) throw new Error('Reporting issue identity belongs to another obligation');
+          await this.settleUnreadableMarkOn(client, issue);
         }
       },
       { preBeginAdvisoryLock: accountLock(obligation.account.account_id) }
@@ -4020,10 +4023,11 @@ ${managedDueArm}       )
     return result.rows.map(row => clone(row.data));
   }
 
-  async putIssue(issue: ReportingLedgerIssueV1): Promise<void> {
-    const lock = await this.accountLockForObligation(issue.reporting_obligation_id);
+  async putIssue(value: ReportingLedgerIssueV1): Promise<void> {
+    const lock = await this.accountLockForObligation(value.reporting_obligation_id);
     await this.transaction(
       async client => {
+        const issue = await this.normalizeUnreadableMarkOn(client, value);
         const result = await client.query(
           `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
        VALUES ($1, $2, $3::jsonb, $4, $5)
@@ -4043,6 +4047,7 @@ ${managedDueArm}       )
           ]
         );
         if (result.rowCount !== 1) throw new Error('Reporting issue identity belongs to another obligation');
+        await this.settleUnreadableMarkOn(client, issue);
       },
       { preBeginAdvisoryLock: lock }
     );
@@ -4053,6 +4058,30 @@ ${managedDueArm}       )
     if (!lock) return;
     await this.transaction(
       async client => {
+        const current = (
+          await client.query<JsonRow<ReportingLedgerIssueV1>>(
+            `SELECT data FROM adcp_reporting_issues WHERE issue_id = $1 FOR UPDATE`,
+            [issueId]
+          )
+        ).rows[0]?.data;
+        if (current?.code === 'REVISION_UNREADABLE') {
+          // A seller mark's end dates a mismatch recurrence; see normalizeReportingUnreadableMarkWriteV1.
+          if (current.resolvedAt !== undefined) return;
+          const mark = normalizeReportingUnreadableMarkWriteV1(
+            { ...current, resolvedAt },
+            current,
+            await databaseInstantOn(client)
+          );
+          await client.query(
+            `UPDATE adcp_reporting_issues
+                SET data = $2::jsonb, resolved_at = $3::text::timestamptz, observed_at = $4,
+                    changed_at = clock_timestamp()
+              WHERE issue_id = $1`,
+            [issueId, JSON.stringify(mark), mark.resolvedAt, mark.observedAt]
+          );
+          await this.settleUnreadableMarkOn(client, mark);
+          return;
+        }
         await client.query(
           `UPDATE adcp_reporting_issues
           SET resolved_at = $2::text::timestamptz,
@@ -4064,6 +4093,35 @@ ${managedDueArm}       )
       },
       { preBeginAdvisoryLock: lock }
     );
+  }
+
+  /**
+   * A seller `REVISION_UNREADABLE` mark agrees with an `unreadable` consumer statement, so writing or
+   * retiring one can resolve or reopen a consumer-mismatch occurrence (adcp-client#3653). Runs under the
+   * account lock the write holds.
+   */
+  private async settleUnreadableMarkOn(client: ReportingLedgerTransactionV1, issue: ReportingLedgerIssueV1) {
+    if (issue.code !== 'REVISION_UNREADABLE' || !(await this.issueEventsOn(client))) return;
+    await settleIssueObligationOn(client, issue.reporting_obligation_id, await databaseInstantOn(client));
+  }
+
+  /**
+   * Record a seller `REVISION_UNREADABLE` mark's start and end as ledger facts before writing it
+   * (adcp-client#3653): see `normalizeReportingUnreadableMarkWriteV1`. Reads the stored row under the
+   * write's account lock, so a retried write keeps the end already recorded.
+   */
+  private async normalizeUnreadableMarkOn(
+    client: ReportingLedgerTransactionV1,
+    issue: ReportingLedgerIssueV1
+  ): Promise<ReportingLedgerIssueV1> {
+    if (issue.code !== 'REVISION_UNREADABLE') return issue;
+    const prior = (
+      await client.query<JsonRow<ReportingLedgerIssueV1>>(
+        `SELECT data FROM adcp_reporting_issues WHERE issue_id = $1 FOR UPDATE`,
+        [issue.issueId]
+      )
+    ).rows[0]?.data;
+    return normalizeReportingUnreadableMarkWriteV1(issue, prior, await databaseInstantOn(client));
   }
 
   async listIssues(obligationId: string): Promise<ReportingLedgerIssueV1[]> {
@@ -4750,7 +4808,8 @@ ${managedDueArm}       )
                   obligationRevisions,
                   sellerHealth,
                   ledgerAsOf,
-                  this.consumerMismatchEscalation
+                  this.consumerMismatchEscalation,
+                  issues
                 );
                 const baseProjection = { ...coreProjection, health: sellerHealth };
                 const managed = projectManagedDelivery({

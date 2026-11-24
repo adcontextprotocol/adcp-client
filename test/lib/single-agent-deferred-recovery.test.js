@@ -3535,3 +3535,147 @@ test('ordinary deferred cleanup stays generation-fenced when seller work crosses
     storage.destroy();
   }
 });
+
+function committedFailedResult(operationId, sellerWorkId) {
+  const result = committedTerminalResult(operationId, sellerWorkId, 'unused');
+  return {
+    ...result,
+    success: false,
+    status: 'failed',
+    data: undefined,
+    error: 'Payload changed',
+    adcpError: { code: 'IDEMPOTENCY_CONFLICT', message: 'Payload changed', recovery: 'correctable' },
+    metadata: { ...result.metadata, status: 'failed' },
+  };
+}
+
+const replayIdempotencyKey = 'durable-replay-idempotency-key';
+
+async function replayFailedCheckpoint(label, checkpointField, extra = {}) {
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken(label);
+  const operationId = `${label}-operation`;
+  const sellerWorkId = `${label}-seller-work`;
+  await storeDeferredState(
+    storage,
+    token,
+    {
+      ...committedContinuationState({ operationId, sellerWorkId, version: `${label}-version`, routeRequired: false }),
+      continuationClaimed: true,
+      params: { idempotency_key: replayIdempotencyKey },
+      [checkpointField]: { ...committedFailedResult(operationId, sellerWorkId), ...extra },
+    },
+    60
+  );
+  const executor = new TaskExecutor({
+    deferredStorage: storage,
+    canRecoverDeferredSettlement: async () => true,
+    recoverDeferredSettlement: async result => ({ result }),
+    validation: { requests: 'off', responses: 'off' },
+  });
+  try {
+    const replayed = await executor.resumeDeferredTask(token, { ignored: true });
+    return { replayed, stored: await storage.get(token) };
+  } finally {
+    storage.destroy();
+  }
+}
+
+function assertRebuiltConflict(result) {
+  assert.equal(result.success, false);
+  assert.ok(result.errorInstance instanceof Error, 'replay returns an Error, not a plain object');
+  assert.equal(result.errorInstance.name, 'IdempotencyConflictError');
+  assert.equal(result.errorInstance.message, 'Payload changed');
+  assert.equal(result.errorInstance.idempotencyKey, replayIdempotencyKey);
+  assert.equal(Object.keys(result.errorInstance).includes('idempotencyKey'), false, 'idempotencyKey is non-enumerable');
+}
+
+test('durable replay of a terminal checkpoint rebuilds the typed errorInstance', async () => {
+  const { replayed, stored } = await replayFailedCheckpoint('replay-terminal', 'settlementTerminalResult');
+  assertRebuiltConflict(replayed);
+  assert.equal('errorInstance' in stored.settlementTerminalResult, false);
+  assert.equal('errorInstance' in stored.settlementFinalizedResult, false);
+});
+
+test('durable replay drops a legacy plain-object errorInstance and rebuilds from adcpError', async () => {
+  const legacy = { code: 'IDEMPOTENCY_CONFLICT', stale: true };
+  for (const field of ['settlementTerminalResult', 'settlementFinalizedResult']) {
+    const { replayed } = await replayFailedCheckpoint(`replay-legacy-${field}`, field, { errorInstance: legacy });
+    assertRebuiltConflict(replayed);
+    assert.notEqual(replayed.errorInstance, legacy);
+  }
+});
+
+test('durable replay of a legacy errorInstance with no adcpError omits it', async () => {
+  for (const field of ['settlementTerminalResult', 'settlementFinalizedResult']) {
+    const { replayed } = await replayFailedCheckpoint(`replay-legacy-no-adcp-${field}`, field, {
+      adcpError: undefined,
+      errorInstance: { code: 'IDEMPOTENCY_CONFLICT' },
+    });
+    assert.equal(replayed.success, false);
+    assert.equal('errorInstance' in replayed, false);
+  }
+});
+
+test('a failed deferred resume stores no errorInstance and replays the typed error', async () => {
+  const originalCallTool = ProtocolClient.callTool;
+  const storage = new MemoryStorage({ autoCleanup: false });
+  const token = testDurableToken('failed-resume-checkpoint-token');
+  const now = Date.now();
+  await storeDeferredState(
+    storage,
+    token,
+    {
+      continuationVersion: 'failed-resume-checkpoint-version',
+      taskId: 'failed-resume-operation',
+      a2aTaskId: 'failed-resume-a2a-task',
+      serverVersion: 'v3',
+      agentId: agent.id,
+      taskName: 'create_media_buy',
+      params: { idempotency_key: replayIdempotencyKey },
+      messages: [],
+      clientContext: {
+        kind: 'single-agent',
+        taskType: 'create_media_buy',
+        handlerName: 'onCreateMediaBuyStatusChange',
+        canonical: false,
+        productPolicyRequest: {},
+      },
+      settlementOperationId: 'failed-resume-operation',
+      settlementServerTaskId: 'failed-resume-seller-work',
+      createdAt: now,
+      expiresAt: now + 60_000,
+    },
+    60
+  );
+  ProtocolClient.callTool = async () => ({
+    status: 'failed',
+    task_id: 'failed-resume-seller-work',
+    adcp_error: { code: 'IDEMPOTENCY_CONFLICT', message: 'Payload changed', recovery: 'correctable' },
+  });
+  try {
+    const client = new SingleAgentClient(agent, {
+      deferredStorage: storage,
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    client.ensureCanonicalUrlResolved = async () => ({ ...agent, agent_uri: 'https://seller.example/a2a' });
+    client.registerDurableSettlementRecovery(async (_id, observation) => ({
+      settled: true,
+      status: 'failed',
+      result: observation.result,
+    }));
+
+    const first = await client.resumeDeferredTask(token, { approved: true });
+    assert.equal(first.success, false);
+    const stored = await storage.get(token);
+    assert.equal(stored.settlementTerminalResult.adcpError.code, 'IDEMPOTENCY_CONFLICT');
+    assert.equal('errorInstance' in stored.settlementTerminalResult, false);
+    assert.equal('errorInstance' in stored.settlementFinalizedResult, false);
+
+    assertRebuiltConflict(await client.resumeDeferredTask(token, { approved: true }));
+  } finally {
+    ProtocolClient.callTool = originalCallTool;
+    storage.destroy();
+  }
+});

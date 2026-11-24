@@ -160,6 +160,7 @@ import {
   parseDeclaredToolInput,
   validateToolInputAtAdcpLayer,
   type DeclaredInputRejection,
+  type DeclaredToolReleaseServer,
 } from './declared-input-schema';
 import { ADCP_TASK_MESSAGE_QUEUE, createTaskCapableServer, InMemoryTaskStore } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
@@ -1341,9 +1342,9 @@ export interface SponsoredIntelligenceHandlers<TAccount = unknown> {
  * models it as an HTTP webhook (the buyer POSTs to the `approval_webhook`
  * URL returned from `acquire_rights`), not as an MCP/A2A tool. Adopters
  * wire the receiver to `BrandRightsPlatform.reviewCreativeApproval` and
- * use `creativeApproved` / `creativeApprovalRejected` /
- * `creativeApprovalPendingReview` / `creativeApprovalError` from
- * `@adcp/sdk/server` to build the webhook response.
+ * use `legacyCreativeApprovalApproved` / `legacyCreativeApprovalRejected` /
+ * `legacyCreativeApprovalPendingReview` / `legacyCreativeApprovalError`
+ * from `@adcp/sdk/server` to build the webhook response.
  */
 export interface BrandRightsHandlers<TAccount = unknown> {
   getBrandIdentity?: DomainHandler<'get_brand_identity', TAccount>;
@@ -6240,12 +6241,68 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     injectVersionIntoResponse(response, served.wireVersion);
     return response;
   };
+  // The comply_test_controller helpers register after this returns, outside
+  // the spec-tool dispatcher. Serve them at the caller's release all the same:
+  // refuse a pin this server cannot serve before the controller runs, convert
+  // its response down to the served release, and echo that release (DR-0024,
+  // adcp-client#3769).
+  const serveAtSelectedRelease: DeclaredToolReleaseServer = async (toolName, call, run) => {
+    const releaseArgs = isPlainObject(call.releaseArgs) ? call.releaseArgs : {};
+    const selected = selectServedAdcpRelease(releaseArgs, capConfig, adcpVersion, defaultAdcpVersion);
+    if (isMcpToolResponse(selected)) return finishFrameworkRejection(toolName, selected, call, defaultErrorRelease);
+    const produced = await run();
+    const structured = produced.structuredContent;
+    // A framework rejection was already finished at this release.
+    if (!isPlainObject(structured) || 'adcp_error' in structured) return produced;
+    // Copy before stamping per-call fields: a store may return a cached body.
+    const response = cloneFormattedResponse(produced);
+    if (translationSteps(adcpVersion, selected.validationVersion).length > 0) {
+      const downgraded = downgradeResponse(toolName, structured, {
+        fromVersion: adcpVersion,
+        toVersion: selected.validationVersion,
+      });
+      if (downgraded.data !== structured) {
+        const mirrors = contentTextMirrorsStructuredContent(response, structured);
+        response.structuredContent = downgraded.data;
+        syncContentJsonText(response, downgraded.data, mirrors);
+      }
+      if (downgraded.drifts.length > 0) {
+        reportVersionTranslation({
+          tool: toolName,
+          direction: 'response',
+          fromVersion: adcpVersion,
+          toVersion: selected.validationVersion,
+          drifts: downgraded.drifts,
+        });
+      }
+      // A value the served release cannot express (a 3.3-only enum value such
+      // as `forced.arm: 'unable'`) is dropped, which leaves a body that release
+      // rejects. Refuse rather than answer with a malformed success.
+      if (
+        validateResponse(toolName, structured, adcpVersion).valid &&
+        !validateResponse(toolName, response.structuredContent, selected.validationVersion).valid
+      ) {
+        return finishFrameworkRejection(
+          toolName,
+          adcpError('VERSION_UNSUPPORTED', {
+            message: `The ${toolName} result cannot be expressed in AdCP ${selected.validationVersion}; call it at a release that defines it.`,
+            details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
+          }),
+          call,
+          selected
+        );
+      }
+    }
+    injectVersionIntoResponse(response, selected.wireVersion);
+    return response;
+  };
   // Tools that declare a zod input schema (customTools, tasks_get, and the
   // comply_test_controller helpers registered after this returns) validate it
   // at the AdCP layer, and their rejections are finished the same way.
   configureDeclaredInputErrors(server, {
     exposeSchemaPath: exposeErrorDetails,
     finalize: (toolName, response, rejection) => finishFrameworkRejection(toolName, response, rejection),
+    serveAtRelease: serveAtSelectedRelease,
   });
 
   // The v1 SDK server remains the canonical legacy path. The modern adapter

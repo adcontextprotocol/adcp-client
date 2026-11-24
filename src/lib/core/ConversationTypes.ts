@@ -154,11 +154,23 @@ export type WebhookUrlTemplate =
  */
 export interface TaskOptions {
   /**
-   * Caller-supplied operation correlation id. Defaults to a generated UUID.
+   * Caller-supplied operation correlation id. It fills the `{operation_id}`
+   * webhook URL macro and, on AdCP 3.1+, `push_notification_config.operation_id`.
    * Persist it with metadata.serverTaskId to resume tracking after a restart.
-   * Use a globally unique opaque id per dispatch (UUID recommended), including
-   * across tenants sharing persistence or webhook receivers. Reuse it for tracking,
-   * not resubmission; retry dispatches use a new id and the same idempotency_key.
+   *
+   * Default: for a request that carries an idempotency key (every mutating
+   * request; the SDK generates one when you don't), `idem-` followed by 40 hex
+   * characters derived from the agent id, task name and key. Otherwise a
+   * generated UUID. A seller hashes the request, webhook registration
+   * included, under its idempotency key, so a retry must send the same
+   * operation id: retry with the same idempotency_key and the SDK derives the
+   * same id. If you pass operationId, pass the same one on the retry. Reuse is
+   * allowed once the earlier dispatch has finished; while it is in flight on
+   * this client, the call fails with a ConfigurationError, so track the
+   * existing task instead.
+   *
+   * Use a globally unique opaque id per operation (UUID recommended), including
+   * across tenants sharing persistence or webhook receivers.
    * Accepts 1–255 letters, digits, underscores, periods, colons, or hyphens.
    * Dot-only IDs and the delivery_route: prefix are reserved.
    */
@@ -753,13 +765,22 @@ export interface TaskResultFailure<T> extends TaskResultBase<T> {
   /** Structured AdCP error (code, recovery, suggestion, retryAfterMs) */
   adcpError?: AdcpErrorInfo;
   /**
-   * Typed `ADCPError` subclass instance when the seller's error code has a
-   * dedicated class — currently `IdempotencyConflictError` and
-   * `IdempotencyExpiredError`. Lets callers write
+   * Typed `ADCPError` subclass instance, so callers can write
    * `if (result.errorInstance instanceof IdempotencyConflictError)` instead of
-   * switching on `adcpError.code` strings. Absent for codes without a typed
-   * mapping. Also preserves validated NeedsAuthorizationError metadata from
-   * MCP authentication challenges for interactive authorization flows.
+   * switching on `adcpError.code` strings. Present for:
+   * - a seller error code with a dedicated class: `IdempotencyConflictError`,
+   *   `IdempotencyExpiredError`, `AccountNotFoundError`,
+   *   `AccountSetupRequiredError`, `AccountPaymentRequiredError`,
+   *   `ActionNotAllowedError`;
+   * - an authentication rejection: `AuthenticationRequiredError`, including a
+   *   rejected signed request and `AuthenticationCredentialsRejectedError` for
+   *   a rejected static credential;
+   * - in a multi-agent collection result, the `ADCPError` the agent's call threw.
+   *
+   * A `NeedsAuthorizationError` is kept only when its MCP OAuth requirements
+   * were validated, for identifying when interactive authorization is
+   * required. Absent otherwise. Seller-supplied fields on these errors (such as
+   * `challenge`, `oauthMetadata` and `responseBody`) are untrusted text.
    */
   errorInstance?: import('../errors').ADCPError;
   /** Correlation ID from the error response context, for tracing across agents */

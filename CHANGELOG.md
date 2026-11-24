@@ -1,5 +1,23 @@
 # Changelog
 
+## 17.0.0-beta.40
+
+### Minor Changes
+
+- 82fec70: Testing: add `test_kit_auth`, a credential laid over each storyboard's declared test kit (adcontextprotocol/adcp#8929).
+
+  A grader that presents its own credential through a run-level `test_kit` replaces every storyboard's declared kit (`prerequisites.test_kit`), so no storyboard gets its own fixtures: asset files for `$build_assets_from_format`, `commercial_relationship` for phase gates, creative build recipes, and so on. `test_kit_auth` keeps each declared kit and changes only its credential.
+  - `comply()`, `runStoryboard()`, `runStoryboardStep()` and `prepareStoryboardFixtures()` accept `test_kit_auth`, with the same shape as `test_kit.auth`. Each storyboard loads its declared kit. A kit that declares `sandbox: true`, or carries no credential of its own (runner-contract kits), gets `test_kit_auth` as its whole `auth` block, so none of the kit's own `api_key`, `basic` or `probe_task` sits next to your credential. The kit is validated after the overlay.
+  - A kit that declares `sandbox: false`, or carries a credential without declaring `sandbox: true`, keeps its own `auth`: it may be the live-mode principal the storyboard tests (adcontextprotocol/adcp#6735). An absent `sandbox` is never read as sandbox, as in `getSandboxEntities()`.
+  - A storyboard that declares no kit gets `{ auth: test_kit_auth }`, as it would from a run-level kit. A declared kit that cannot be loaded (no compliance root, or no such file) gets no overlay, so its `from_test_kit` steps fail as a configuration error, as they would without `test_kit_auth`.
+  - Without run-level `auth`, `comply()`'s own discovery authenticates with `test_kit_auth`, as it does with `test_kit.auth`.
+  - `probe_task` is required and must be allowlisted. `test_kit` and `test_kit_auth` together throw `TestKitValidationError` before the agent is contacted. `@adcp/sdk/testing` exports the `TestKitAuth` type, the shape of both `test_kit.auth` and `test_kit_auth`.
+
+### Patch Changes
+
+- e23aa57: Keep the SDK error class on `result.errorInstance` for creative-bearing tasks (`create_media_buy`, `update_media_buy`, `sync_creatives`, `get_products`, `list_creatives`, `get_media_buys`, `get_media_buy_delivery`, `get_creative_delivery`). The canonical creative boundary rebuilt every typed error on `Error.prototype`, so a signed `create_media_buy` refused with HTTP 401 returned a plain `Error` that failed `instanceof AuthenticationRequiredError`, and `IdempotencyConflictError`, `IdempotencyExpiredError`, the `Account*Error` classes, `ActionNotAllowedError` and `NeedsAuthorizationError` lost their class the same way. SDK error classes now keep their prototype, with their sanitized own data fields (non-enumerable ones stay non-enumerable) and, when the stack formats to a string, a stack sanitized like `message`. Errors whose class is not an SDK class, including adopter subclasses of SDK classes, are still rebuilt on `Error.prototype`.
+- ed7888c: Fix the request-signing capability cache missing on every call for a client that sends per-call correlation headers. `capabilityPrincipalScope` hashed every agent header into the cache key, so a fresh `traceparent`, `x-request-id` or `x-<vendor>-debug-id` on each call gave each call its own key and re-read `get_adcp_capabilities` before every signed request, while the shared discovery cache, which already leaves those headers out, hit. The signing scope now leaves out the headers `isCorrelationHeader` matches, the same rule the discovery cache uses. Credential and tenant/routing headers still split the key, so one principal never reuses another's signing policy. Refs #3718.
+
 ## 17.0.0-beta.39
 
 ### Patch Changes

@@ -2609,11 +2609,6 @@ own schedule.
 
 **Known gaps against the Python SDK.**
 - `acknowledged` and `waived` are never emitted (no operator issue-state API).
-- A seller-side change never clears a TypeScript mismatch: the read projection only stops conflicting
-  when the buyer supersedes its statement, while Python's `consumer_statement_conflicts` also clears
-  `content_mismatch`, `revision_missing` and `unreadable` on the seller's own record change
-  ([#3653](https://github.com/adcontextprotocol/adcp-client/issues/3653)). `commitRevision` already
-  records `resolved` when the projection stops conflicting, so events follow once that is fixed.
 - The issue id is per causing statement, not per chain occurrence, so a TypeScript and a Python seller
   publish different `issueId`s (and therefore `eventId`s) for the same disagreement, and the TypeScript
   `eventId` also hashes the consumer. Observers should not compare ids across SDKs.

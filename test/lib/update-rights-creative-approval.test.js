@@ -21,6 +21,8 @@ const { BRAND_RIGHTS_TOOLS, PROTOCOL_TOOLS } = require('../../dist/lib/utils/cap
 const { MUTATING_TASKS } = require('../../dist/lib/utils/idempotency');
 const { TOOL_REQUEST_SCHEMAS } = require('../../dist/lib/utils/tool-request-schemas');
 const schemas = require('../../dist/lib/types/schemas.generated');
+const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+const { projectResponseForRelease } = require('../../dist/lib/adapters/version/index.js');
 
 describe('update_rights wiring (#551)', () => {
   it('appears in BRAND_RIGHTS_TOOLS alongside the other 3 brand tools', () => {
@@ -142,38 +144,54 @@ describe('updateRightsResponse builder', () => {
 });
 
 describe('creative_approval webhook builders', () => {
-  it('creativeApprovalApproved injects status discriminator', () => {
+  it('creativeApprovalApproved sets approval_status and a completed task status', () => {
     const payload = responses.creativeApprovalApproved({
       rights_id: 'rights_grant_123',
       creative_id: 'cr_42',
       creative_url: 'https://buyer.example.com/creatives/42.mp4',
       approved_at: '2026-05-02T19:00:00Z',
     });
-    assert.equal(payload.status, 'approved');
+    assert.equal(payload.approval_status, 'approved');
+    assert.equal(payload.status, 'completed');
     assert.equal(payload.rights_id, 'rights_grant_123');
   });
 
-  it('creativeApprovalRejected injects status + carries reason/suggestions', () => {
+  it('creativeApprovalRejected sets approval_status + carries reason/suggestions', () => {
     const payload = responses.creativeApprovalRejected({
       rights_id: 'rights_grant_123',
       creative_id: 'cr_42',
       reason: 'logo not visible per brand standards',
       suggestions: ['enlarge the logo to 15% of the frame'],
     });
-    assert.equal(payload.status, 'rejected');
+    assert.equal(payload.approval_status, 'rejected');
+    assert.equal(payload.status, 'completed');
     assert.equal(payload.reason, 'logo not visible per brand standards');
     assert.deepEqual(payload.suggestions, ['enlarge the logo to 15% of the frame']);
   });
 
-  it('creativeApprovalPendingReview injects status + estimated_response_time', () => {
+  it('creativeApprovalPendingReview sets approval_status + estimated_response_time', () => {
     const payload = responses.creativeApprovalPendingReview({
       rights_id: 'rights_grant_123',
       creative_id: 'cr_42',
       estimated_response_time: '24h',
       status_url: 'https://brand-rights.example.com/approvals/cr_42',
     });
-    assert.equal(payload.status, 'pending_review');
+    assert.equal(payload.approval_status, 'pending_review');
+    assert.equal(payload.status, 'completed');
     assert.equal(payload.estimated_response_time, '24h');
+  });
+
+  it('builders let the variant win over a conflicting caller approval_status/status', () => {
+    const conflict = { approval_status: 'pending_review', status: 'rejected' };
+    const approved = responses.creativeApprovalApproved({ rights_id: 'r', ...conflict });
+    assert.equal(approved.approval_status, 'approved');
+    assert.equal(approved.status, 'completed');
+    const rejected = responses.creativeApprovalRejected({ rights_id: 'r', reason: 'x', ...conflict });
+    assert.equal(rejected.approval_status, 'rejected');
+    assert.equal(rejected.status, 'completed');
+    const pending = responses.creativeApprovalPendingReview({ rights_id: 'r', ...conflict });
+    assert.equal(pending.approval_status, 'pending_review');
+    assert.equal(pending.status, 'completed');
   });
 
   it('creativeApprovalError surfaces multi-error arm without status', () => {
@@ -216,6 +234,60 @@ describe('creative_approval webhook builders', () => {
         `expected each arm to validate; ${JSON.stringify(candidate)} failed: ${JSON.stringify(parsed.error?.issues)}`
       );
     }
+  });
+});
+
+describe('creative_approval builders are valid per release (#3777)', () => {
+  const BUILT = {
+    approved: () =>
+      responses.creativeApprovalApproved({
+        rights_id: 'rights_grant_123',
+        creative_id: 'cr_42',
+        approved_at: '2026-05-02T19:00:00Z',
+      }),
+    rejected: () =>
+      responses.creativeApprovalRejected({
+        rights_id: 'rights_grant_123',
+        creative_id: 'cr_42',
+        reason: 'logo not visible',
+      }),
+    pending_review: () =>
+      responses.creativeApprovalPendingReview({
+        rights_id: 'rights_grant_123',
+        creative_id: 'cr_42',
+        estimated_response_time: '24h',
+      }),
+  };
+
+  for (const [decision, build] of Object.entries(BUILT)) {
+    for (const version of ['3.1', '3.3.0-rc.3']) {
+      it(`${decision} validates against creative_approval at ${version}`, () => {
+        const outcome = validateResponse('creative_approval', build(), version);
+        assert.ok(outcome.valid, `expected valid at ${version}: ${JSON.stringify(outcome.issues)}`);
+      });
+    }
+
+    it(`${decision} projects to a 3.0 body carrying the decision in status`, () => {
+      const projected = projectResponseForRelease('creative_approval', build(), '3.0.25');
+      assert.equal(projected.status, decision);
+      assert.equal('approval_status' in projected, false);
+      assert.equal(projected.rights_id, 'rights_grant_123');
+      const outcome = validateResponse('creative_approval', projected, '3.0');
+      assert.ok(outcome.valid, `expected valid at 3.0: ${JSON.stringify(outcome.issues)}`);
+    });
+  }
+
+  it('a rejected creative never reads as a rejected task on 3.1+', () => {
+    const payload = BUILT.rejected();
+    assert.notEqual(payload.status, 'rejected');
+    assert.equal(payload.status, 'completed');
+    assert.equal(payload.approval_status, 'rejected');
+  });
+
+  it('builders work without approval_status in the input', () => {
+    assert.equal(BUILT.approved().approval_status, 'approved');
+    assert.equal(BUILT.rejected().approval_status, 'rejected');
+    assert.equal(BUILT.pending_review().approval_status, 'pending_review');
   });
 });
 

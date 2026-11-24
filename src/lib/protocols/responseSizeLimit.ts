@@ -196,6 +196,27 @@ export function withResponseSizeLimit<T>(maxResponseBytes: number | undefined, f
 }
 
 /**
+ * Run one page of a paginated read (`tools/list`) under its own cumulative
+ * SSE allowance. The per-response cap is inherited and narrowed exactly as in
+ * {@link withResponseSizeLimit}; only the stream meter starts at zero, so each
+ * page is held to the cap instead of all pages sharing one call's allowance.
+ * The page count is bounded by the caller (adcp-client#3717).
+ *
+ * @internal
+ */
+export function withPageResponseSizeLimit<T>(maxResponseBytes: number | undefined, fn: () => Promise<T>): Promise<T> {
+  const enclosing = responseSizeLimitStorage.getStore();
+  const requested =
+    maxResponseBytes === undefined && enclosing ? enclosing.maxResponseBytes : resolveResponseSizeCap(maxResponseBytes);
+  const cap = requested === null ? null : Math.min(requested, enclosing?.maxResponseBytes ?? requested);
+  const slot: SizeLimitSlot =
+    cap === null
+      ? { maxResponseBytes: null }
+      : { maxResponseBytes: cap, streamLimit: sseBudgetFor(cap), streamMeter: { consumed: 0 } };
+  return responseSizeLimitStorage.run(slot, () => rethrowRecordedViolation(slot, fn));
+}
+
+/**
  * Give the caller the typed error even when the transport swallowed it.
  *
  * Erroring a `TransformStream` surfaces to whoever reads the body, and not

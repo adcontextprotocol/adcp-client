@@ -39,7 +39,7 @@ import {
 import { withPreparedProtocolToolCall } from '../protocols/prepared-call-context';
 import { getAuthToken } from '../auth';
 import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
-import { is401Error, adcpErrorToTypedError, ConfigurationError } from '../errors';
+import { is401Error, adcpErrorToTypedError, AuthenticationRequiredError, ConfigurationError } from '../errors';
 import type { ADCPError } from '../errors';
 import type { DeferredTaskState, DeferredTaskStorage } from '../storage/interfaces';
 import {
@@ -66,7 +66,7 @@ import { MAX_JSON_DEPTH } from '../utils/json-depth';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import { cancelA2ATask } from '../protocols/a2a';
-import { isAbortOrTimeoutError, throwIfAborted } from '../protocols/abort';
+import { isAbortOrTimeoutError, throwIfAborted, withAbortSignal } from '../protocols/abort';
 import type {
   Message,
   InputRequest,
@@ -97,6 +97,7 @@ import {
   attachTaskDeadlineGovernanceRecovery,
   attachTaskDeadlineIdempotencyKey,
   getTaskOperationId,
+  resolveDispatchOperationId,
   withTaskDeadline,
 } from './task-deadline';
 
@@ -926,6 +927,21 @@ function trustedDeferredServerTaskId(state: DeferredTaskState): string | undefin
   );
 }
 
+/**
+ * Restore a checkpointed terminal result. Checkpoints do not store typed errors
+ * (older ones hold a plain-object copy, which is dropped), so a failed result
+ * gets its typed instance back from the stored `adcpError` and the request's
+ * idempotency key.
+ */
+function restoreDeferredCheckpoint<T>(stored: unknown, state: DeferredTaskState): TaskResult<T> {
+  const { errorInstance: _stored, ...result } = structuredClone(stored) as TaskResult<T> & { errorInstance?: unknown };
+  void _stored;
+  if (result.success !== false || !result.adcpError) return result as TaskResult<T>;
+  const idempotencyKey = typeof state.params?.idempotency_key === 'string' ? state.params.idempotency_key : undefined;
+  const errorInstance = adcpErrorToTypedError(result.adcpError, idempotencyKey);
+  return (errorInstance ? { ...result, errorInstance } : result) as TaskResult<T>;
+}
+
 function attachDeferredServerVersion<T>(result: TaskResult<T>, state: DeferredTaskState): TaskResult<T> {
   result.metadata = {
     ...result.metadata,
@@ -947,6 +963,22 @@ interface DeferredDispatchAdmissionLease {
 }
 
 /**
+ * The SDK authentication error a failed result keeps as `errorInstance`. A
+ * `NeedsAuthorizationError` counts only when its requirements prove the MCP
+ * endpoint is OAuth protected, because callers start an interactive OAuth flow
+ * from it. Other `AuthenticationRequiredError`s, such as a rejected static
+ * credential, are kept as raised.
+ */
+function authenticationErrorInstance(error: unknown, agentUrl: string): ADCPError | undefined {
+  const signedRejection = getSignedRequestRejection(error);
+  if (signedRejection) return signedRejection;
+  if (error instanceof NeedsAuthorizationError) {
+    return hasValidatedMcpAuthorizationRequirements(error.requirements, agentUrl) ? error : undefined;
+  }
+  return error instanceof AuthenticationRequiredError ? error : undefined;
+}
+
+/**
  * Core task execution engine that handles the conversation loop with agents
  */
 export class TaskExecutor {
@@ -963,6 +995,8 @@ export class TaskExecutor {
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
   private compactedTaskIds = new Map<string, true>();
+  /** Settles when the dispatch that registered the operation id has fully unwound. */
+  private executionsInProgress = new Map<string, Promise<void>>();
   private conversationStorage?: Map<string, Message[]>;
   private governanceMiddleware?: GovernanceMiddleware;
   private lastKnownServerVersion?: 'v2' | 'v3';
@@ -1399,16 +1433,6 @@ export class TaskExecutor {
     // flows in on the response and is surfaced via metadata.serverTaskId.
     // `options.contextId` / `options.taskId` ride on the A2A message envelope
     // and are threaded straight to the protocol adapter below.
-    const taskId = getTaskOperationId(options) ?? randomUUID();
-    if (
-      this.activeTasks.has(taskId) ||
-      this.compactedTaskIds.has(taskId) ||
-      this.deferredTerminalPublicationTaskIds.has(taskId) ||
-      this.closedExternalTaskSettlementTaskIds.has(taskId) ||
-      this.externalTaskSettlementHandlers.has(taskId)
-    ) {
-      throw new ConfigurationError('operationId is already in use by this client; track the existing task instead.');
-    }
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
     const wireAdcpVersion = options.wireAdcpVersion ?? this.config.wireAdcpVersion;
@@ -1428,6 +1452,29 @@ export class TaskExecutor {
       params = { ...params, idempotency_key: idempotencyKey };
     }
 
+    // Resolved after the key: a request with one defaults to an operation id
+    // derived from it, so a retry under the same key reproduces the webhook URL
+    // and push_notification_config the seller hashed (adcp-client#3693).
+    const { operationId: taskId, derivedFromIdempotencyKey } = resolveDispatchOperationId(options, {
+      agentId: agent.id,
+      taskName,
+      idempotencyKey,
+    });
+    const releasing = this.releaseFinishedOperationId(taskId, options.signal);
+    if (releasing) await releasing;
+    if (
+      this.activeTasks.has(taskId) ||
+      this.compactedTaskIds.has(taskId) ||
+      this.deferredTerminalPublicationTaskIds.has(taskId) ||
+      this.closedExternalTaskSettlementTaskIds.has(taskId) ||
+      this.externalTaskSettlementHandlers.has(taskId)
+    ) {
+      throw new ConfigurationError(
+        derivedFromIdempotencyKey
+          ? `A call with this idempotency_key is already in progress on this client (operationId ${taskId}); track the existing task instead of resubmitting.`
+          : 'operationId is already in use by this client; track the existing task instead.'
+      );
+    }
     // Register task in active tasks
     const taskState: TaskState = {
       taskId,
@@ -1455,6 +1502,20 @@ export class TaskExecutor {
       idempotencyKey,
     };
     this.activeTasks.set(taskId, taskState);
+
+    // Reserve the id before anything below can re-enter: task-event listeners,
+    // the abort listener and the webhook tools predicate run synchronously,
+    // and one may retry this same key. That retry must wait for this dispatch
+    // to unwind, not reclaim the id while it still runs.
+    let finishExecution!: () => void;
+    const execution = new Promise<void>(resolve => {
+      finishExecution = resolve;
+    });
+    this.executionsInProgress.set(taskId, execution);
+    const releaseExecution = (): void => {
+      if (this.executionsInProgress.get(taskId) === execution) this.executionsInProgress.delete(taskId);
+      finishExecution();
+    };
 
     // Once the final compatibility boundary starts, an abort may race a
     // durable claim that has committed but whose hook has not returned yet.
@@ -1502,7 +1563,23 @@ export class TaskExecutor {
     const debugLogs: any[] = [];
 
     // Generate webhook URL if template is configured
-    const webhookUrl = this.generateWebhookUrl(taskName, taskId, options);
+    let webhookUrl: string | undefined;
+    try {
+      webhookUrl = this.generateWebhookUrl(taskName, taskId, options);
+    } catch (error) {
+      // A throwing webhook tools predicate ends the call before dispatch.
+      // Release what the dispatch below would have released.
+      if (taskAbortListener) options.signal!.removeEventListener('abort', taskAbortListener);
+      try {
+        this.updateTaskStatus(taskId, 'failed', undefined, error instanceof Error ? error.message : String(error));
+      } catch {
+        // A throwing onActivity hook must not replace the predicate's error.
+      } finally {
+        // After publication, so a same-key listener still waits for this unwind.
+        releaseExecution();
+      }
+      throw error;
+    }
 
     // Governance state (scoped outside try so catch can access)
     let governanceCheckId: string | undefined;
@@ -2011,6 +2088,7 @@ export class TaskExecutor {
       return attachMatch(failed);
     } finally {
       if (taskAbortListener) options.signal!.removeEventListener('abort', taskAbortListener);
+      releaseExecution();
     }
   }
 
@@ -2989,6 +3067,33 @@ export class TaskExecutor {
     const timer = setTimeout(expire, Math.min(retentionMs, MAX_TIMER_DELAY_MS));
     timer.unref?.();
     this.externalTaskSettlementTimers.set(taskId, timer);
+  }
+
+  /**
+   * Free an operation id whose task has finished so a retry may reuse it
+   * (adcp-client#3693). A caller deadline marks a task aborted before its
+   * dispatch unwinds, so wait for the unwind: the old run's late updates would
+   * otherwise land on the retry. A task still in flight and a durable
+   * settlement fence are left for the caller's collision check to refuse.
+   */
+  private releaseFinishedOperationId(taskId: string, signal: AbortSignal | undefined): Promise<void> | undefined {
+    const previous = this.activeTasks.get(taskId);
+    const fenced = () =>
+      this.deferredTerminalPublicationTaskIds.has(taskId) ||
+      this.closedExternalTaskSettlementTaskIds.has(taskId) ||
+      this.externalTaskSettlementHandlers.has(taskId);
+    if ((previous && !TERMINAL_TASK_STATUSES.has(previous.status)) || fenced()) return undefined;
+    const release = (): void => {
+      if (previous && this.activeTasks.get(taskId) === previous && !fenced()) {
+        this.cleanupTerminalTaskInspectionState(taskId);
+      }
+    };
+    const unwinding = this.executionsInProgress.get(taskId);
+    if (!unwinding) {
+      release();
+      return undefined;
+    }
+    return withAbortSignal([signal], undefined, () => unwinding).then(release);
   }
 
   /** Release short-lived task inspection state without dropping a live durable push fence. */
@@ -4601,7 +4706,7 @@ export class TaskExecutor {
     // or settlement recovery.
     if (requiresSettlement && state.settlementFinalizedResult !== undefined) {
       const normalizedFinalized = normalizeDeferredTerminalServerTaskId(
-        structuredClone(state.settlementFinalizedResult) as TaskResult<T>,
+        restoreDeferredCheckpoint<T>(state.settlementFinalizedResult, state),
         trustedDeferredServerTaskId(state)
       );
       if (normalizedFinalized.serverTaskId === undefined) {
@@ -4762,7 +4867,7 @@ export class TaskExecutor {
       const finalizationLease = await this.acquireDeferredFinalizationLease(token, state);
       try {
         const normalizedCheckpoint = normalizeDeferredTerminalServerTaskId(
-          structuredClone(state.settlementTerminalResult) as TaskResult<T>,
+          restoreDeferredCheckpoint<T>(state.settlementTerminalResult, state),
           trustedDeferredServerTaskId(state)
         );
         if (normalizedCheckpoint.serverTaskId === undefined) {
@@ -5136,10 +5241,13 @@ export class TaskExecutor {
           settledResult = attachMatch(normalizedTerminal.result);
           const terminalSettlementServerTaskId = normalizedTerminal.serverTaskId;
           settledServerTaskId = terminalSettlementServerTaskId;
+          // A typed error is not a portable durable-store value; replay
+          // rebuilds it from the stored `adcpError`.
           const {
             match: _match,
             submitted: _submitted,
             deferred: _deferred,
+            errorInstance: _errorInstance,
             ...serializableResult
           } = normalizedTerminal.result as any;
           const checkpointCreatedAt = Date.now();
@@ -5568,11 +5676,13 @@ export class TaskExecutor {
       match: _match,
       submitted: _submitted,
       deferred: _deferred,
+      errorInstance: _errorInstance,
       ...serializableResult
     } = normalizedTerminal.result as any;
     void _match;
     void _submitted;
     void _deferred;
+    void _errorInstance;
     const {
       settlementPendingTaskId: _pending,
       settlementResumeDispatchLease: _dispatchLease,
@@ -5992,11 +6102,13 @@ export class TaskExecutor {
       match: _match,
       submitted: _submitted,
       deferred: _deferred,
+      errorInstance: _errorInstance,
       ...serializableResult
     } = normalizedFinalized.result as any;
     void _match;
     void _submitted;
     void _deferred;
+    void _errorInstance;
     const acknowledgedAt = Date.now();
     const ttlSeconds = this.deferredSafetyRetentionSeconds();
     const { settlementFinalizationLease: _lease, ...finalizedCheckpoint } = current;
@@ -6242,11 +6354,7 @@ export class TaskExecutor {
       error: error.message || String(error),
       adcpError: adcpErrorInfo,
       errorInstance:
-        getSignedRequestRejection(error) ??
-        (error instanceof NeedsAuthorizationError &&
-        hasValidatedMcpAuthorizationRequirements(error.requirements, agent.agent_uri)
-          ? error
-          : this.buildErrorInstance(taskId, adcpErrorInfo)),
+        authenticationErrorInstance(error, agent.agent_uri) ?? this.buildErrorInstance(taskId, adcpErrorInfo),
       correlationId,
       metadata: this.buildMetadata({
         taskId,

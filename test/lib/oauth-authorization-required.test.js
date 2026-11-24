@@ -90,6 +90,21 @@ describe('NeedsAuthorizationError', () => {
     );
     assert.strictEqual(err.message, 'custom: bring creds and try again');
   });
+
+  test('strips userinfo, query and fragment from the agent URL it carries', () => {
+    const err = new NeedsAuthorizationError({
+      agentUrl: 'https://user:pw@agent.example.com/mcp?token=secret#frag',
+      resource: 'https://agent.example.com/mcp',
+      authorizationServer: 'https://as.example.com',
+      challenge: { scheme: 'bearer', params: {} },
+    });
+    assert.strictEqual(err.agentUrl, 'https://agent.example.com/mcp');
+    assert.strictEqual(err.requirements.agentUrl, 'https://agent.example.com/mcp');
+    assert.strictEqual(err.details.requirements.agentUrl, 'https://agent.example.com/mcp');
+    assert.strictEqual(err.requirements.resource, 'https://agent.example.com/mcp');
+    assert.doesNotMatch(err.message, /secret|pw|frag/);
+    assert.doesNotMatch(JSON.stringify(err), /secret|pw|frag/);
+  });
 });
 
 describe('discoverAuthorizationRequirements', () => {
@@ -283,7 +298,7 @@ describe('discoverAuthorizationRequirements', () => {
     };
     const err = new NeedsAuthorizationError(requirements);
     assert.ok(err.details, 'expected details to be set');
-    assert.strictEqual(err.details.requirements, requirements);
+    assert.deepStrictEqual(err.details.requirements, requirements);
     // Parent's detail fields should also still be present so existing log
     // pipelines keep working.
     assert.strictEqual(err.details.agentUrl, 'https://agent.example.com/mcp');

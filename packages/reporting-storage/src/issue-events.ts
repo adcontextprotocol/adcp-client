@@ -32,6 +32,7 @@ import type {
   ReportingIssueEventLeaseV1,
   ReportingIssueEventRecordV1,
   ReportingLedgerConsumerStatementV1,
+  ReportingLedgerIssueV1,
   ReportingLedgerObligationV1,
   ReportingLedgerRevisionMetadataV1,
   ReportingLedgerTransactionV1,
@@ -189,6 +190,15 @@ async function revisionsOn(client: Client, obligationId: string): Promise<Report
   return result.rows.map(row => row.data);
 }
 
+/** The obligation's seller issues: an open `REVISION_UNREADABLE` agrees with an `unreadable` statement. */
+async function issuesOn(client: Client, obligationId: string): Promise<ReportingLedgerIssueV1[]> {
+  const result = await client.query<{ data: ReportingLedgerIssueV1 }>(
+    `SELECT data FROM adcp_reporting_issues WHERE obligation_id = $1 ORDER BY observed_at, issue_id`,
+    [obligationId]
+  );
+  return result.rows.map(row => row.data);
+}
+
 /**
  * Re-derive one obligation's occurrences after a write, in the writer's transaction (which holds the
  * account lock): open what conflicts now, resolve what no longer does or whose statement was superseded.
@@ -204,6 +214,7 @@ export async function settleIssueObligationOn(client: Client, obligationId: stri
   let conflicts: ReportingConsumerMismatchOccurrenceV1[] = [];
   if (obligation) {
     const revisions = await revisionsOn(client, obligationId);
+    const issues = await issuesOn(client, obligationId);
     const leaves = await client.query<{ data: ReportingLedgerConsumerStatementV1 }>(
       `SELECT data FROM adcp_reporting_consumer_statuses
         WHERE account_id = $1 AND chain_key = $2 AND is_current`,
@@ -222,7 +233,7 @@ export async function settleIssueObligationOn(client: Client, obligationId: stri
     conflicts = leaves.rows
       .map(row => row.data)
       .filter(leaf => statusMatchesObligation(leaf, obligation))
-      .map(leaf => reportingConsumerMismatchOccurrenceV1(obligation, leaf, revisions))
+      .map(leaf => reportingConsumerMismatchOccurrenceV1(obligation, leaf, revisions, issues, at))
       .filter((value): value is ReportingConsumerMismatchOccurrenceV1 => value !== undefined);
   }
   const open = await client.query<RecordRow>(
@@ -253,7 +264,9 @@ export async function settleIssueChainOn(
     ? reportingConsumerMismatchOccurrenceV1(
         obligation,
         statement,
-        await revisionsOn(client, obligation.reporting_obligation_id)
+        await revisionsOn(client, obligation.reporting_obligation_id),
+        await issuesOn(client, obligation.reporting_obligation_id),
+        statement.recorded_at
       )
     : undefined;
   const open = await client.query<RecordRow>(
