@@ -235,7 +235,7 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
     if (lease && this.leases.get(value.reporting_obligation_id)?.generation !== lease.generation)
       throw new Error('lease lost');
     this.obligations.set(value.reporting_obligation_id, clone(value));
-    if (issue) this.issues.set(issue.issueId, clone(issue));
+    if (issue) this.setIssue(issue);
   }
 
   async claimObligation({
@@ -346,12 +346,24 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
   }
 
   async putIssue(value: Row): Promise<void> {
-    this.issues.set(value.issueId, clone(value));
+    this.setIssue(value);
   }
 
   async resolveIssue(id: string, resolvedAt: string): Promise<void> {
     const value = this.issues.get(id);
-    if (value) this.issues.set(id, { ...value, resolvedAt });
+    if (value) this.setIssue({ ...value, resolvedAt });
+  }
+
+  /** A seller `REVISION_UNREADABLE` mark agrees with an `unreadable` statement, so it settles occurrences. */
+  private setIssue(value: Row): void {
+    this.issues.set(value.issueId, clone(value));
+    if (value.code === 'REVISION_UNREADABLE') this.settleIssueObligation(value.reporting_obligation_id, this.instant());
+  }
+
+  private issuesOn(obligationId: string): Row[] {
+    return [...this.issues.values()]
+      .filter(value => value.reporting_obligation_id === obligationId)
+      .map(value => clone(value));
   }
 
   async listIssues(obligationId: string): Promise<Row[]> {
@@ -709,8 +721,9 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
     );
   }
 
-  private conflictsOn(obligation: Row): ReportingConsumerMismatchOccurrenceV1[] {
+  private conflictsOn(obligation: Row, at: string): ReportingConsumerMismatchOccurrenceV1[] {
     const revisions = this.revisionMetadata(obligation.reporting_obligation_id);
+    const issues = this.issuesOn(obligation.reporting_obligation_id);
     const chains = new Map<string, Row[]>();
     for (const status of this.consumerStatements) {
       if (!this.obligationMatchesStatement(obligation, status)) continue;
@@ -719,7 +732,7 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
     return [...chains.values()].flatMap(statements => {
       const superseded = new Set(statements.map(value => value.supersedes_reporting_status_id).filter(Boolean));
       const leaf = statements.find(value => !superseded.has(value.reporting_status_id));
-      const occurrence = reportingConsumerMismatchOccurrenceV1(obligation, leaf, revisions);
+      const occurrence = reportingConsumerMismatchOccurrenceV1(obligation, leaf, revisions, issues, at);
       return occurrence ? [occurrence] : [];
     });
   }
@@ -748,7 +761,7 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
     this.recordIssueEvents(
       planReportingIssueEventsV1({
         open: this.openIssueOccurrences().filter(value => value.reportingObligationId === obligationId),
-        conflicts: obligation ? this.conflictsOn(obligation) : [],
+        conflicts: obligation ? this.conflictsOn(obligation, at) : [],
         at,
       })
     );
@@ -774,7 +787,9 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
       ? reportingConsumerMismatchOccurrenceV1(
           obligation,
           statement,
-          this.revisionMetadata(obligation.reporting_obligation_id)
+          this.revisionMetadata(obligation.reporting_obligation_id),
+          this.issuesOn(obligation.reporting_obligation_id),
+          statement.recorded_at
         )
       : undefined;
     this.recordIssueEvents(

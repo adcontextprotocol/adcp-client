@@ -1268,6 +1268,7 @@ ${managedDueArm}       )
             ]
           );
           if (issueResult.rowCount !== 1) throw new Error('Reporting issue identity belongs to another obligation');
+          await this.settleUnreadableMarkOn(client, issue);
         }
       },
       { preBeginAdvisoryLock: accountLock(obligation.account.account_id) }
@@ -4043,6 +4044,7 @@ ${managedDueArm}       )
           ]
         );
         if (result.rowCount !== 1) throw new Error('Reporting issue identity belongs to another obligation');
+        await this.settleUnreadableMarkOn(client, issue);
       },
       { preBeginAdvisoryLock: lock }
     );
@@ -4053,17 +4055,30 @@ ${managedDueArm}       )
     if (!lock) return;
     await this.transaction(
       async client => {
-        await client.query(
+        const resolved = await client.query<JsonRow<ReportingLedgerIssueV1>>(
           `UPDATE adcp_reporting_issues
           SET resolved_at = $2::text::timestamptz,
               data = data || jsonb_build_object('resolvedAt', $2::text),
               changed_at = clock_timestamp()
-        WHERE issue_id = $1 AND resolved_at IS NULL`,
+        WHERE issue_id = $1 AND resolved_at IS NULL
+        RETURNING data`,
           [issueId, resolvedAt]
         );
+        const issue = resolved.rows[0]?.data;
+        if (issue) await this.settleUnreadableMarkOn(client, issue);
       },
       { preBeginAdvisoryLock: lock }
     );
+  }
+
+  /**
+   * A seller `REVISION_UNREADABLE` mark agrees with an `unreadable` consumer statement, so writing or
+   * retiring one can resolve or reopen a consumer-mismatch occurrence (adcp-client#3653). Runs under the
+   * account lock the write holds.
+   */
+  private async settleUnreadableMarkOn(client: ReportingLedgerTransactionV1, issue: ReportingLedgerIssueV1) {
+    if (issue.code !== 'REVISION_UNREADABLE' || !(await this.issueEventsOn(client))) return;
+    await settleIssueObligationOn(client, issue.reporting_obligation_id, await databaseInstantOn(client));
   }
 
   async listIssues(obligationId: string): Promise<ReportingLedgerIssueV1[]> {

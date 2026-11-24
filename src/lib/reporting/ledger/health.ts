@@ -325,10 +325,17 @@ export interface ReportingConsumerStatusMismatchProjectionV1 {
  * Separately attributed by construction: it degrades only this authenticated
  * caller's view and never touches seller-authored obligation, revision, or
  * reliability evidence. Returns `undefined` when the caller's current leaf
- * agrees with the seller's projection, when there is no leaf at all (silence
- * is a counted unknown, not a conflict — see `consumer_status_pending`), or
- * when the seller's own projection is already degraded and therefore carries
- * its own production issue.
+ * agrees with the seller's record (see `reportingConsumerStatementConflictV1`),
+ * when there is no leaf at all (silence is a counted unknown, not a conflict —
+ * see `consumer_status_pending`), or when the seller's own projection is
+ * already degraded and therefore carries its own production issue. That last
+ * case is suppression, not resolution: the disagreement still stands, and the
+ * same `issueId` returns when the seller recovers.
+ *
+ * `issues` are the obligation's persisted seller issues as of `ledgerAsOf`. An
+ * open `REVISION_UNREADABLE` for the revision an `unreadable` statement names
+ * is the seller agreeing with it. Without them every `unreadable` statement
+ * conflicts.
  */
 export function projectReportingConsumerStatusMismatchV1(
   obligation: ReportingLedgerObligationV1,
@@ -339,9 +346,12 @@ export function projectReportingConsumerStatusMismatchV1(
   >[],
   sellerHealth: ReportingHealthV1,
   ledgerAsOf: string,
-  escalation?: ReportingConsumerMismatchEscalationV1
+  escalation?: ReportingConsumerMismatchEscalationV1,
+  issues?: readonly ReportingLedgerIssueV1[]
 ): ReportingConsumerStatusMismatchProjectionV1 | undefined {
-  if (!status || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return undefined;
+  if (!status) return undefined;
+  const conflict = reportingConsumerStatementConflictV1(obligation, status, revisions, ledgerAsOf, issues);
+  if (!conflict || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return undefined;
 
   // The earliest instant the seller could have observed *any* conflict: the
   // projection only emits while seller health is healthy/complete, which
@@ -367,10 +377,12 @@ export function projectReportingConsumerStatusMismatchV1(
       ? earliestObservable
       : status.recorded_at;
 
+  // A recurrence opens when the seller's unreadable mark ended, not before.
+  if (conflict.unreadableMarkEnded && compareReportingInstants(conflict.unreadableMarkEnded.endedAt, openedAt) > 0) {
+    openedAt = conflict.unreadableMarkEnded.endedAt;
+  }
+
   if (status.consumer_status === 'received') {
-    const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
-    // The buyer named the revision the seller still requires: no disagreement.
-    if (current && status.reporting_revision_id === current.reporting_revision_id) return undefined;
     const firstSuperseding = firstSupersedingRevision(revisions, status.reporting_revision_id);
     if (firstSuperseding) {
       // Stale only because the seller restated. The buyer consumed exactly what
@@ -417,7 +429,7 @@ export function projectReportingConsumerStatusMismatchV1(
 
   return {
     issue: {
-      issueId: consumerStatusMismatchIssueId(obligation, status),
+      issueId: consumerStatusMismatchIssueId(obligation, status, conflict.unreadableMarkEnded?.issueId),
       reporting_obligation_id: obligation.reporting_obligation_id,
       reporting_status_id: status.reporting_status_id,
       code: 'CONSUMER_STATUS_MISMATCH',
@@ -451,16 +463,86 @@ function firstSupersedingRevision<
 }
 
 /**
+ * Whether a caller's current statement still conflicts with the seller's
+ * record of the period (adcp-client#3653).
+ *
+ * The spec makes "a seller projection that no longer conflicts" a resolution
+ * path but does not say, per status, when that is. This is the reading the
+ * TypeScript and Python SDKs share (Python's `consumer_statement_conflicts`).
+ * It ignores the seller's health label: health decides whether a mismatch is
+ * published, this decides whether it still stands.
+ *
+ * - `obligation_missing` always conflicts: the obligation is in front of the seller.
+ * - `revision_missing` conflicts while the seller has a current required revision.
+ * - `unreadable` conflicts unless an open `REVISION_UNREADABLE` in `issues`
+ *   marks the named revision unreadable.
+ * - `content_mismatch` conflicts while the named revision is still the current
+ *   required one, so a restatement clears it.
+ * - `received` conflicts while the named revision is not the current required one.
+ *
+ * Revisions are append-only and the current one only advances, so for one
+ * statement only `unreadable` can stop conflicting and then conflict again:
+ * the seller marks the revision unreadable, then retires that mark. Such a
+ * recurrence needs a new `issueId`, so the result names the mark whose end
+ * reopened it: the last one to end after the statement was recorded.
+ */
+function reportingConsumerStatementConflictV1(
+  obligation: Pick<ReportingLedgerObligationV1, 'reporting_obligation_id'>,
+  status: ReportingLedgerConsumerStatementV1,
+  revisions: readonly Pick<ReportingLedgerRevisionSnapshotV1, 'reporting_revision_id' | 'revisionNumber'>[],
+  at: string,
+  issues: readonly ReportingLedgerIssueV1[] = []
+): { unreadableMarkEnded?: { issueId: string; endedAt: string } } | undefined {
+  const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+  const named = status.reporting_revision_id;
+  switch (status.consumer_status) {
+    case 'obligation_missing':
+      return {};
+    case 'revision_missing':
+      return current ? {} : undefined;
+    case 'content_mismatch':
+      return current && named === current.reporting_revision_id ? {} : undefined;
+    case 'received':
+      return current && named !== undefined && named !== current.reporting_revision_id ? {} : undefined;
+    case 'unreadable': {
+      let ended: { issueId: string; endedAt: string } | undefined;
+      for (const mark of issues) {
+        if (
+          mark.code !== 'REVISION_UNREADABLE' ||
+          mark.reporting_obligation_id !== obligation.reporting_obligation_id ||
+          mark.reporting_revision_id === undefined ||
+          mark.reporting_revision_id !== named
+        ) {
+          continue;
+        }
+        const endedAt =
+          mark.resolvedAt ??
+          (mark.issueState === 'resolved' || mark.issueState === 'waived' ? mark.observedAt : undefined);
+        if (endedAt === undefined || compareReportingInstants(endedAt, at) > 0) return undefined;
+        if (compareReportingInstants(endedAt, status.recorded_at) <= 0) continue;
+        const order = ended ? compareReportingInstants(endedAt, ended.endedAt) : 1;
+        if (order > 0 || (order === 0 && mark.issueId > ended!.issueId)) ended = { issueId: mark.issueId, endedAt };
+      }
+      return ended ? { unreadableMarkEnded: ended } : {};
+    }
+  }
+}
+
+/**
  * The issue identity is one logical condition: this obligation plus the exact
  * consumer statement that caused it. Deliberately excludes severity and the
  * read time so the same `issueId` and `openedAt` carry across the `delayed` →
  * `action_required` transition and consumers age one work item instead of two.
  * A consumer superseding the causing statement is a new condition and
- * correctly produces a new `issueId`.
+ * correctly produces a new `issueId`, as the spec's
+ * `consumer_mismatch_lifecycle` requires. So does a recurrence of the same
+ * statement after the seller's agreement ended (`afterUnreadableIssueId`):
+ * a recurrence uses a new `issue_id`.
  */
 function consumerStatusMismatchIssueId(
   obligation: ReportingLedgerObligationV1,
-  status: ReportingLedgerConsumerStatementV1
+  status: ReportingLedgerConsumerStatementV1,
+  afterUnreadableIssueId?: string
 ): string {
   const digest = createHash('sha256')
     .update(
@@ -468,6 +550,7 @@ function consumerStatusMismatchIssueId(
         kind: 'consumer_status_mismatch',
         reporting_obligation_id: obligation.reporting_obligation_id,
         reporting_status_id: status.reporting_status_id,
+        ...(afterUnreadableIssueId !== undefined && { after_unreadable_issue_id: afterUnreadableIssueId }),
       })
     )
     .digest('hex')
