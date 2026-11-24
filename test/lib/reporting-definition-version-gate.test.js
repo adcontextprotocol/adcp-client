@@ -336,9 +336,10 @@ describe('installConfiguration servedAdcpVersion gate', () => {
   });
 });
 
-function platformFor(service, { upsert } = {}) {
+function platformFor(service, { upsert, withSales = false } = {}) {
   return service.install({
     capabilities: { specialisms: [], config: {} },
+    ...(withSales ? { sales: { getProducts: async () => ({ products: [] }) } } : {}),
     accounts: {
       resolution: 'explicit',
       resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
@@ -368,31 +369,52 @@ async function capabilities(server, adcpVersion) {
   return result.structuredContent;
 }
 
-// The SDK default pin is a 3.3 release, and the framework binds the reporting tools to that exact pin,
-// so a caller pinned below 3.3 is served no `reporting_delivery` at all on such a server, whatever its
-// offerings. That is what keeps a 1.2 definition from reaching it; the per-offering filter in
-// get_adcp_capabilities only matters on a server that still advertises reporting to pre-3.3 callers.
 const CALLER_3_3 = '3.3-rc.3';
+const FEATURE = 'media_buy.reporting_delivery';
 
 describe('get_adcp_capabilities per caller pin', () => {
   const ids = body => body.media_buy?.reporting_delivery?.offerings.map(offering => offering.offering_id).sort();
-
-  test('a 3.3 caller and an unpinned caller see every offering; a 3.2 caller is served none of them', async () => {
-    const { service } = twoOfferings();
-    const server = serverFor(platformFor(service));
-    assert.deepEqual(ids(await capabilities(server, CALLER_3_3)), [ID_11, ID_12].sort());
-    assert.deepEqual(ids(await capabilities(server)), [ID_11, ID_12].sort());
-    assert.equal((await capabilities(server, '3.2')).media_buy?.reporting_delivery, undefined);
-  });
-
-  test('with only a 1.2 offering a 3.2 caller gets no reporting_delivery and a 3.3 caller gets it', async () => {
-    const { service } = serviceFixture({
+  const only12 = () =>
+    serviceFixture({
       adapters: { fixture: adapter({ offeringId: ID_12, sha: SHA_12 }) },
       reportDefinitionVersions: { [SHA_12]: '1.2' },
-    });
+    }).service;
+
+  // A seller with a sales tool available at 3.2 keeps the media_buy protocol, and so
+  // reporting_delivery, for 3.2 callers: the case where a 1.2 definition could leak.
+  test('a 3.2 caller sees only the 1.1 offering; a 3.3 caller and an unpinned caller see both', async () => {
+    const { service } = twoOfferings();
+    const server = serverFor(platformFor(service, { withSales: true }));
+    assert.deepEqual(ids(await capabilities(server, '3.2')), [ID_11]);
+    assert.deepEqual(ids(await capabilities(server, CALLER_3_3)), [ID_11, ID_12].sort());
+    assert.deepEqual(ids(await capabilities(server)), [ID_11, ID_12].sort());
+  });
+
+  test('with only a 1.2 offering a 3.2 caller gets neither reporting_delivery nor its feature id', async () => {
+    const server = serverFor(platformFor(only12(), { withSales: true }));
+    const legacy = await capabilities(server, '3.2');
+    assert.equal(legacy.media_buy?.reporting_delivery, undefined);
+    assert.ok(!(legacy.experimental_features ?? []).includes(FEATURE));
+    const current = await capabilities(server, CALLER_3_3);
+    assert.deepEqual(ids(current), [ID_12]);
+    assert.ok(current.experimental_features.includes(FEATURE));
+  });
+
+  test('a 1.1-only service keeps reporting_delivery and its feature id for a 3.2 caller', async () => {
+    const { service } = serviceFixture({ reportDefinitionVersions: { [SHA_11]: '1.1' } });
+    const server = serverFor(platformFor(service, { withSales: true }));
+    const legacy = await capabilities(server, '3.2');
+    assert.deepEqual(ids(legacy), [ID_11]);
+    assert.ok(legacy.experimental_features.includes(FEATURE));
+  });
+
+  // With no media_buy tool available at 3.2 (the reporting tools are bound to the server's 3.3 pin),
+  // filterCapabilitiesForToolAvailability drops the whole media_buy protocol for a 3.2 caller.
+  test('on a reporting-only platform a 3.2 caller gets no reporting_delivery', async () => {
+    const { service } = twoOfferings();
     const server = serverFor(platformFor(service));
     assert.equal((await capabilities(server, '3.2')).media_buy?.reporting_delivery, undefined);
-    assert.deepEqual(ids(await capabilities(server, CALLER_3_3)), [ID_12]);
+    assert.deepEqual(ids(await capabilities(server, CALLER_3_3)), [ID_11, ID_12].sort());
   });
 });
 
