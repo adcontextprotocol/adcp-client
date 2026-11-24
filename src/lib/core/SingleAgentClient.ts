@@ -11845,10 +11845,13 @@ export class SingleAgentClient {
     // `transport.maxResponseBytes` extends to discovery / tools-list bodies.
     // `withResponseSizeLimit` installs the 4 MiB default when no cap is
     // configured (adcp-client#3253).
-    const { withResponseSizeLimit } = await import('../protocols/responseSizeLimit');
+    const { withPageResponseSizeLimit, withResponseSizeLimit } = await import('../protocols/responseSizeLimit');
+    const { listMcpToolCatalog } = await import('../protocols/mcp-tools-list');
     throwIfAborted(options?.signal);
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     const maxResponseBytes = transport?.maxResponseBytes;
+    // Each tools/list page gets its own response-size allowance (adcp-client#3717).
+    const pageAllowance = <T>(fetch: () => Promise<T>) => withPageResponseSizeLimit(maxResponseBytes, fetch);
     const requestTimeoutMs = resolveRequestTimeoutMs(transport?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
     const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(transport?.requestTimeoutMs);
     const mcpRequestOptions = {
@@ -11875,10 +11878,14 @@ export class SingleAgentClient {
       // In-process: use the pre-connected client instead of opening a new HTTP connection
       if (this.normalizedAgent._inProcessMcpClient) {
         const mcpClient = this.normalizedAgent._inProcessMcpClient;
-        const toolsList = await withResponseSizeLimit(maxResponseBytes, () =>
-          mcpClient.listTools(mcpListParams, mcpRequestOptions)
+        // Follow every page; the size cap applies to each page (adcp-client#3717).
+        const { tools: toolsList } = await listMcpToolCatalog(
+          mcpClient,
+          mcpListParams,
+          mcpRequestOptions,
+          pageAllowance
         );
-        const tools = toolsList.tools.map(tool => ({
+        const tools = toolsList.map(tool => ({
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
@@ -11972,7 +11979,7 @@ export class SingleAgentClient {
       // session so discovery and the tool calls that follow initialize once.
       const { withScopedLegacyConnection } = await import('../protocols/mcp');
       const scopedList = await withScopedLegacyConnection(connectOptions, 'tools/list', client =>
-        withResponseSizeLimit(maxResponseBytes, () => client.listTools(mcpListParams, mcpRequestOptions))
+        listMcpToolCatalog(client, mcpListParams, mcpRequestOptions, pageAllowance)
       );
       if (scopedList) {
         return {
@@ -11991,11 +11998,14 @@ export class SingleAgentClient {
 
       const { client: mcpClient } = await connectMCP(connectOptions);
       try {
-        const toolsList = await withResponseSizeLimit(maxResponseBytes, () =>
-          mcpClient.listTools(mcpListParams, mcpRequestOptions)
+        const { tools: toolsList } = await listMcpToolCatalog(
+          mcpClient,
+          mcpListParams,
+          mcpRequestOptions,
+          pageAllowance
         );
 
-        const tools = toolsList.tools.map(tool => ({
+        const tools = toolsList.map(tool => ({
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,

@@ -19,10 +19,11 @@ import { createMCPRequestHeaders } from '../auth';
 import { withSpan } from '../observability/tracing';
 import { signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactArgsForLog as sharedRedactArgsForLog } from '../utils/redact-args';
-import { withResponseSizeLimit } from './responseSizeLimit';
+import { withPageResponseSizeLimit, withResponseSizeLimit } from './responseSizeLimit';
 import { withTransportDiagnostics, type TransportActivityHandler } from './transportDiagnostics';
 import { isAbortOrTimeoutError, resolveClientRequestTimeoutMs } from './abort';
 import { tryCallModernMCPTool } from './mcp-modern';
+import { forEachMcpToolsPage, listMcpToolCatalog } from './mcp-tools-list';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -59,7 +60,7 @@ interface MCPTaskProtocolOptions {
 }
 
 /**
- * Track which MCP clients have had listTools() called.
+ * Track which MCP clients have their whole tool catalog cached.
  * The SDK's isToolTask() needs tool metadata from listTools() to determine
  * per-tool taskSupport. Without this, callToolStream silently degrades to
  * a synchronous tools/call (no task creation).
@@ -67,16 +68,35 @@ interface MCPTaskProtocolOptions {
 const toolsListedClients = new WeakSet<MCPClient>();
 
 /**
- * Ensure tool metadata is cached in the SDK so isToolTask() works.
- * Called once per client connection when tasks are supported.
+ * Ensure tool metadata is cached in the SDK so isToolTask() works. Reads
+ * every `tools/list` page (adcp-client#3717); `listMcpToolCatalog` leaves the
+ * whole catalog cached, as capability discovery on a shared client does too.
+ * Each page gets its own response-size allowance rather than sharing the
+ * tool call's.
  */
-async function ensureToolsListed(client: MCPClient, signal?: AbortSignal, requestTimeoutMs?: number): Promise<void> {
+async function ensureToolsListed(
+  client: MCPClient,
+  toolName: string,
+  signal?: AbortSignal,
+  requestTimeoutMs?: number
+): Promise<void> {
   if (toolsListedClients.has(client)) return;
-  await client.listTools(undefined, {
+  const options = {
     ...(signal && { signal }),
     ...(requestTimeoutMs !== undefined && { timeout: requestTimeoutMs }),
-  });
-  toolsListedClients.add(client);
+  };
+  const pageAllowance = <T>(fetch: () => Promise<T>) => withPageResponseSizeLimit(undefined, fetch);
+  const { metadataCached } = await listMcpToolCatalog(client, undefined, options, pageAllowance);
+  if (metadataCached) {
+    toolsListedClients.add(client);
+    return;
+  }
+  // The SDK could not take the whole catalog. Re-read up to the page holding
+  // this tool so its metadata is the page cached, and list again next call.
+  await forEachMcpToolsPage(
+    cursor => pageAllowance(() => client.listTools(cursor === undefined ? undefined : { cursor }, options)),
+    tools => tools.some(tool => tool.name === toolName)
+  );
 }
 
 /**
@@ -379,7 +399,7 @@ async function callToolOnClient(
   // Ensure tool metadata is cached so the SDK's isToolTask() works correctly.
   // Without this, callToolStream silently skips task creation for tools that
   // declare taskSupport: 'optional' | 'required'.
-  await ensureToolsListed(client, signal, resolvedRequestTimeoutMs);
+  await ensureToolsListed(client, toolName, signal, resolvedRequestTimeoutMs);
 
   debugLogs.push({
     type: 'info',
