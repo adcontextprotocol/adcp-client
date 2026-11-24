@@ -553,16 +553,30 @@ export class AuthenticationRequiredError extends ADCPError {
    * The seller-controlled challenge `realm` is non-enumerable.
    */
   declare readonly authDiagnostics?: AuthFailureDiagnostics;
+  /** The agent URL without userinfo, query or fragment, which can carry credentials. */
+  readonly agentUrl: string;
+  /** Seller-supplied OAuth metadata, limited to the {@link OAuthMetadataInfo} fields. Untrusted. */
+  readonly oauthMetadata?: OAuthMetadataInfo;
+  /** Seller-supplied `WWW-Authenticate` challenge, limited to the {@link AuthChallengeInfo} fields. Untrusted. */
+  readonly challenge?: AuthChallengeInfo;
 
   constructor(
-    public readonly agentUrl: string,
-    public readonly oauthMetadata?: OAuthMetadataInfo,
+    agentUrl: string,
+    oauthMetadata?: OAuthMetadataInfo,
     message?: string,
-    public readonly challenge?: AuthChallengeInfo,
+    challenge?: AuthChallengeInfo,
     signedRejection?: SignedRequestRejectionInfo
   ) {
+    // Anything beyond the declared fields of a seller's metadata document or
+    // challenge would otherwise reach thrown errors and serialized results.
+    agentUrl = sanitizeAgentUrlForError(agentUrl);
+    oauthMetadata = declaredFields(oauthMetadata, OAUTH_METADATA_FIELDS);
+    challenge = challenge && { scheme: challenge.scheme, ...declaredFields(challenge, AUTH_CHALLENGE_FIELDS) };
     const defaultMessage = buildAuthRequiredMessage(agentUrl, oauthMetadata, challenge, !!signedRejection);
     super(message || defaultMessage);
+    this.agentUrl = agentUrl;
+    this.oauthMetadata = oauthMetadata;
+    this.challenge = challenge;
     // `details` is serialized through error envelopes; surfacing the challenge
     // here lets non-CLI consumers (LLM agents, dashboards, programmatic
     // callers) branch on the scheme without instanceof-checking.
@@ -629,6 +643,20 @@ export class AuthenticationCredentialsRejectedError extends AuthenticationRequir
   }
 }
 
+const OAUTH_METADATA_FIELDS = ['authorization_endpoint', 'token_endpoint', 'registration_endpoint', 'issuer'] as const;
+const AUTH_CHALLENGE_FIELDS = ['realm', 'scope', 'error', 'error_description'] as const;
+
+/** Copy only the named string fields, dropping undeclared seller data. */
+function declaredFields<T extends object>(source: T | undefined, keys: readonly (keyof T & string)[]): T | undefined {
+  if (source === undefined || source === null) return undefined;
+  const declared: Partial<T> = {};
+  for (const key of keys) {
+    const value: unknown = source[key];
+    if (typeof value === 'string') declared[key] = value as T[typeof key];
+  }
+  return declared as T;
+}
+
 /**
  * The realm is seller-controlled text. Like `responseBody`, it stays readable
  * on the error but out of spread and JSON serialization.
@@ -641,9 +669,11 @@ function hideChallengeRealm(diagnostics: AuthFailureDiagnostics): AuthFailureDia
   return { ...diagnostics, wwwAuthenticate: challenge };
 }
 
+/** Strip userinfo, query and fragment. A URL with none of them is returned as given. */
 function sanitizeAgentUrlForError(value: string): string {
   try {
     const url = new URL(value);
+    if (!url.username && !url.password && !url.search && !url.hash) return value;
     url.username = '';
     url.password = '';
     url.search = '';
