@@ -33,6 +33,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
   let attemptCheckpoint;
   let notificationsWithoutCheckpoint;
   let failNextFetch = false;
+  // Persistent per-request fetch override by URL (return a response, or throw to simulate a transport error).
+  let fetchHook;
   let checkpointCalls = 0;
   const checkpoints = new Map();
   const checkpointNamespaces = new Set(['reporting-activity-tests']);
@@ -130,6 +132,10 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           if (failNextFetch) {
             failNextFetch = false;
             return { status: 503, headers: { get: () => undefined } };
+          }
+          if (fetchHook) {
+            const hooked = await fetchHook(url);
+            if (hooked) return hooked;
           }
           fetchCalls.push({ url, body });
           return { status: 204, headers: { get: () => undefined } };
@@ -2557,17 +2563,28 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(await pendingForTenant(), 1);
 
     let abandoned = 0;
+    const reported = [];
     for (let attempt = 1; attempt <= 4; attempt += 1) {
       await makeClaimEligible(recovery.namespace, transition.transitionId);
       const pass = await recovery.activity.recoverOnce({
         ownerToken: `abandon-worker-${attempt}`,
         limit: 1,
         retryAfterMs: 1,
+        onError: error => reported.push(error),
       });
       abandoned += pass.abandoned;
       assert.equal(pass.projected, 0, 'an unsatisfiable claim is never recorded as delivered');
     }
     assert.equal(abandoned, 1, 'the claim is abandoned once the attempt bound is reached');
+    const abandonmentErrors = reported.filter(error => error.name === 'ReportingNotificationAbandonedError');
+    assert.equal(abandonmentErrors.length, 1, 'the abandonment is reported exactly once');
+    assert.equal(abandonmentErrors[0].transitionId, transition.transitionId);
+    assert.equal(abandonmentErrors[0].attempt, 3);
+    assert.equal(abandonmentErrors[0].maxAttempts, 3);
+    assert.ok(
+      !(abandonmentErrors[0].cause instanceof ledger.ReportingNotificationUnsettledError),
+      'an over-fanout claim fails for a reason other than an unsettled recipient'
+    );
     assert.equal(await pendingForTenant(), 0, 'and it stops consuming the tenant pending capacity');
     assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 0);
 
@@ -2578,6 +2595,140 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(record.notificationProjectedAt, undefined, 'and is not reported as delivered');
     const afterwards = await recovery.activity.recoverOnce({ ownerToken: 'abandon-worker-after', limit: 1 });
     assert.equal(afterwards.claimed, 0);
+  });
+
+  async function seedUnsettledClaim(suffix, url, overrides = {}) {
+    const scope = {
+      kind: 'account',
+      tenantId: 'tenant-a',
+      principalId: `principal-${suffix}`,
+      accountId: `account-${suffix}`,
+    };
+    const recovery = isolatedActivity(suffix, overrides);
+    await notifications.replace(scope, [
+      { subscriber_id: `sub-${suffix}`, url, event_types: ['reporting.status_changed'] },
+    ]);
+    const obligation = await putObligation(suffix, scope.accountId, recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    return { scope, recovery, transition };
+  }
+
+  async function runPass(recovery, transition, label) {
+    await makeClaimEligible(recovery.namespace, transition.transitionId);
+    const errors = [];
+    const pass = await recovery.activity.recoverOnce({
+      ownerToken: label,
+      limit: 1,
+      retryAfterMs: 1,
+      onError: error => errors.push(error),
+    });
+    return { pass, errors };
+  }
+
+  test('reports a subscriber answering 503 as a typed unsettled error without the subscriber URL', async () => {
+    const url = 'https://buyer.example/unsettled-503-secret-path';
+    const { scope, recovery, transition } = await seedUnsettledClaim('unsettled-503', url, { maxAttempts: 3 });
+    fetchHook = requestUrl =>
+      requestUrl.startsWith(url) ? { status: 503, headers: { get: () => undefined } } : undefined;
+    try {
+      const { pass, errors } = await runPass(recovery, transition, 'unsettled-503-worker');
+      assert.equal(pass.projected, 0);
+      assert.equal(pass.abandoned, 0);
+      assert.equal(errors.length, 1);
+      const error = errors[0];
+      assert.ok(error instanceof ledger.ReportingNotificationUnsettledError);
+      assert.equal(error.name, 'ReportingNotificationUnsettledError');
+      assert.equal(error.transitionId, transition.transitionId);
+      assert.equal(error.unsettled, 1);
+      assert.equal(error.attempt, 1);
+      assert.equal(error.maxAttempts, 3);
+      assert.match(error.message, /not settled for 1 recipient\(s\); retrying$/);
+      assert.equal(error.recipients.length, 1);
+      assert.equal(error.recipients[0].subscriberId, 'sub-unsettled-503');
+      assert.equal(error.recipients[0].scope.accountId, scope.accountId);
+      assert.equal(error.recipients[0].reason, 'delivery_failed');
+      assert.equal(error.recipients[0].finalStatus, 503);
+      assert.equal(JSON.stringify(error.recipients).includes('unsettled-503-secret-path'), false);
+      assert.equal(JSON.stringify(error.recipients).includes('buyer.example'), false);
+      const page = await recovery.activity.listActivity({ tenantId: 'tenant-a', accountId: scope.accountId });
+      const record = page.activities.find(value => value.transitionId === transition.transitionId);
+      assert.equal(record.notificationProjectedAt, undefined, 'the activity stays pending');
+      assert.equal(record.notificationAbandonedAt, undefined);
+    } finally {
+      fetchHook = undefined;
+    }
+  });
+
+  test('reports each unsettled attempt, then one abandonment whose cause is the final unsettled error', async () => {
+    const url = 'https://buyer.example/unsettled-abandon';
+    const { scope, recovery, transition } = await seedUnsettledClaim('unsettled-abandon', url, { maxAttempts: 3 });
+    fetchHook = requestUrl =>
+      requestUrl.startsWith(url) ? { status: 503, headers: { get: () => undefined } } : undefined;
+    try {
+      const unsettled = [];
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const { pass, errors } = await runPass(recovery, transition, `unsettled-abandon-worker-${attempt}`);
+        assert.equal(pass.projected, 0);
+        const typed = errors.filter(error => error.name === 'ReportingNotificationUnsettledError');
+        assert.equal(typed.length, 1, `attempt ${attempt} reports one unsettled error`);
+        assert.equal(typed[0].attempt, attempt);
+        assert.equal(typed[0].maxAttempts, 3);
+        unsettled.push(typed[0]);
+        const abandonedErrors = errors.filter(error => error.name === 'ReportingNotificationAbandonedError');
+        if (attempt < 3) {
+          assert.equal(pass.abandoned, 0);
+          assert.equal(abandonedErrors.length, 0);
+          assert.match(typed[0].message, /; retrying$/);
+        } else {
+          assert.equal(pass.abandoned, 1);
+          assert.match(typed[0].message, /; attempt 3 of 3, not retrying$/);
+          assert.equal(abandonedErrors.length, 1, 'exactly one abandonment is reported');
+          const abandoned = abandonedErrors[0];
+          assert.ok(abandoned instanceof ledger.ReportingNotificationAbandonedError);
+          assert.equal(abandoned.transitionId, transition.transitionId);
+          assert.equal(abandoned.attempt, 3);
+          assert.equal(abandoned.maxAttempts, 3);
+          assert.equal(abandoned.cause, typed[0], 'the cause is the final attempt error');
+          assert.equal(errors.indexOf(abandoned), errors.indexOf(typed[0]) + 1);
+        }
+      }
+      assert.equal(unsettled.length, 3);
+      const page = await recovery.activity.listActivity({ tenantId: 'tenant-a', accountId: scope.accountId });
+      const record = page.activities.find(value => value.transitionId === transition.transitionId);
+      assert.ok(record?.notificationAbandonedAt);
+      const after = await runPass(recovery, transition, 'unsettled-abandon-worker-after');
+      assert.equal(after.pass.claimed, 0);
+      assert.deepEqual(after.errors, []);
+    } finally {
+      fetchHook = undefined;
+    }
+  });
+
+  test('reports a transport error as an unsettled recipient with no final status', async () => {
+    // A fetch that throws is a transport error: the emitter returns delivered:false
+    // without a status, so this is delivery_failed rather than delivery_runtime_error.
+    const url = 'https://buyer.example/unsettled-transport';
+    const { recovery, transition } = await seedUnsettledClaim('unsettled-transport', url, { maxAttempts: 3 });
+    fetchHook = requestUrl => {
+      if (requestUrl.startsWith(url)) throw new Error('connect ECONNREFUSED');
+      return undefined;
+    };
+    try {
+      const { errors } = await runPass(recovery, transition, 'unsettled-transport-worker');
+      const typed = errors.filter(error => error.name === 'ReportingNotificationUnsettledError');
+      assert.equal(typed.length, 1);
+      assert.equal(typed[0].recipients.length, 1);
+      assert.equal(typed[0].recipients[0].reason, 'delivery_failed');
+      assert.equal('finalStatus' in typed[0].recipients[0], false);
+      assert.equal(JSON.stringify(typed[0].recipients).includes('buyer.example'), false);
+    } finally {
+      fetchHook = undefined;
+    }
   });
 
   test('runs the canonical documentation wiring against a fresh database', async () => {

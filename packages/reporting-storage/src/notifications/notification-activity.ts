@@ -189,6 +189,98 @@ export class ReportingNotificationRetryableSuppressionError extends Error {
 }
 
 /**
+ * One recipient a claim is still waiting on. Identifiers only: the destination
+ * URL and any credential are never carried, so a host can log this to find the
+ * subscriber that is not accepting deliveries.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export interface ReportingNotificationUnsettledRecipientV1 extends NotificationRecipientRef {
+  /**
+   * `delivery_failed`: the webhook emitter ran and returned a retryable outcome
+   * (a 5xx, a 429, a transport error or a timeout). `delivery_runtime_error`:
+   * the emitter threw before producing one. `retryable_suppression`: delivery
+   * authority failed closed and nothing was sent.
+   */
+  reason: 'delivery_failed' | 'delivery_runtime_error' | 'retryable_suppression';
+  /** HTTP status of the final attempt, when one reached the subscriber. */
+  finalStatus?: number;
+  /** Present for `retryable_suppression`. */
+  suppression?: WebhookAttemptSuppressionReason;
+}
+
+/** Recipients carried on one error; `unsettled` still counts all of them. */
+const MAX_REPORTED_UNSETTLED_RECIPIENTS = 10;
+
+/**
+ * Raised when a claim's emission returned but at least one recipient is still
+ * outstanding, so the activity is not recorded as delivered. It is an expected
+ * retry, not a storage failure: the claim is released and claimed again after
+ * `retryAfterMs`, until `attempt` reaches `maxAttempts` and the claim is
+ * abandoned instead (reported separately as
+ * {@link ReportingNotificationAbandonedError}).
+ *
+ * A retryable suppression on the first outstanding recipient raises
+ * {@link ReportingNotificationRetryableSuppressionError} instead, as before.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export class ReportingNotificationUnsettledError extends Error {
+  override readonly name = 'ReportingNotificationUnsettledError';
+  readonly transitionId: string;
+  /** Recipients with no terminal disposition after this attempt. */
+  readonly unsettled: number;
+  /** This claim's attempt, starting at 1. */
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  /** Up to ten of the recipients whose outcome on this attempt was retryable. */
+  readonly recipients: readonly ReportingNotificationUnsettledRecipientV1[];
+  constructor(input: {
+    transitionId: string;
+    unsettled: number;
+    attempt: number;
+    maxAttempts: number;
+    recipients: readonly ReportingNotificationUnsettledRecipientV1[];
+  }) {
+    super(
+      `Reporting notification delivery is not settled for ${input.unsettled} recipient(s); ` +
+        (input.attempt >= input.maxAttempts
+          ? `attempt ${input.attempt} of ${input.maxAttempts}, not retrying`
+          : 'retrying')
+    );
+    this.transitionId = input.transitionId;
+    this.unsettled = input.unsettled;
+    this.attempt = input.attempt;
+    this.maxAttempts = input.maxAttempts;
+    this.recipients = input.recipients.slice(0, MAX_REPORTED_UNSETTLED_RECIPIENTS);
+  }
+}
+
+/**
+ * Raised after a claim reached `maxAttempts` and was abandoned: it left the
+ * pending set and will not be retried, and the activity was never recorded as
+ * delivered. `cause` is the failure of the final attempt. This is the one
+ * outcome of the retry loop that needs an operator.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export class ReportingNotificationAbandonedError extends Error {
+  override readonly name = 'ReportingNotificationAbandonedError';
+  readonly transitionId: string;
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  constructor(input: { transitionId: string; attempt: number; maxAttempts: number; cause: unknown }) {
+    super(
+      `Reporting notification was abandoned undelivered after ${input.attempt} attempt(s); it will not be retried`,
+      { cause: input.cause }
+    );
+    this.transitionId = input.transitionId;
+    this.attempt = input.attempt;
+    this.maxAttempts = input.maxAttempts;
+  }
+}
+
+/**
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */
 export interface ReportingNotificationProjectionErrorV1 {
@@ -1213,12 +1305,16 @@ export function createPostgresReportingNotificationActivityRuntime(
           if (!settlement.settled) {
             // Something that never reached a subscriber is still outstanding, so
             // the activity must not be recorded as delivered.
-            const retryable = outcomes.find(outcome => outcome.disposition === 'retryable');
-            throw retryable?.suppression
-              ? new ReportingNotificationRetryableSuppressionError(retryable.suppression)
-              : new Error(
-                  `Reporting notification delivery is not settled for ${settlement.unsettled} recipient(s); retrying`
-                );
+            const retryable = outcomes.filter(outcome => outcome.disposition === 'retryable');
+            throw retryable[0]?.suppression
+              ? new ReportingNotificationRetryableSuppressionError(retryable[0].suppression)
+              : new ReportingNotificationUnsettledError({
+                  transitionId: claim.transitionId,
+                  unsettled: settlement.unsettled,
+                  attempt: claim.attemptCount,
+                  maxAttempts,
+                  recipients: retryable.map(unsettledRecipient),
+                });
           }
           const projected = !leaseLost && (await projectClaim(options.db, table, namespace, claim, retentionMs));
           if (projected) metrics.projected += 1;
@@ -1229,8 +1325,19 @@ export function createPostgresReportingNotificationActivityRuntime(
           // when it equals maxAttempts.
           if (!leaseLost && claim.attemptCount >= maxAttempts) {
             const abandoned = await abandonClaim(options.db, table, namespace, claim, retentionMs);
-            if (abandoned) metrics.abandoned += 1;
-            else metrics.leaseLost += 1;
+            if (abandoned) {
+              metrics.abandoned += 1;
+              reportProjectionError(
+                recoveryOptions.onError,
+                new ReportingNotificationAbandonedError({
+                  transitionId: claim.transitionId,
+                  attempt: claim.attemptCount,
+                  maxAttempts,
+                  cause: error,
+                }),
+                claim
+              );
+            } else metrics.leaseLost += 1;
           } else {
             const released = !leaseLost && (await releaseClaim(options.db, table, namespace, claim, retryAfterMs));
             if (released) metrics.retried += 1;
@@ -1833,6 +1940,24 @@ interface ReportingRecipientOutcome {
   recipient: NotificationRecipientRef;
   disposition: 'delivered' | 'terminal' | 'retryable';
   suppression?: WebhookAttemptSuppressionReason;
+  /** Set when the emitter threw instead of returning a result. */
+  runtimeError?: true;
+  finalStatus?: number;
+}
+
+function unsettledRecipient(outcome: ReportingRecipientOutcome): ReportingNotificationUnsettledRecipientV1 {
+  return {
+    scope: outcome.recipient.scope,
+    subscriberId: outcome.recipient.subscriberId,
+    destinationGeneration: outcome.recipient.destinationGeneration,
+    reason: outcome.suppression
+      ? 'retryable_suppression'
+      : outcome.runtimeError
+        ? 'delivery_runtime_error'
+        : 'delivery_failed',
+    ...(outcome.finalStatus === undefined ? {} : { finalStatus: outcome.finalStatus }),
+    ...(outcome.suppression ? { suppression: outcome.suppression } : {}),
+  };
 }
 
 /**
@@ -1848,7 +1973,12 @@ function classifyDelivery(delivery: {
   scope: NotificationRecipientRef['scope'];
   subscriberId: string;
   destinationGeneration: string;
-  result?: { delivered: boolean; terminal?: boolean; suppression?: { reason: WebhookAttemptSuppressionReason } };
+  result?: {
+    delivered: boolean;
+    terminal?: boolean;
+    final_status?: number;
+    suppression?: { reason: WebhookAttemptSuppressionReason };
+  };
   failure?: { reason?: string; terminal?: boolean };
 }): ReportingRecipientOutcome {
   const recipient: NotificationRecipientRef = {
@@ -1860,7 +1990,9 @@ function classifyDelivery(delivery: {
     // A retired delivery binding or an exhausted retry horizon can never
     // succeed. Retrying it holds the claim open until the tenant's own pending
     // capacity is exhausted, so it settles under explicit terminal policy.
-    return { recipient, disposition: delivery.failure?.terminal === true ? 'terminal' : 'retryable' };
+    return delivery.failure?.terminal === true
+      ? { recipient, disposition: 'terminal' }
+      : { recipient, disposition: 'retryable', runtimeError: true };
   }
   const suppression = delivery.result.suppression;
   if (suppression) {
@@ -1871,7 +2003,13 @@ function classifyDelivery(delivery: {
     };
   }
   if (delivery.result.delivered) return { recipient, disposition: 'delivered' };
-  return { recipient, disposition: delivery.result.terminal === true ? 'terminal' : 'retryable' };
+  if (delivery.result.terminal === true) return { recipient, disposition: 'terminal' };
+  const finalStatus = delivery.result.final_status;
+  return {
+    recipient,
+    disposition: 'retryable',
+    ...(Number.isSafeInteger(finalStatus) ? { finalStatus } : {}),
+  };
 }
 
 function recipientFingerprint(recipient: Readonly<NotificationRecipientRef>): string {
