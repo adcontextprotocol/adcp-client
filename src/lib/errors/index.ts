@@ -669,8 +669,11 @@ function hideChallengeRealm(diagnostics: AuthFailureDiagnostics): AuthFailureDia
   return { ...diagnostics, wwwAuthenticate: challenge };
 }
 
-/** Strip userinfo, query and fragment. A URL with none of them is returned as given. */
-function sanitizeAgentUrlForError(value: string): string {
+/**
+ * Strip userinfo, query and fragment. A URL with none of them is returned as given.
+ * @internal
+ */
+export function sanitizeAgentUrlForError(value: string): string {
   try {
     const url = new URL(value);
     if (!url.username && !url.password && !url.search && !url.hash) return value;
