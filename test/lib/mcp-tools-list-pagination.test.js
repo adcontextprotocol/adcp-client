@@ -17,7 +17,14 @@ const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const { ListToolsRequestSchema, CallToolRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
 
 const { SingleAgentClient } = require('../../dist/lib/index.js');
-const { closeMCPConnections } = require('../../dist/lib/protocols');
+const { ProtocolClient, closeMCPConnections } = require('../../dist/lib/protocols');
+const { callMCPToolWithClient } = require('../../dist/lib/protocols/mcp-tasks.js');
+const {
+  DEFAULT_MAX_RESPONSE_BYTES,
+  responseSizeLimitStorage,
+  withPageResponseSizeLimit,
+  withResponseSizeLimit,
+} = require('../../dist/lib/protocols/responseSizeLimit.js');
 const {
   MAX_TOOLS_LIST_PAGES,
   forEachMcpToolsPage,
@@ -40,7 +47,9 @@ function pagedFetcher(pages, requested = []) {
 describe('mcp-tools-list: forEachMcpToolsPage / listAllMcpTools', () => {
   it('returns the union of tools across pages and sends each cursor in order', async () => {
     const requested = [];
-    const tools = await listAllMcpTools(pagedFetcher([[tool('a')], [tool('b')], [tool('c'), tool('d')]], requested));
+    const { tools } = await listAllMcpTools(
+      pagedFetcher([[tool('a')], [tool('b')], [tool('c'), tool('d')]], requested)
+    );
     assert.deepEqual(
       tools.map(t => t.name),
       ['a', 'b', 'c', 'd']
@@ -59,7 +68,7 @@ describe('mcp-tools-list: forEachMcpToolsPage / listAllMcpTools', () => {
 
   it('stops on an empty-string nextCursor', async () => {
     const requested = [];
-    const tools = await listAllMcpTools(async cursor => {
+    const { tools } = await listAllMcpTools(async cursor => {
       requested.push(cursor);
       return { tools: [tool('only')], nextCursor: '' };
     });
@@ -69,7 +78,7 @@ describe('mcp-tools-list: forEachMcpToolsPage / listAllMcpTools', () => {
 
   it('stops on a repeated cursor instead of looping', async () => {
     const requested = [];
-    const tools = await listAllMcpTools(async cursor => {
+    const { tools } = await listAllMcpTools(async cursor => {
       requested.push(cursor);
       // Always points at the same cursor, so page 2 repeats what page 1 returned.
       return { tools: [tool(`t${requested.length}`)], nextCursor: 'same' };
@@ -96,14 +105,14 @@ describe('mcp-tools-list: forEachMcpToolsPage / listAllMcpTools', () => {
 
   it(`reads exactly ${MAX_TOOLS_LIST_PAGES} pages when the last one ends the list`, async () => {
     const pages = Array.from({ length: MAX_TOOLS_LIST_PAGES }, (_, i) => [tool(`t${i}`)]);
-    const tools = await listAllMcpTools(pagedFetcher(pages));
+    const { tools } = await listAllMcpTools(pagedFetcher(pages));
     assert.equal(tools.length, MAX_TOOLS_LIST_PAGES);
   });
 
   it('keeps the first definition when a tool name repeats on a later page', async () => {
     const first = { ...tool('dup'), description: 'first' };
     const second = { ...tool('dup'), description: 'second' };
-    const tools = await listAllMcpTools(pagedFetcher([[first], [second, tool('other')]]));
+    const { tools } = await listAllMcpTools(pagedFetcher([[first], [second, tool('other')]]));
     assert.deepEqual(
       tools.map(t => [t.name, t.description]),
       [
@@ -116,12 +125,55 @@ describe('mcp-tools-list: forEachMcpToolsPage / listAllMcpTools', () => {
   it('stops early, without fetching further pages, when onPage returns true', async () => {
     const requested = [];
     const seen = [];
-    await forEachMcpToolsPage(pagedFetcher([[tool('a')], [tool('b')], [tool('c')]], requested), page => {
-      seen.push(...page.map(t => t.name));
-      return page.some(t => t.name === 'b');
-    });
+    const pagesRead = await forEachMcpToolsPage(
+      pagedFetcher([[tool('a')], [tool('b')], [tool('c')]], requested),
+      page => {
+        seen.push(...page.map(t => t.name));
+        return page.some(t => t.name === 'b');
+      }
+    );
     assert.deepEqual(seen, ['a', 'b']);
     assert.deepEqual(requested, [undefined, 'c1']);
+    assert.equal(pagesRead, 2);
+  });
+
+  it('forEachMcpToolsPage returns the number of pages read', async () => {
+    assert.equal(await forEachMcpToolsPage(pagedFetcher([[tool('a')]]), () => {}), 1);
+    assert.equal(await forEachMcpToolsPage(pagedFetcher([[tool('a')], [tool('b')], [tool('c')]]), () => {}), 3);
+  });
+
+  describe('metadataCached', () => {
+    const twoPages = () => pagedFetcher([[tool('a')], [tool('b'), tool('a')]]);
+
+    it('resets the client tool-metadata cache to the whole deduplicated catalog after a multi-page read', async () => {
+      const cached = [];
+      const client = { cacheToolMetadata: tools => cached.push(tools.map(t => t.name)) };
+      const { metadataCached } = await listAllMcpTools(twoPages(), client);
+      assert.equal(metadataCached, true);
+      assert.deepEqual(cached, [['a', 'b']]);
+    });
+
+    it('is true without touching the client when the catalog is a single page', async () => {
+      const client = {
+        cacheToolMetadata: () => assert.fail('a single page already left the SDK cache complete'),
+      };
+      const { metadataCached } = await listAllMcpTools(pagedFetcher([[tool('a')]]), client);
+      assert.equal(metadataCached, true);
+    });
+
+    it('is false for a multi-page read when no client is given', async () => {
+      assert.equal((await listAllMcpTools(twoPages())).metadataCached, false);
+    });
+
+    it('is false, changing nothing, when the client has no cacheToolMetadata (older or newer SDK)', async () => {
+      const { tools, metadataCached } = await listAllMcpTools(twoPages(), {});
+      assert.equal(metadataCached, false);
+      assert.deepEqual(
+        tools.map(t => t.name),
+        ['a', 'b'],
+        'the tool list itself is still complete'
+      );
+    });
   });
 
   it('toolsListPageParams adds the cursor without dropping base params', () => {
@@ -329,26 +381,26 @@ describe('SingleAgentClient.getAgentInfo() follows every tools/list page (HTTP, 
   });
 });
 
-describe('MCP tasks: callToolWithClient pages until it finds the called tool', () => {
-  it('creates a task for a task-capable tool that sits on page 2', async t => {
-    const { callMCPToolWithClient } = require('../../dist/lib/protocols/mcp-tasks.js');
-    const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
-    const { InMemoryTaskStore } = require('../../dist/lib/server/tasks.js');
-    const z = require('zod');
+/**
+ * A tasks-capable in-process `McpServer` whose `tools/list` serves one tool per
+ * page, in registration order: a required-task `create_media_buy` on page 1 and
+ * a plain `get_products` on page 2 (the shape of adcp-client#3717's review
+ * findings). `createdTasks()` counts task creations.
+ */
+async function createPagedTasksServer(t, { taskToolPage = 1 } = {}) {
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { InMemoryTaskStore } = require('../../dist/lib/server/tasks.js');
+  const z = require('zod');
 
-    // McpServer paginates nothing itself, so wrap its tools/list handler to
-    // serve one tool per page while keeping its task plumbing for tools/call.
-    const mcp = new McpServer(
-      { name: 'paged-tasks', version: '1.0.0' },
-      {
-        capabilities: { tasks: { list: {}, cancel: {}, requests: { tools: { call: {} } } } },
-        taskStore: new InMemoryTaskStore(),
-      }
-    );
-    mcp.registerTool('get_products', { inputSchema: { brief: z.string().optional() } }, async () => ({
-      content: [{ type: 'text', text: '{}' }],
-    }));
-    let taskCreated = false;
+  const mcp = new McpServer(
+    { name: 'paged-tasks', version: '1.0.0' },
+    {
+      capabilities: { tasks: { list: {}, cancel: {}, requests: { tools: { call: {} } } } },
+      taskStore: new InMemoryTaskStore(),
+    }
+  );
+  let createdTasks = 0;
+  const registerTaskTool = () =>
     mcp.experimental.tasks.registerToolTask(
       'create_media_buy',
       {
@@ -358,7 +410,8 @@ describe('MCP tasks: callToolWithClient pages until it finds the called tool', (
       },
       {
         createTask: async (_args, extra) => {
-          taskCreated = true;
+          createdTasks++;
+          // A short ttl: the store's expiry timer would otherwise keep the test process alive.
           const task = await extra.taskStore.createTask({ ttl: 1000 });
           await extra.taskStore.storeTaskResult(task.taskId, 'completed', {
             content: [{ type: 'text', text: 'ok' }],
@@ -370,34 +423,258 @@ describe('MCP tasks: callToolWithClient pages until it finds the called tool', (
         getTaskResult: async (_args, extra) => extra.taskStore.getTaskResult(extra.taskId),
       }
     );
+  const registerPlainTool = () =>
+    mcp.registerTool('get_products', { inputSchema: { brief: z.string().optional() } }, async () => ({
+      content: [{ type: 'text', text: '{}' }],
+    }));
+  if (taskToolPage === 1) {
+    registerTaskTool();
+    registerPlainTool();
+  } else {
+    registerPlainTool();
+    registerTaskTool();
+  }
 
-    // Intercept tools/list on the McpServer's low-level server: page the full list.
-    const lowLevel = mcp.server;
-    const fullListHandler = lowLevel._requestHandlers.get('tools/list');
-    const listCursors = [];
-    lowLevel._requestHandlers.set('tools/list', async (request, extra) => {
-      const full = await fullListHandler(request, extra);
+  // McpServer does not paginate, so wrap its tools/list handler to serve one
+  // tool per page while keeping its task plumbing for tools/call.
+  const lowLevel = mcp.server;
+  const fullListHandler = lowLevel._requestHandlers.get('tools/list');
+  const listCursors = [];
+  lowLevel._requestHandlers.set('tools/list', async (request, extra) => {
+    const full = await fullListHandler(request, extra);
+    const index = request.params?.cursor === undefined ? 0 : Number(request.params.cursor.slice('page-'.length));
+    listCursors.push(request.params?.cursor);
+    return {
+      tools: [full.tools[index]],
+      ...(index + 1 < full.tools.length && { nextCursor: `page-${index + 1}` }),
+    };
+  });
+
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await mcp.connect(serverTransport);
+  const mcpClient = new Client({ name: 'pagination-test', version: '1.0.0' });
+  await mcpClient.connect(clientTransport);
+  t.after(async () => {
+    await mcpClient.close();
+    await mcp.close();
+  });
+
+  const agent = {
+    id: 'tasks-agent',
+    name: 'tasks',
+    agent_uri: 'in-process://tasks',
+    protocol: 'mcp',
+    _inProcessMcpClient: mcpClient,
+  };
+  return { mcpClient, agent, listCursors, createdTasks: () => createdTasks };
+}
+
+describe('MCP tasks: ensureToolsListed reads the whole catalog (callMCPToolWithClient)', () => {
+  it('creates a task for a task-capable tool that sits on page 2', async t => {
+    const harness = await createPagedTasksServer(t, { taskToolPage: 2 });
+
+    await callMCPToolWithClient(harness.mcpClient, 'create_media_buy', { campaign_name: 'x' });
+
+    assert.equal(harness.createdTasks(), 1, 'the call must go through task creation, not a plain tools/call');
+    assert.deepEqual(harness.listCursors, [undefined, 'page-1'], 'the whole (two-page) catalog was listed once');
+  });
+
+  it('lists the catalog once for later calls on the same client', async t => {
+    const harness = await createPagedTasksServer(t);
+
+    await callMCPToolWithClient(harness.mcpClient, 'create_media_buy', { campaign_name: 'x' });
+    await callMCPToolWithClient(harness.mcpClient, 'create_media_buy', { campaign_name: 'y' });
+
+    assert.equal(harness.createdTasks(), 2);
+    assert.deepEqual(harness.listCursors, [undefined, 'page-1']);
+  });
+
+  it('keeps task augmentation after capability discovery re-lists a multi-page catalog on the same client', async t => {
+    // Review finding 1: each v1 `listTools()` page replaces the SDK's cached
+    // task metadata, so a multi-page getAgentInfo() left only the last page
+    // described and a required-task tool on an earlier page lost augmentation.
+    const harness = await createPagedTasksServer(t, { taskToolPage: 1 });
+
+    await callMCPToolWithClient(harness.mcpClient, 'create_media_buy', { campaign_name: 'first' });
+    assert.equal(harness.createdTasks(), 1);
+
+    const client = new SingleAgentClient(harness.agent, { validateFeatures: false });
+    const info = await client.getAgentInfo();
+    assert.deepEqual(info.tools.map(x => x.name).sort(), ['create_media_buy', 'get_products']);
+
+    // Previously: "Server requires task augmentation for tool 'create_media_buy'".
+    await callMCPToolWithClient(harness.mcpClient, 'create_media_buy', { campaign_name: 'second' });
+    assert.equal(harness.createdTasks(), 2, 'the second call must also be a task');
+  });
+});
+
+describe('getAgentInfo() keeps output validators for tools on earlier pages (non-Tasks server)', () => {
+  it('still rejects an output-schema violation from a page-1 tool after multi-page discovery', async t => {
+    // Review finding 3: the last page listed replaced the SDK's output
+    // validators, so a page-1 tool's structuredContent was no longer validated.
+    const server = new Server({ name: 'paged-validated', version: '1.0.0' }, { capabilities: { tools: {} } });
+    const valueTool = {
+      ...tool('get_value'),
+      outputSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] },
+    };
+    const pages = [valueTool, tool('other_tool')];
+    server.setRequestHandler(ListToolsRequestSchema, async request => {
       const index = request.params?.cursor === undefined ? 0 : Number(request.params.cursor.slice('page-'.length));
-      listCursors.push(request.params?.cursor);
-      return {
-        tools: [full.tools[index]],
-        ...(index + 1 < full.tools.length && { nextCursor: `page-${index + 1}` }),
-      };
+      return { tools: [pages[index]], ...(index + 1 < pages.length && { nextCursor: `page-${index + 1}` }) };
     });
-
+    server.setRequestHandler(CallToolRequestSchema, async () => ({
+      content: [{ type: 'text', text: '{"value":123}' }],
+      structuredContent: { value: 123 },
+    }));
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await mcp.connect(serverTransport);
+    await server.connect(serverTransport);
     const mcpClient = new Client({ name: 'pagination-test', version: '1.0.0' });
     await mcpClient.connect(clientTransport);
     t.after(async () => {
       await mcpClient.close();
-      await mcp.close();
+      await server.close();
     });
 
-    const result = await callMCPToolWithClient(mcpClient, 'create_media_buy', { campaign_name: 'x' });
+    const client = new SingleAgentClient(
+      {
+        id: 'validated-agent',
+        name: 'validated',
+        agent_uri: 'in-process://validated',
+        protocol: 'mcp',
+        _inProcessMcpClient: mcpClient,
+      },
+      { validateFeatures: false }
+    );
+    await client.getAgentInfo();
 
-    assert.ok(taskCreated, 'the call must go through task creation, not a plain tools/call');
-    assert.deepEqual(listCursors, [undefined, 'page-1'], 'paging stops at the page that holds the called tool');
-    assert.ok(result, 'a result comes back');
+    await assert.rejects(
+      () => mcpClient.callTool({ name: 'get_value', arguments: {} }),
+      /structured content|output schema/i,
+      'page-1 tool output must still be validated against its outputSchema'
+    );
+  });
+});
+
+describe('withPageResponseSizeLimit', () => {
+  const slot = () => responseSizeLimitStorage.getStore();
+
+  it('gives each page a fresh cumulative meter under the enclosing call cap', async () => {
+    await withResponseSizeLimit(1000, async () => {
+      const outer = slot();
+      outer.streamMeter.consumed = 1500; // the enclosing call already streamed 1500 of its 2000 allowance
+      const pages = [];
+      for (let i = 0; i < 2; i++) await withPageResponseSizeLimit(undefined, async () => pages.push({ ...slot() }));
+
+      for (const page of pages) {
+        assert.equal(page.maxResponseBytes, 1000, 'the per-response cap is inherited');
+        assert.equal(page.streamLimit, outer.streamLimit, 'the cumulative allowance is the same size');
+        assert.equal(page.streamMeter.consumed, 0, 'but the meter starts at zero');
+        assert.notEqual(page.streamMeter, outer.streamMeter, 'and is not the call-wide meter');
+      }
+      assert.notEqual(pages[0].streamMeter, pages[1].streamMeter, 'each page has its own meter');
+      assert.equal(outer.streamMeter.consumed, 1500, 'the enclosing meter is untouched');
+    });
+  });
+
+  it('narrows the cap like withResponseSizeLimit and never widens it', async () => {
+    await withResponseSizeLimit(1000, async () => {
+      await withPageResponseSizeLimit(5000, async () => assert.equal(slot().maxResponseBytes, 1000));
+      await withPageResponseSizeLimit(500, async () => assert.equal(slot().maxResponseBytes, 500));
+    });
+  });
+
+  it('installs the default cap when there is no enclosing scope', async () => {
+    await withPageResponseSizeLimit(undefined, async () => {
+      assert.equal(slot().maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES);
+      assert.equal(slot().streamMeter.consumed, 0);
+    });
+  });
+
+  it('treats 0 as an opt-out, with no meter', async () => {
+    await withResponseSizeLimit(1000, async () => {
+      await withPageResponseSizeLimit(0, async () => {
+        assert.equal(slot().maxResponseBytes, null);
+        assert.equal(slot().streamMeter, undefined);
+      });
+    });
+  });
+
+  it('inherits an enclosing opt-out when given undefined', async () => {
+    await withResponseSizeLimit(0, async () => {
+      await withPageResponseSizeLimit(undefined, async () => {
+        assert.equal(slot().maxResponseBytes, null);
+        assert.equal(slot().streamMeter, undefined);
+      });
+    });
+  });
+});
+
+describe('MCP tools/list over SSE: the response-size allowance is per page', () => {
+  let server;
+  let baseUrl;
+  const PAGE_PADDING = 50 * 1024;
+  const CAP = 64 * 1024;
+  const pageNames = ['sync_accounts', 'create_media_buy', 'get_products'];
+
+  before(async () => {
+    server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', chunk => (body += chunk));
+      req.on('end', () => {
+        if (req.method !== 'POST') {
+          res.writeHead(405);
+          return res.end();
+        }
+        const msg = JSON.parse(body);
+        const json = result => {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'mcp-session-id': 'sse-pages' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
+        };
+        if (msg.method === 'initialize') {
+          return json({
+            protocolVersion: msg.params?.protocolVersion ?? '2025-03-26',
+            capabilities: { tools: {}, tasks: { requests: { tools: { call: {} } } } },
+            serverInfo: { name: 'sse-pages', version: '0.0.1' },
+          });
+        }
+        if (msg.method === 'tools/list') {
+          // Each page is one SSE frame: under the per-response cap, but the
+          // three together exceed the call's whole cumulative SSE allowance.
+          const index = msg.params?.cursor === undefined ? 0 : Number(msg.params.cursor.slice('page-'.length));
+          const result = {
+            tools: [{ ...tool(pageNames[index]), description: 'x'.repeat(PAGE_PADDING) }],
+            ...(index + 1 < pageNames.length && { nextCursor: `page-${index + 1}` }),
+          };
+          res.writeHead(200, { 'Content-Type': 'text/event-stream', 'mcp-session-id': 'sse-pages' });
+          return res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: msg.id, result })}\n\n`);
+        }
+        if (msg.method === 'tools/call') return json({ content: [{ type: 'text', text: 'ok' }] });
+        if (msg.id === undefined) {
+          res.writeHead(202);
+          return res.end();
+        }
+        json({});
+      });
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    baseUrl = `http://127.0.0.1:${server.address().port}`;
+  });
+
+  after(async () => {
+    await closeMCPConnections();
+    await new Promise(resolve => server.close(resolve));
+  });
+
+  it('calls a tool whose catalog streams more SSE bytes across pages than one call may', async () => {
+    await closeMCPConnections();
+    // Review finding 2: every page shared the tool call's cumulative allowance
+    // (2 x cap), so a multi-page catalog exhausted it before the call ran.
+    const result = await ProtocolClient.callTool(
+      { id: 'sse-pages', name: 'sse pages', protocol: 'mcp', agent_uri: baseUrl },
+      'get_products',
+      {},
+      { transport: { maxResponseBytes: CAP } }
+    );
+    assert.ok(result, 'the call succeeds');
   });
 });
