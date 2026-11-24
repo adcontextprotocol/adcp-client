@@ -834,3 +834,24 @@ describe('legacyFormatIdsForFormatOption', () => {
     assert.strictEqual(ids[0].id, 'meta_reels');
   });
 });
+
+describe('removed beta.3 capability_ids helpers (#1899)', () => {
+  const REMOVED = ['packageRefsForCapabilities', 'legacyFormatIdsForCapability', 'CapabilityIdsLookupError'];
+
+  test('CJS entry no longer exports them', () => {
+    const cjs = require('../../dist/lib/v2/projection/index.js');
+    for (const name of REMOVED) {
+      assert.ok(!(name in cjs), `${name} must not be exported from the CJS projection entry`);
+    }
+    // The replacement stays available.
+    assert.strictEqual(typeof cjs.packageRefsForFormatOptions, 'function');
+  });
+
+  test('ESM entry no longer exports them', async () => {
+    const esm = await import('../../dist/lib/v2/projection/index.mjs');
+    for (const name of REMOVED) {
+      assert.ok(!(name in esm), `${name} must not be exported from the ESM projection entry`);
+    }
+    assert.strictEqual(typeof esm.packageRefsForFormatOptions, 'function');
+  });
+});
