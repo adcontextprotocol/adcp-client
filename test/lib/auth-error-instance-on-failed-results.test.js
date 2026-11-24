@@ -170,7 +170,7 @@ describe('A2A: unsigned 401 with no discoverable OAuth requirements', () => {
     assert.ok(!(err instanceof NeedsAuthorizationError));
     assert.ok(!err.requestSigned, 'not a signed-request rejection');
     assert.equal(err.challenge?.scheme, 'basic');
-    assert.equal(err.challenge?.params.realm, 'x');
+    assert.equal(err.challenge?.realm, 'x');
   });
 });
 
