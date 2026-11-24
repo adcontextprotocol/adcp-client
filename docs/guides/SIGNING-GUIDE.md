@@ -823,8 +823,9 @@ const myPlatform = {
     overrides: {
       request_signing: {
         supported: true,
+        // Every required_for operation must also be in supported_for.
         required_for: ['create_media_buy', 'update_media_buy'],
-        supported_for: ['sync_creatives', 'sync_audiences'],
+        supported_for: ['create_media_buy', 'update_media_buy', 'sync_creatives', 'sync_audiences'],
         covers_content_digest: 'required',
       },
     },

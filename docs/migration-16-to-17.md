@@ -769,7 +769,7 @@ const platform = {
   capabilities: {
     // specialisms, channels, ...
     supported_versions: ['3.1.18', '3.2.1'],
-    overrides: { request_signing: { supported: true, covers_content_digest: 'either' } },
+    overrides: { request_signing: { supported: true, covers_content_digest: 'required' } },
   },
   // accounts, sales, ...
 };

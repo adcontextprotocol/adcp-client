@@ -694,8 +694,10 @@ const platform = {
     overrides: {
       request_signing: {
         supported: true,
+        // Every required_for operation must also be in supported_for.
         required_for: ['create_media_buy', 'update_media_buy'],
-        covers_content_digest: 'either',
+        supported_for: ['create_media_buy', 'update_media_buy'],
+        covers_content_digest: 'required',
       },
     },
   },
@@ -711,7 +713,12 @@ serve(
   {
     authenticate: requireAuthenticatedOrSigned({
       signature: verifySignatureAsAuthenticator({
-        capability: { supported: true, required_for: ['create_media_buy', 'update_media_buy'], covers_content_digest: 'either' },
+        capability: {
+          supported: true,
+          required_for: ['create_media_buy', 'update_media_buy'],
+          supported_for: ['create_media_buy', 'update_media_buy'],
+          covers_content_digest: 'required',
+        },
         jwks: new ResolvedAgentJwksResolver('https://buyer.example/mcp', 'mcp'),
         resolveOperation: adcpOperationResolver,
       }),

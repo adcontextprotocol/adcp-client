@@ -10906,6 +10906,13 @@ describe('createAdcpServerFromPlatform refuses options.capabilities', () => {
     version: '1.0.0',
     validation: { requests: 'off', responses: 'off' },
   };
+  // The block docs/guides/SIGNING-GUIDE.md declares on the platform.
+  const GUIDE_REQUEST_SIGNING = {
+    supported: true,
+    required_for: ['create_media_buy', 'update_media_buy'],
+    supported_for: ['create_media_buy', 'update_media_buy', 'sync_creatives', 'sync_audiences'],
+    covers_content_digest: 'required',
+  };
 
   async function dispatchCapabilities(server, args = {}) {
     return server.dispatchTestRequest({
@@ -10935,7 +10942,7 @@ describe('createAdcpServerFromPlatform refuses options.capabilities', () => {
   it('throws when only non-version keys are set', () => {
     assertRefused({
       ...baseOpts,
-      capabilities: { overrides: { request_signing: { protocol_methods_required_for: ['tools/call'] } } },
+      capabilities: { overrides: { request_signing: GUIDE_REQUEST_SIGNING } },
     });
   });
 
@@ -10979,13 +10986,18 @@ describe('createAdcpServerFromPlatform refuses options.capabilities', () => {
     assert.strictEqual(result.structuredContent.adcp?.supported_versions, undefined);
   });
 
-  it('projects platform.capabilities.overrides.request_signing into the capabilities response', async () => {
+  it('projects platform.capabilities.overrides.request_signing into a schema-valid capabilities response', async () => {
     const platform = buildPlatform();
-    platform.capabilities.overrides = { request_signing: { protocol_methods_required_for: ['tools/call'] } };
-    const server = createAdcpServerFromPlatform(platform, baseOpts);
+    platform.capabilities.overrides = { request_signing: GUIDE_REQUEST_SIGNING };
+    // Strict response validation checks the advertised block against the
+    // capabilities response schema.
+    const server = createAdcpServerFromPlatform(platform, {
+      ...baseOpts,
+      validation: { requests: 'off', responses: 'strict' },
+    });
     const result = await dispatchCapabilities(server);
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
-    assert.deepStrictEqual(result.structuredContent.request_signing.protocol_methods_required_for, ['tools/call']);
+    assert.deepStrictEqual(result.structuredContent.request_signing, GUIDE_REQUEST_SIGNING);
   });
 
   it('rejects an invalid release identifier declared on the platform', () => {
