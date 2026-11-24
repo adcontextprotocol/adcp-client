@@ -1341,9 +1341,9 @@ export interface SponsoredIntelligenceHandlers<TAccount = unknown> {
  * models it as an HTTP webhook (the buyer POSTs to the `approval_webhook`
  * URL returned from `acquire_rights`), not as an MCP/A2A tool. Adopters
  * wire the receiver to `BrandRightsPlatform.reviewCreativeApproval` and
- * use `creativeApproved` / `creativeApprovalRejected` /
- * `creativeApprovalPendingReview` / `creativeApprovalError` from
- * `@adcp/sdk/server` to build the webhook response.
+ * use `legacyCreativeApprovalApproved` / `legacyCreativeApprovalRejected` /
+ * `legacyCreativeApprovalPendingReview` / `legacyCreativeApprovalError`
+ * from `@adcp/sdk/server` to build the webhook response.
  */
 export interface BrandRightsHandlers<TAccount = unknown> {
   getBrandIdentity?: DomainHandler<'get_brand_identity', TAccount>;

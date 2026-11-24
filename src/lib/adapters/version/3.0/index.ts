@@ -2,6 +2,7 @@ import { createMediaBuyAdapter, updateMediaBuyAdapter, downgradeCreativeTrackers
 import {
   acquireRightsAdapter,
   checkGovernanceAdapter,
+  creativeApprovalAdapter,
   getPlanAuditLogsAdapter,
   reportPlanOutcomeAdapter,
 } from './decision-status';
@@ -25,4 +26,5 @@ export const v30Adapters: ReadonlyArray<VersionAdapter> = [
   reportPlanOutcomeAdapter,
   getPlanAuditLogsAdapter,
   acquireRightsAdapter,
+  creativeApprovalAdapter,
 ];

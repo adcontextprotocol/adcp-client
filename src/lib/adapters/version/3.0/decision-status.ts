@@ -92,6 +92,41 @@ export const acquireRightsAdapter: VersionAdapter = {
   downgradeResponse: downgradeDecision('rights_status'),
 };
 
+// `creative_approval` is the webhook a brand-rights agent answers itself, so no
+// framework dispatch projects it; adopters call `projectResponseForRelease`
+// (adcp-client#3777). Its AdCP 3.0 `status` is only ever the decision: the
+// decision arms require it and the error arm forbids it, and there is no task
+// status. So the decision becomes `status` whatever envelope status came with
+// it, and a body without a decision drops `status`.
+function downgradeCreativeApproval(data: unknown): { data: unknown; drift?: VersionDrift } {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { data };
+  const { approval_status: decision, status: taskStatus, ...rest } = data as Record<string, unknown>;
+  if (typeof decision === 'string') {
+    return {
+      data: { ...rest, status: decision },
+      drift: {
+        type: 'pre31_decision_status_moved',
+        message: 'Decision moved from approval_status to the AdCP 3.0 status field.',
+        movedFields: [{ from: 'approval_status', to: 'status' }],
+      },
+    };
+  }
+  if (taskStatus === undefined) return { data };
+  return {
+    data: rest,
+    drift: {
+      type: 'pre31_task_status_stripped',
+      message: 'Task status omitted: AdCP 3.0 creative_approval status carries only the decision.',
+      strippedFields: ['status'],
+    },
+  };
+}
+
+export const creativeApprovalAdapter: VersionAdapter = {
+  toolName: 'creative_approval',
+  downgradeResponse: downgradeCreativeApproval,
+};
+
 export const getPlanAuditLogsAdapter: VersionAdapter = {
   toolName: 'get_plan_audit_logs',
   downgradeResponse: downgradeAuditEntryVerdicts,

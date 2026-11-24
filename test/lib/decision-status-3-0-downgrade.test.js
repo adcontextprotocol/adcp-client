@@ -277,6 +277,60 @@ describe('3.0 decision-status adapters', () => {
     });
   }
 
+  describe('creative_approval (#3777)', () => {
+    // 3.0 `status` is only the decision: decision arms require it, the error arm forbids it.
+    const DECISION_VALUES = ['approved', 'rejected', 'pending_review'];
+    const bodyFor = decision => ({ approval_status: decision, rights_id: 'rights_grant_123', reason: 'r' });
+
+    for (const decision of DECISION_VALUES) {
+      for (const envelope of [undefined, 'completed', 'working', 'submitted']) {
+        it(`${decision}: moves to status when the envelope status is ${envelope ?? 'absent'}`, () => {
+          const input = { ...bodyFor(decision), ...(envelope ? { status: envelope } : {}) };
+          const { data, drifts } = down('creative_approval', input);
+          assert.equal(data.status, decision);
+          assert.equal('approval_status' in data, false);
+          assert.equal(data.rights_id, 'rights_grant_123');
+          const drift = drifts.find(d => d.type === 'pre31_decision_status_moved');
+          assert.ok(drift, JSON.stringify(drifts));
+          assert.deepEqual(drift.movedFields, [{ from: 'approval_status', to: 'status' }]);
+          const outcome = validateResponse('creative_approval', data, '3.0');
+          assert.ok(outcome.valid, JSON.stringify(outcome.issues));
+        });
+      }
+    }
+
+    it('the error arm loses status, which 3.0 forbids there', () => {
+      const errors = [{ code: 'INVALID_REQUEST', message: 'creative_url not reachable' }];
+      const { data, drifts } = down('creative_approval', { status: 'failed', errors });
+      assert.equal('status' in data, false);
+      assert.deepEqual(data.errors, errors);
+      const drift = drifts.find(d => d.type === 'pre31_task_status_stripped');
+      assert.ok(drift, JSON.stringify(drifts));
+      assert.deepEqual(drift.strippedFields, ['status']);
+    });
+
+    it('a body with neither approval_status nor status is unchanged', () => {
+      const input = { errors: [{ code: 'INVALID_REQUEST', message: 'm' }] };
+      const { data, drifts } = down('creative_approval', input);
+      assert.deepEqual(data, input);
+      assert.equal(
+        drifts.some(d => d.type === 'pre31_decision_status_moved' || d.type === 'pre31_task_status_stripped'),
+        false
+      );
+    });
+
+    it('does not mutate its input', () => {
+      for (const input of [
+        { ...bodyFor('rejected'), status: 'working' },
+        { status: 'failed', errors: [{ code: 'INVALID_REQUEST', message: 'm' }] },
+      ]) {
+        const snapshot = structuredClone(input);
+        down('creative_approval', input);
+        assert.deepEqual(input, snapshot);
+      }
+    });
+  });
+
   it('get_plan_audit_logs: reports each moved entry verdict and leaves other statuses', () => {
     const input = {
       plans: [
