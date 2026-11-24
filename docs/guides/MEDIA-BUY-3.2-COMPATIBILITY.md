@@ -48,7 +48,13 @@ when the endpoint must continue serving older buyers:
 
 ```ts
 const platform = {
-  // accounts, capabilities, statusMappers, ...
+  // accounts, statusMappers, ...
+  capabilities: {
+    // specialisms, channels, ...
+    // Releases this seller serves. Declare them here: the options of
+    // createAdcpServerFromPlatform don't accept `capabilities`.
+    supported_versions: ['3.1.18', '3.2.1'],
+  },
 
   mediaBuyLifecycle: {
     proposalRefinement: {
@@ -80,7 +86,6 @@ createAdcpServerFromPlatform(platform, {
   adcpVersion: '3.2.1',
   // Keep callers that omit a version on the established 3.1 contract.
   defaultAdcpVersion: '3.1.18',
-  capabilities: { supported_versions: ['3.1.18', '3.2.1'] },
 });
 ```
 

@@ -2801,6 +2801,16 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // the platform's exact account type on the public migration seam while
   // keeping that historical internal boundary localized here.
   const runtimeOpts = opts as unknown as CreateAdcpServerFromPlatformOptions<Account>;
+  // The options type omits `capabilities`: the platform declaration is the
+  // only capability source, and the projection below replaces the whole
+  // object. Refuse an untyped or cast `opts.capabilities` instead of silently
+  // advertising something other than what the caller wrote.
+  if ((opts as { capabilities?: unknown }).capabilities !== undefined) {
+    throw new PlatformConfigError(
+      'createAdcpServerFromPlatform: options.capabilities is not supported. Declare capabilities on ' +
+        'platform.capabilities instead (for example platform.capabilities.supported_versions).'
+    );
+  }
   const implicitIdentityPolicy: ImplicitIdentityPolicy = { strict: runtimeOpts.strictAccountReferences === true };
   const runtimeLegacyHandlers = legacyHandlers as unknown as LegacyDecisioningHandlerGroups<Account>;
   validatePlatform(platform, {

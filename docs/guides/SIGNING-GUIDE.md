@@ -814,13 +814,12 @@ AdCP 4.0 will mandate `signingKey`; until then this is a soft launch path. Buyer
 
 ## Step 7: Declare the Capability
 
-If your seller agent verifies inbound signatures, declare `request_signing` in your capabilities so buyers know to sign:
+If your seller agent verifies inbound signatures, declare `request_signing` in your platform's capabilities so buyers know to sign:
 
 ```typescript
-createAdcpServerFromPlatform(myPlatform, {
-  name: 'My Seller',
-  version: '1.0.0',
+const myPlatform = {
   capabilities: {
+    // specialisms, channels, ...
     overrides: {
       request_signing: {
         supported: true,
@@ -830,8 +829,13 @@ createAdcpServerFromPlatform(myPlatform, {
       },
     },
   },
-});
+  // accounts, sales, ...
+};
+
+createAdcpServerFromPlatform(myPlatform, { name: 'My Seller', version: '1.0.0' });
 ```
+
+Declare it on `platform.capabilities`, not in the options: `createAdcpServerFromPlatform` throws a `PlatformConfigError` when its options carry `capabilities`.
 
 The capability key is `request_signing` (not `signed_requests`) — that's what `AdcpCapabilitiesOverrides` and the spec's `get_adcp_capabilities` response advertise. The wrong key is silently dropped, leaving the verifier wired up but invisible to buyers.
 

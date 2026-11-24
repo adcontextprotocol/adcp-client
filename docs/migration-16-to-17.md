@@ -754,6 +754,30 @@ you test preview-only features.
   `publisher_properties` and `collections` may be empty arrays, which mean an
   undisclosed roster rather than an empty one.
 
+## `createAdcpServerFromPlatform` refuses `capabilities` in its options
+
+`createAdcpServerFromPlatform(platform, opts)` now throws a
+`PlatformConfigError` when `opts.capabilities` is set. The options type has
+never included `capabilities`, but JavaScript callers and casts could pass it,
+and the server silently ignored it: it advertised the platform's capabilities
+instead, so `opts.capabilities.supported_versions` or
+`opts.capabilities.overrides.request_signing` never reached
+`get_adcp_capabilities`. Move those keys to the platform declaration:
+
+```ts
+const platform = {
+  capabilities: {
+    // specialisms, channels, ...
+    supported_versions: ['3.1.18', '3.2.1'],
+    overrides: { request_signing: { supported: true, covers_content_digest: 'either' } },
+  },
+  // accounts, sales, ...
+};
+createAdcpServerFromPlatform(platform, { name: 'seller', version: '1.0.0' });
+```
+
+`createAdcpServer` still takes `capabilities` in its config.
+
 ## Postgres replay store
 
 `PostgresReplayStore` inserts through a table-specific guarded function

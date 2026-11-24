@@ -686,20 +686,27 @@ import {
 } from '@adcp/sdk/server';
 import { ResolvedAgentJwksResolver } from '@adcp/sdk/signing/server';
 
+// Advertise request_signing in the platform declaration. The options of
+// createAdcpServerFromPlatform don't accept `capabilities`.
+const platform = {
+  capabilities: {
+    // specialisms, channels, ...
+    overrides: {
+      request_signing: {
+        supported: true,
+        required_for: ['create_media_buy', 'update_media_buy'],
+        covers_content_digest: 'either',
+      },
+    },
+  },
+  // accounts, sales, ...
+};
+
 serve(
   () =>
     createAdcpServerFromPlatform(platform, {
       name: 'My Seller',
       version: '1.0.0',
-      capabilities: {
-        overrides: {
-          request_signing: {
-            supported: true,
-            required_for: ['create_media_buy', 'update_media_buy'],
-            covers_content_digest: 'either',
-          },
-        },
-      },
     }),
   {
     authenticate: requireAuthenticatedOrSigned({
