@@ -429,6 +429,40 @@ describe('decisioning task registry schema management', () => {
     assert.match(upgrade.verifySql, /null_scope_rows/);
   });
 
+  test('Postgres complete() stores both platform identifier names and refuses a mismatch (AdCP 3.3)', async () => {
+    const { createPostgresTaskRegistry } = require('../dist/lib/server/decisioning');
+    const queries = [];
+    const pool = {
+      async query(text, values) {
+        queries.push({ text, values });
+        if (!text.includes("SET status = 'completed'")) return { rowCount: 1, rows: [{ status: 'submitted' }] };
+        return { rowCount: 1, rows: [{ outcome: 'applied', status: 'submitted' }] };
+      },
+    };
+    const registry = createPostgresTaskRegistry({ pool, namespace: NAMESPACE });
+
+    assert.deepStrictEqual(
+      await registry.complete('task_a', ACC_1_SCOPE, { audiences: [{ audience_id: 'a', seller_id: 's' }] }),
+      { outcome: 'applied' }
+    );
+    assert.deepStrictEqual(JSON.parse(queries[0].values[4]), {
+      audiences: [{ audience_id: 'a', seller_id: 's', platform_id: 's' }],
+    });
+    await registry.complete('task_e', ACC_1_SCOPE, { event_sources: [{ platform_id: 'p' }] });
+    assert.deepStrictEqual(JSON.parse(queries[1].values[4]), { event_sources: [{ platform_id: 'p', seller_id: 'p' }] });
+
+    // A mismatch is refused before anything is written; the non-terminal task throws.
+    const writesBefore = queries.length;
+    await assert.rejects(
+      registry.complete('task_m', ACC_1_SCOPE, { audiences: [{ platform_id: 'a', seller_id: 'b' }] }),
+      /identical/
+    );
+    assert.ok(
+      queries.slice(writesBefore).every(q => !q.text.includes("SET status = 'completed'")),
+      'no completion write may be issued for a mismatched result'
+    );
+  });
+
   test('registry persists owner_scope and lists with account + owner predicates', async () => {
     const { createPostgresTaskRegistry } = require('../dist/lib/server/decisioning');
     const queries = [];
