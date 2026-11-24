@@ -544,3 +544,57 @@ test('a native task follow-up does not borrow an enclosing signing identity', as
   assert.equal(requests.length, 1);
   assert.equal(requests[0].headers['signature-input'], undefined);
 });
+
+test('signing capability cache is shared across clients that differ only in correlation headers', () => {
+  const { generateKeyPairSync } = require('node:crypto');
+  const { buildAgentSigningContext } = require('../../dist/lib/signing/agent-context.js');
+  const { CapabilityCache } = require('../../dist/lib/signing/capability-cache.js');
+  const pair = generateKeyPairSync('ed25519');
+  const agentWith = headers => ({
+    id: 'signed',
+    name: 'Signed',
+    protocol: 'mcp',
+    agent_uri: 'https://seller.example/mcp',
+    headers,
+    request_signing: {
+      kid: 'correlation-key',
+      alg: 'ed25519',
+      agent_url: 'https://buyer.example',
+      private_key: { ...pair.privateKey.export({ format: 'jwk' }), kid: 'correlation-key' },
+    },
+  });
+  const stable = { 'X-Adcp-Tenant': 'tenant-a' };
+  const call = (n, extra = {}) =>
+    buildAgentSigningContext(
+      agentWith({
+        ...stable,
+        traceparent: `00-${String(n).padStart(32, '0')}-${String(n).padStart(16, '0')}-00`,
+        'x-request-id': `req-${n}`,
+        'x-acme-debug-id': `dbg-${n}`,
+        ...extra,
+      }),
+      { cache: new CapabilityCache() }
+    );
+
+  // Calls that differ only in correlation headers share one capability entry.
+  assert.equal(call(1).capabilityCacheKey, call(2).capabilityCacheKey);
+  // Header-name case does not matter.
+  assert.equal(
+    call(1).capabilityCacheKey,
+    buildAgentSigningContext(agentWith({ 'x-adcp-tenant': 'tenant-a', 'X-Request-Id': 'other' })).capabilityCacheKey
+  );
+  // Tenant, routing and credential headers still split it.
+  assert.notEqual(call(1).capabilityCacheKey, call(1, { 'X-Adcp-Tenant': 'tenant-b' }).capabilityCacheKey);
+  assert.notEqual(call(1).capabilityCacheKey, call(1, { Authorization: 'Bearer secret' }).capabilityCacheKey);
+  assert.notEqual(call(1).capabilityCacheKey, call(1, { 'x-session-id': 's1' }).capabilityCacheKey);
+
+  // One client's advertisement is visible to the next call's context.
+  const cache = new CapabilityCache();
+  const first = buildAgentSigningContext(agentWith({ ...stable, 'x-request-id': 'req-1' }), { cache });
+  const second = buildAgentSigningContext(agentWith({ ...stable, 'x-request-id': 'req-2' }), { cache });
+  cache.set(first.capabilityCacheKey, {
+    fetchedAt: Date.now() / 1000,
+    requestSigning: { supported: true, required_for: ['create_media_buy'] },
+  });
+  assert.deepEqual(second.getCapability().requestSigning.required_for, ['create_media_buy']);
+});

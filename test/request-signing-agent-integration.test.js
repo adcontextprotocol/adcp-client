@@ -500,6 +500,36 @@ test('concurrent cold-cache calls share a single get_adcp_capabilities fetch', a
   }
 });
 
+test('sequential calls that differ only in correlation headers share one get_adcp_capabilities fetch', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: ['create_media_buy'],
+  });
+  try {
+    // A client that stamps a fresh traceparent / request id / debug id on every
+    // call must not miss the capability cache on every call (#3718). Each call
+    // builds its own agent config, as a per-call client does.
+    for (const n of [1, 2, 3]) {
+      const agent = {
+        ...agentFor(stub.url),
+        headers: {
+          'x-adcp-tenant': 'tenant-a',
+          traceparent: `00-${String(n).padStart(32, '0')}-${String(n).padStart(16, '0')}-00`,
+          'x-request-id': `req-${n}`,
+          'x-acme-debug-id': `dbg-${n}`,
+        },
+      };
+      await ProtocolClient.callTool(agent, 'create_media_buy', {});
+    }
+    const primingCalls = stub.state.toolCallHeaders.filter(r => r.toolName === 'get_adcp_capabilities');
+    assert.strictEqual(primingCalls.length, 1, 'three calls that differ only in correlation headers primed once');
+  } finally {
+    await cleanup(stub);
+  }
+});
+
 test('priming failure → fail-open: next call proceeds unsigned, always_sign still forces signing', async () => {
   await resetGlobalState();
   // Stand up a stub that rejects get_adcp_capabilities with a 500-equivalent
