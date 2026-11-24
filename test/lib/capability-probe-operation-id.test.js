@@ -14,7 +14,7 @@ const {
   SingleAgentClient,
   withSpan,
 } = require('../../dist/lib/index.js');
-const { getTaskOperationId, withTaskDeadline } = require('../../dist/lib/core/task-deadline.js');
+const { getTaskOperationId, idempotentOperationId, withTaskDeadline } = require('../../dist/lib/core/task-deadline.js');
 
 const WEBHOOK_TEMPLATE = 'https://buyer.example/webhooks/{task_type}/{agent_id}/{operation_id}';
 const WEBHOOK_SECRET = 'capability-probe-operation-id-secret';
@@ -138,14 +138,19 @@ async function createHarness(mutationName, { clientConfig = {}, beforeCapabiliti
   };
 }
 
+const MUTATION_KEYS = {
+  sync_accounts: 'sync-accounts-idempotency-key',
+  update_media_buy: 'update-media-buy-idempotency-key',
+};
+
 function invokeMutation(agent, mutationName, options) {
   return mutationName === 'sync_accounts'
-    ? agent.syncAccounts({ idempotency_key: 'sync-accounts-idempotency-key', accounts: [] }, undefined, options)
+    ? agent.syncAccounts({ idempotency_key: MUTATION_KEYS.sync_accounts, accounts: [] }, undefined, options)
     : agent.updateMediaBuyLegacy(
         {
           account: { account_id: 'acc_1' },
           media_buy_id: 'mb_1',
-          idempotency_key: 'update-media-buy-idempotency-key',
+          idempotency_key: MUTATION_KEYS.update_media_buy,
           paused: true,
         },
         undefined,
@@ -192,8 +197,21 @@ for (const mutationName of ['update_media_buy', 'sync_accounts']) {
     assert.ok(probeRegistration);
     assert.ok(mutationRegistration);
     assert.notEqual(probeRegistration.operationId, mutationRegistration.operationId);
-    assert.equal(mutationRegistration.operationId, parentOperationId, 'the mutation retains its parent operation ID');
-    assert.equal(result.metadata.taskId, parentOperationId);
+    // A keyed mutation replaces the withTaskDeadline placeholder with an id derived from its key.
+    const derivedOperationId = idempotentOperationId(
+      `${mutationName}-agent`,
+      mutationName,
+      MUTATION_KEYS[mutationName]
+    );
+    assert.match(derivedOperationId, /^idem-[0-9a-f]{40}$/);
+    assert.notEqual(parentOperationId, derivedOperationId);
+    assert.equal(
+      mutationRegistration.operationId,
+      derivedOperationId,
+      'the mutation takes the key-derived operation ID'
+    );
+    assert.notEqual(probeRegistration.operationId, derivedOperationId, 'the probe keeps its own child operation ID');
+    assert.equal(result.metadata.taskId, derivedOperationId);
     assert.equal(harness.calls[0].args.push_notification_config.operation_id, probeRegistration.operationId);
     assert.equal(harness.calls[1].args.push_notification_config.operation_id, mutationRegistration.operationId);
   });
