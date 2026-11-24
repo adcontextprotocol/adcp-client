@@ -17,6 +17,13 @@ import type { Account } from '../../server/decisioning/account';
 import type { RequestContext } from '../../server/decisioning/context';
 import type { DecisioningPlatform } from '../../server/decisioning/platform';
 import type { ReliableReportingPlatform } from '../../server/decisioning/specialisms/reporting';
+import {
+  acceptsReportDefinition12,
+  REPORT_DEFINITION_CONTRACT_VERSIONS_V1,
+  reportingOfferingRequiresAdcp33Error,
+  type ReportDefinitionContractVersionV1,
+  type ReportingAdcp33OnlyReasonV1,
+} from '../../server/reporting-definition-release';
 import { scanArgsForCredentials } from '../../server/credential-policy';
 import { PlatformConfigError } from '../../server/decisioning/runtime/validate-platform';
 import { canonicalize } from '../../utils/jcs';
@@ -98,6 +105,70 @@ import {
 import type { CoverageTrace } from '../subscriptions/explain';
 
 const ADAPTER_SCOPE_KEY = '_adcp_reporting_adapter';
+
+/** Undeclared definitions already warned about in this process, so each is named once. */
+const warnedUndeclaredReportDefinitions = new Set<string>();
+
+/**
+ * Offerings this service serves to AdCP 3.3 callers only, with the reason: those whose definition
+ * `reportDefinitionVersions` declares 1.2, and, under `withhold_from_pre_3_3`, those it does not
+ * declare. Under the default, each undeclared offering is named once with the entry to add. Keys
+ * match case-insensitively, as in the Python SDK.
+ */
+function reportingAdcp33OnlyOfferings(
+  deliveryOfferings: readonly ReportingDeliveryOffering[],
+  versions: Readonly<Record<string, ReportDefinitionContractVersionV1>> | undefined,
+  undeclared: 'assume_pre_1_2' | 'withhold_from_pre_3_3' = 'assume_pre_1_2'
+): ReadonlyMap<string, ReportingAdcp33OnlyReasonV1> {
+  if (undeclared !== 'assume_pre_1_2' && undeclared !== 'withhold_from_pre_3_3') {
+    throw new TypeError("undeclaredReportDefinitions must be 'assume_pre_1_2' or 'withhold_from_pre_3_3'");
+  }
+  if (versions !== undefined && (versions === null || typeof versions !== 'object' || Array.isArray(versions))) {
+    throw new TypeError('reportDefinitionVersions must map report_definition_sha256 values to contract versions');
+  }
+  const declared = new Map<string, ReportDefinitionContractVersionV1>();
+  for (const [sha256, version] of Object.entries(versions ?? {})) {
+    if (!/^[A-Fa-f0-9]{64}$/.test(sha256)) {
+      throw new TypeError(
+        `reportDefinitionVersions key ${JSON.stringify(sha256)} must be a hex report_definition_sha256`
+      );
+    }
+    if (!REPORT_DEFINITION_CONTRACT_VERSIONS_V1.includes(version)) {
+      throw new TypeError(
+        `reportDefinitionVersions[${JSON.stringify(sha256)}] must be one of ${REPORT_DEFINITION_CONTRACT_VERSIONS_V1.join(', ')}`
+      );
+    }
+    const key = sha256.toLowerCase();
+    if (declared.has(key) && declared.get(key) !== version) {
+      throw new TypeError(`reportDefinitionVersions declares ${key} twice with different versions`);
+    }
+    declared.set(key, version);
+  }
+  const adcp33Only = new Map<string, ReportingAdcp33OnlyReasonV1>();
+  for (const offering of deliveryOfferings) {
+    const version = declared.get(offering.report_definition_sha256.toLowerCase());
+    if (version === '1.2') adcp33Only.set(offering.offering_id, '1.2');
+    else if (version === undefined && undeclared === 'withhold_from_pre_3_3') {
+      adcp33Only.set(offering.offering_id, 'undeclared');
+    }
+    const warningKey = `${offering.offering_id}\u0000${offering.report_definition_sha256}`;
+    if (
+      version === undefined &&
+      undeclared === 'assume_pre_1_2' &&
+      !warnedUndeclaredReportDefinitions.has(warningKey)
+    ) {
+      warnedUndeclaredReportDefinitions.add(warningKey);
+      console.warn(
+        `[adcp/reporting] Reporting offering ${JSON.stringify(offering.offering_id)} (report_definition_sha256 ` +
+          `${offering.report_definition_sha256}, ${offering.report_definition_uri}) has no reportDefinitionVersions ` +
+          'entry, so it is served to callers pinned below AdCP 3.3 as a 1.0 or 1.1 definition. A 1.2 definition ' +
+          'left undeclared is served to pre-3.3 buyers, which must reject it. Add ' +
+          `reportDefinitionVersions: { '${offering.report_definition_sha256}': '<its contract_version>' }.`
+      );
+    }
+  }
+  return adcp33Only;
+}
 
 /** The intentionally small provider boundary: one bounded slice fetch plus immutable metadata. */
 export interface ReliableReportingAdapterV1 {
@@ -182,6 +253,14 @@ export interface ReliableReportingInstallContextV1<TCtxMeta = Record<string, unk
   account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>;
   /** Trusted host history entitlement; never copy from buyer configuration input. */
   historyStart?: string;
+  /**
+   * The release the request was served at: pass `ctx.servedAdcpVersion`. A caller pinned below
+   * AdCP 3.3 is then refused an offering that serves 3.3 callers only (see
+   * `reportDefinitionVersions`). Absent means the SDK's pinned release. `createAdcpServerFromPlatform`
+   * already refuses such entries before `accounts.upsert` runs; this covers a `sync_accounts` handler
+   * supplied another way.
+   */
+  servedAdcpVersion?: string;
 }
 
 interface ReliableReportingSchedulerBaseOptionsV1 {
@@ -262,6 +341,28 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
   /** The ledger store. Required without `storage`; `storage.ledger` otherwise. */
   store?: ReportingLedgerStore;
   adapters: Readonly<Record<string, ReliableReportingAdapterV1>>;
+  /**
+   * Each advertised report definition's `contract_version`, keyed by the offering's hex
+   * `report_definition_sha256` (matched case-insensitively), so a declaration cannot drift from the
+   * definition the offering pins.
+   *
+   * Callers pinned below AdCP 3.3 accept only 1.0 and 1.1 definitions, so an offering whose
+   * definition is 1.2 serves 3.3 callers only (`core/reporting-report-definition.json`
+   * `x-adcp-validation.package_dimension`, adcontextprotocol/adcp#8983):
+   * `createAdcpServerFromPlatform` drops it from their `get_adcp_capabilities` and refuses their
+   * `sync_accounts` `reporting_delivery_configs` naming it with `UNSUPPORTED_FEATURE`, and a server
+   * pinned below 3.3 refuses to start with it. Products are the seller's own catalog: filter 1.2
+   * offering ids out of `reporting_capabilities.reporting_delivery_offering_ids` in products served to
+   * pre-3.3 callers yourself.
+   */
+  reportDefinitionVersions?: Readonly<Record<string, ReportDefinitionContractVersionV1>>;
+  /**
+   * How to serve an advertised offering `reportDefinitionVersions` does not declare.
+   * `'assume_pre_1_2'` (default) serves it to every caller as a 1.0 or 1.1 definition, as before,
+   * and warns once at construction with the entry to add. `'withhold_from_pre_3_3'` serves it to
+   * 3.3 callers only.
+   */
+  undeclaredReportDefinitions?: 'assume_pre_1_2' | 'withhold_from_pre_3_3';
   contact: ReportingProducerContactV1;
   resolveSource(
     account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>,
@@ -654,6 +755,11 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     offerings.set(routedOffering.offeringId, routedOffering);
     deliveryOfferings.push(deliveryOffering);
   }
+  const adcp33OnlyOfferings = reportingAdcp33OnlyOfferings(
+    deliveryOfferings,
+    options.reportDefinitionVersions,
+    options.undeclaredReportDefinitions
+  );
 
   const routedSource = createRoutedSource(sources, offerings);
   const producer = createReportingProducer({
@@ -900,6 +1006,9 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
   const reportingPlatform: ReliableReportingPlatform<TCtxMeta> = {
     capabilities,
+    ...(adcp33OnlyOfferings.size > 0
+      ? { adcp33OnlyOfferings: Object.freeze(Object.fromEntries(adcp33OnlyOfferings)) }
+      : {}),
     getReportingStatus: subscriptionOptions
       ? async (request, context) => {
           // adcp#8718: a grant reduced without get_reporting_status is a loss of reporting authority,
@@ -1306,6 +1415,10 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
     async installConfiguration(configuration, context) {
       if (!context?.account?.id) throw new TypeError('Reporting configuration requires a framework-resolved account');
+      const adcp33OnlyReason = adcp33OnlyOfferings.get(configuration.offeringId);
+      if (adcp33OnlyReason !== undefined && !acceptsReportDefinition12(context.servedAdcpVersion)) {
+        throw reportingOfferingRequiresAdcp33Error(configuration.offeringId, adcp33OnlyReason);
+      }
       const { input } = await prepareGeneration(configuration, context.account, 'account');
       return producer.installConfiguration(input, {
         ...(context.historyStart !== undefined ? { historyStart: context.historyStart } : {}),
@@ -2362,6 +2475,10 @@ export type {
   ReportingIssueObserverV1,
 } from '../ledger';
 export { defaultSubscriptionConfiguration } from './managed';
+export type {
+  ReportDefinitionContractVersionV1,
+  ReportingAdcp33OnlyReasonV1,
+} from '../../server/reporting-definition-release';
 export { coverageTraceForBuyer, diffCoverageTraces } from '../subscriptions/explain';
 export type { CoverageTrace, CoverageTraceDifference, CoverageTraceStep } from '../subscriptions/explain';
 export type {
