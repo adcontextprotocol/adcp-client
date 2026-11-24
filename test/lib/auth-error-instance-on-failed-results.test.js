@@ -264,4 +264,41 @@ describe('AgentCollection keeps a thrown ADCPError on errorInstance', () => {
     assert.equal(results[3], success);
     assert.ok(!('errorInstance' in results[3]));
   });
+
+  const needsAuthorization = (agentUrl, resource) =>
+    new NeedsAuthorizationError({
+      agentUrl,
+      resource,
+      authorizationServers: ['https://issuer.example'],
+      challenge: { scheme: 'bearer', params: {} },
+    });
+
+  test('an unvalidated NeedsAuthorizationError is not kept; error keeps the message', async () => {
+    const collection = new AgentCollection([configs[0]]);
+    const [a] = collection.getAllAgents();
+    const unvalidated = needsAuthorization(configs[0].agent_uri, 'https://other.example.com');
+    a.getProducts = async () => {
+      throw unvalidated;
+    };
+
+    const [result] = await collection.getProducts({ brief: 'x' });
+
+    assert.equal(result.success, false);
+    assert.equal(result.error, unvalidated.message);
+    assert.ok(!('errorInstance' in result));
+  });
+
+  test('a validated NeedsAuthorizationError is kept', async () => {
+    const collection = new AgentCollection([configs[0]]);
+    const [a] = collection.getAllAgents();
+    const validated = needsAuthorization(configs[0].agent_uri, configs[0].agent_uri);
+    a.getProducts = async () => {
+      throw validated;
+    };
+
+    const [result] = await collection.getProducts({ brief: 'x' });
+
+    assert.equal(result.success, false);
+    assert.equal(result.errorInstance, validated);
+  });
 });
