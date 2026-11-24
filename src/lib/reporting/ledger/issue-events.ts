@@ -145,11 +145,22 @@ export function reportingConsumerMismatchOccurrenceV1(
   revisions: readonly Pick<
     ReportingLedgerRevisionSnapshotV1,
     'reporting_revision_id' | 'revisionNumber' | 'supersedes_reporting_revision_id' | 'createdAt'
-  >[]
+  >[],
+  issues?: readonly ReportingLedgerIssueV1[],
+  at?: string
 ): ReportingConsumerMismatchOccurrenceV1 | undefined {
   if (!leaf || revisions.length === 0) return undefined;
-  // `ledgerAsOf` only decides severity and the recommended action, never identity or `openedAt`.
-  const mismatch = projectReportingConsumerStatusMismatchV1(obligation, leaf, revisions, 'healthy', leaf.recorded_at);
+  // Without `issues`, `ledgerAsOf` decides only severity and the recommended action. With them it also
+  // decides which seller `REVISION_UNREADABLE` marks have ended, so pass the write's instant as `at`.
+  const mismatch = projectReportingConsumerStatusMismatchV1(
+    obligation,
+    leaf,
+    revisions,
+    'healthy',
+    at ?? leaf.recorded_at,
+    undefined,
+    issues
+  );
   if (!mismatch) return undefined;
   return {
     issueId: mismatch.issue.issueId,
@@ -451,13 +462,17 @@ function renderIssue(
   );
   const core = projectReportingObligationHealthV1(context.obligation, revisions, at);
   const sellerHealth = projectReportingUnreadableRevisionHealthV1(context.obligation, revisions, issues, core.health);
+  // The mismatch takes every mark, ended ones included: a mark's end names a
+  // recurrence, and the projection dates each mark itself, by `openedAt` and
+  // its end. A later write can advance `observedAt`, so it can't filter them.
   const mismatch = projectReportingConsumerStatusMismatchV1(
     context.obligation,
     context.statement,
     revisions,
     sellerHealth,
     at,
-    escalation
+    escalation,
+    context.issues
   );
   return mismatch?.issue.issueId === lease.issueId ? structuredClone(mismatch.issue) : null;
 }
