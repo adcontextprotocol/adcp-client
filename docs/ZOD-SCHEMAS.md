@@ -255,8 +255,12 @@ objects, accept an unknown key that the published schema rejects
 `.strict()` wherever AdCP 3.3 keeps the object closed, and stay `.passthrough()`
 wherever AdCP leaves it open. After that change, `parse()` throws, and
 `safeParse()` fails, for a payload carrying an unknown key at a closed location.
-This reservation covers only objects the published schema closes. It does not
-cover open objects, other constraints, or the inferred TypeScript types.
+The inferred types of those objects change with them: `z.infer` and `z.input`
+lose the `[k: string]: unknown` index signature that `.passthrough()` adds, so
+reading an undeclared key from a parsed closed object stops type-checking.
+This reservation covers only objects the published schema closes, at runtime
+and in their inferred types. It does not cover open objects or other
+constraints.
 
 To stay compatible:
 

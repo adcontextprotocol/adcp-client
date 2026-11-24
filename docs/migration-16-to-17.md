@@ -118,8 +118,10 @@ accept unknown keys that the published schema rejects (#3679). The SDK's own
 JSON Schema validation already rejects those keys.
 
 A 17.x **minor** release may make these schemas `.strict()` wherever AdCP 3.3
-keeps the object closed. Objects AdCP leaves open stay `.passthrough()`. Don't
-rely on Zod accepting a vendor key in a closed object: put extensions in `ext`.
+keeps the object closed. Their inferred types then lose the `[k: string]:
+unknown` index signature that `.passthrough()` adds. Objects AdCP leaves open
+stay `.passthrough()`. Don't rely on Zod accepting a vendor key in a closed
+object, or on reading one from its inferred type: put extensions in `ext`.
 See [Unknown keys and closed objects](./ZOD-SCHEMAS.md#unknown-keys-and-closed-objects).
 
 ## pnpm peer resolution
