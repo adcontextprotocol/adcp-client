@@ -11,6 +11,10 @@ const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/r
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 const { downgradeResponse, projectResponseForRelease } = require('../dist/lib/adapters/version/index.js');
 const { ADCP_VERSION } = require('../dist/lib/version');
+const {
+  projectTaskResultForRelease,
+  projectBoundTaskResultForRelease,
+} = require('../dist/lib/server/decisioning/runtime/task-result-release');
 
 const OFF = { requests: 'off', responses: 'off' };
 const KEY = '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d';
@@ -239,26 +243,16 @@ describe('in-memory TaskRegistry.complete', () => {
     return registry.create({ tool, accountId: 'acc_1' });
   }
 
-  it('stores both names for sync_audiences and sync_event_sources', async () => {
+  it('stores sync results exactly as written', async () => {
     const registry = createInMemoryTaskRegistry();
     const a = await create(registry, 'sync_audiences');
     const e = await create(registry, 'sync_event_sources');
-    assert.strictEqual(
-      (await registry.complete(a.taskId, scope, { audiences: [{ seller_id: 's' }] })).outcome,
-      'applied'
-    );
-    assert.strictEqual(
-      (await registry.complete(e.taskId, scope, { event_sources: [{ platform_id: 'p' }] })).outcome,
-      'applied'
-    );
-    assert.deepStrictEqual((await registry.getTask(a.taskId, scope)).result.audiences[0], {
-      seller_id: 's',
-      platform_id: 's',
-    });
-    assert.deepStrictEqual((await registry.getTask(e.taskId, scope)).result.event_sources[0], {
-      platform_id: 'p',
-      seller_id: 'p',
-    });
+    const audResult = { audiences: [{ seller_id: 's' }] };
+    const evResult = { event_sources: [{ platform_id: 'p' }] };
+    assert.strictEqual((await registry.complete(a.taskId, scope, audResult)).outcome, 'applied');
+    assert.strictEqual((await registry.complete(e.taskId, scope, evResult)).outcome, 'applied');
+    assert.deepStrictEqual((await registry.getTask(a.taskId, scope)).result, { audiences: [{ seller_id: 's' }] });
+    assert.deepStrictEqual((await registry.getTask(e.taskId, scope)).result, { event_sources: [{ platform_id: 'p' }] });
   });
 
   it('throws on a mismatch and leaves the task non-terminal', async () => {
@@ -324,22 +318,10 @@ describe('version adapter and stored task results', () => {
     assert.strictEqual(out.audiences[0].seller_id, 'p');
   });
 
-  async function storedTaskServer(storedResult, { stripPlatformId = false } = {}) {
+  async function storedTaskServer(storedResult) {
     const registry = createInMemoryTaskRegistry();
     const ref = await registry.create({ tool: 'sync_audiences', accountId: 'acc_1' });
     await registry.complete(ref.taskId, ref, storedResult);
-    if (stripPlatformId) {
-      // Simulate a row written by an older release: one name only.
-      const realGet = registry.getTask.bind(registry);
-      registry.getTask = async (id, s) => {
-        const record = await realGet(id, s);
-        if (!record) return record;
-        return {
-          ...record,
-          result: { audiences: record.result.audiences.map(({ platform_id: _p, ...rest }) => rest) },
-        };
-      };
-    }
     const server = platformServer({
       audiences: () => [],
       eventSources: () => [],
@@ -363,17 +345,123 @@ describe('version adapter and stored task results', () => {
       assert.strictEqual(row.platform_id, 'p');
       assert.strictEqual(row.seller_id, 'p');
     });
+  }
+});
 
-    it(`${tool}: a legacy stored row with seller_id only reads back with both names`, async () => {
-      const { server, taskId } = await storedTaskServer(
-        { audiences: [{ audience_id: 'a', action: 'created', platform_id: 'p' }] },
-        { stripPlatformId: true }
-      );
-      const r = await call(server, tool, statusArgs(taskId));
+describe('egress projection of stored and cached results', () => {
+  const single = { audiences: [{ audience_id: 'a', action: 'created', seller_id: 'p' }] };
+
+  it('projectTaskResultForRelease: both names at the pin, seller_id only at 3.2', () => {
+    const atPin = projectTaskResultForRelease('sync_audiences', single, {
+      fromVersion: ADCP_VERSION,
+      toVersion: ADCP_VERSION,
+    });
+    assert.strictEqual(atPin.data.audiences[0].platform_id, 'p');
+    assert.strictEqual(atPin.data.audiences[0].seller_id, 'p');
+    const platformOnly = projectTaskResultForRelease(
+      'sync_event_sources',
+      { event_sources: [{ event_source_id: 'e', action: 'created', platform_id: 'p' }] },
+      { fromVersion: ADCP_VERSION, toVersion: '3.2' }
+    );
+    assert.deepStrictEqual(platformOnly.data.event_sources[0], {
+      event_source_id: 'e',
+      action: 'created',
+      seller_id: 'p',
+    });
+    const other = projectTaskResultForRelease(
+      'create_media_buy',
+      { audiences: [{ platform_id: 'x' }] },
+      {
+        fromVersion: ADCP_VERSION,
+        toVersion: ADCP_VERSION,
+      }
+    );
+    assert.deepStrictEqual(other.data, { audiences: [{ platform_id: 'x' }] });
+  });
+
+  it('projectBoundTaskResultForRelease: projects names even when versions are equal', () => {
+    const atPin = projectBoundTaskResultForRelease('sync_audiences', single, ADCP_VERSION, ADCP_VERSION);
+    assert.deepStrictEqual(atPin.audiences[0], {
+      audience_id: 'a',
+      action: 'created',
+      seller_id: 'p',
+      platform_id: 'p',
+    });
+    const at32 = projectBoundTaskResultForRelease(
+      'sync_audiences',
+      { audiences: [{ audience_id: 'a', action: 'created', platform_id: 'p' }] },
+      '3.2',
+      '3.2'
+    );
+    assert.deepStrictEqual(at32.audiences[0], { audience_id: 'a', action: 'created', seller_id: 'p' });
+    const other = { audiences: [{ platform_id: 'x' }] };
+    assert.strictEqual(projectBoundTaskResultForRelease('get_products', other, ADCP_VERSION, ADCP_VERSION), other);
+  });
+
+  async function storedServer(stored) {
+    const registry = createInMemoryTaskRegistry();
+    const ref = await registry.create({ tool: 'sync_audiences', accountId: 'acc_1' });
+    await registry.complete(ref.taskId, ref, stored);
+    const server = platformServer({
+      audiences: () => [],
+      eventSources: () => [],
+      supportedVersions: ['3.2', ADCP_VERSION],
+      taskRegistry: registry,
+    });
+    return { server, taskId: ref.taskId, registry, ref };
+  }
+  const args = taskId => ({ task_id: taskId, include_result: true, account: { account_id: 'acc_1' } });
+  const rowOf = r => (r.structuredContent.result ?? r.structuredContent.task?.result).audiences[0];
+
+  for (const tool of ['tasks_get', 'get_task_status']) {
+    it(`${tool}: a stored seller_id-only row is served with both names, the registry keeps it as written`, async () => {
+      const { server, taskId, registry, ref } = await storedServer(single);
+      const r = await call(server, tool, args(taskId));
       assertOk(r);
-      const row = resultOf(r).audiences[0];
-      assert.strictEqual(row.platform_id, 'p');
-      assert.strictEqual(row.seller_id, 'p');
+      assert.strictEqual(rowOf(r).platform_id, 'p');
+      assert.strictEqual(rowOf(r).seller_id, 'p');
+      assert.deepStrictEqual((await registry.getTask(taskId, ref)).result, single);
+    });
+
+    it(`${tool}: a 3.2 reader gets seller_id only`, async () => {
+      const { server, taskId } = await storedServer({
+        audiences: [{ audience_id: 'a', action: 'created', platform_id: 'p' }],
+      });
+      const r = await call(server, tool, { ...args(taskId), adcp_version: '3.2' });
+      assertOk(r);
+      assert.strictEqual(rowOf(r).seller_id, 'p');
+      assert.strictEqual('platform_id' in rowOf(r), false);
     });
   }
+
+  it('an idempotent replay of a single-name cached response carries both names without re-running the handler', async () => {
+    let calls = 0;
+    const backend = memoryBackend();
+    const realGet = backend.get.bind(backend);
+    backend.get = async key => {
+      const entry = await realGet(key);
+      // Simulate a response cached by a release that emitted one name only.
+      for (const row of entry?.response?.structuredContent?.audiences ?? []) delete row.platform_id;
+      return entry;
+    };
+    const server = legacyServer({
+      audiences: () => {
+        calls += 1;
+        return [audienceRow({ platform_id: 'p1' })];
+      },
+      eventSources: () => [],
+      idempotency: createIdempotencyStore({ backend }),
+      resolveIdempotencyPrincipal: () => 'principal-1',
+    });
+    const extra = { authInfo: { clientId: 'principal-1' } };
+    const dispatch = a =>
+      server.dispatchTestRequest({ method: 'tools/call', params: { name: 'sync_audiences', arguments: a } }, extra);
+    assertOk(await dispatch(audienceArgs()));
+    const replay = await dispatch(audienceArgs());
+    assertOk(replay);
+    assert.strictEqual(replay.structuredContent.replayed, true);
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(replay.structuredContent.audiences[0].platform_id, 'p1');
+    assert.strictEqual(replay.structuredContent.audiences[0].seller_id, 'p1');
+  });
 });

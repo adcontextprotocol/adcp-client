@@ -5,7 +5,6 @@ const {
   platformIdOf,
   withDualPlatformIds,
   withSellerIdOnly,
-  addDualPlatformIdsInPlace,
   findPlatformIdMismatch,
   assertPlatformIdsAgree,
   PlatformIdMismatchError,
@@ -119,32 +118,13 @@ describe('withSellerIdOnly', () => {
   });
 });
 
-describe('addDualPlatformIdsInPlace', () => {
-  it('mutates single-name rows and leaves the rest', () => {
-    const result = {
-      audiences: [
-        { platform_id: 'p' },
-        { seller_id: 's' },
-        { platform_id: 'a', seller_id: 'b' },
-        { audience_id: 'n' },
-        'x',
-      ],
-    };
-    addDualPlatformIdsInPlace(result);
-    assert.deepStrictEqual(result.audiences, [
-      { platform_id: 'p', seller_id: 'p' },
-      { seller_id: 's', platform_id: 's' },
-      { platform_id: 'a', seller_id: 'b' },
-      { audience_id: 'n' },
-      'x',
-    ]);
-  });
-  it('tolerates non-object results and missing arrays', () => {
-    addDualPlatformIdsInPlace(null);
-    addDualPlatformIdsInPlace('x');
-    const r = { audiences: 'nope' };
-    addDualPlatformIdsInPlace(r);
-    assert.deepStrictEqual(r, { audiences: 'nope' });
+describe('sanitizeTaskResultForWire (stored results are not rewritten)', () => {
+  const { sanitizeTaskResultForWire } = require('../../dist/lib/server/decisioning/runtime/task-registry.js');
+  it('leaves a single-name sync result unchanged, adding no platform_id or seller_id', () => {
+    const seller = sanitizeTaskResultForWire({ audiences: [{ seller_id: 'p' }] });
+    assert.deepStrictEqual(seller, { audiences: [{ seller_id: 'p' }] });
+    const platform = sanitizeTaskResultForWire({ event_sources: [{ platform_id: 'p' }] });
+    assert.deepStrictEqual(platform, { event_sources: [{ platform_id: 'p' }] });
   });
 });
 
