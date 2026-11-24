@@ -44,6 +44,7 @@ import {
 } from './postgres-task-registry';
 import { sanitizeTaskResultForWire, type ScopedTaskRef, type TaskRegistry, type TaskStatus } from './task-registry';
 import { projectBoundTaskResultForRelease } from './task-result-release';
+import { ADCP_VERSION } from '../../../version';
 import {
   findPlatformIdMismatch,
   projectPlatformIdsForRelease,
@@ -601,11 +602,15 @@ export function createPostgresTaskSettlementCoordinator(
       } catch (cause) {
         webhookResultError = cause;
       }
-    } else if (clonedPush.servedAdcpVersion !== undefined && toolHasPlatformIdRows(observed.tool)) {
-      // An application-managed push has no recorded server release to convert
-      // from, but its platform identifier names still follow the release the
-      // request was served at (AdCP 3.3: both names; below 3.3: seller_id).
-      webhookResult = projectPlatformIdsForRelease(result, clonedPush.servedAdcpVersion);
+    } else if (toolHasPlatformIdRows(observed.tool)) {
+      // Without both releases the result goes out unconverted, but its
+      // platform identifier names still follow the release its reader gets:
+      // the served release when known, else the release the result is in
+      // (AdCP 3.3 and later: both names; below 3.3: seller_id).
+      webhookResult = projectPlatformIdsForRelease(
+        result,
+        clonedPush.servedAdcpVersion ?? resultAdcpVersion ?? ADCP_VERSION
+      );
     }
 
     let observedOutbox: OutboxRow | undefined;

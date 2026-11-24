@@ -901,7 +901,11 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
       await completeScopedPushTask(
         coordinator,
         ref,
-        { url: 'https://buyer.example/webhooks/task', operationId, servedAdcpVersion },
+        {
+          url: 'https://buyer.example/webhooks/task',
+          operationId,
+          ...(servedAdcpVersion !== undefined && { servedAdcpVersion }),
+        },
         { audiences: [row] }
       );
       const outbox = await pool.query(
@@ -923,6 +927,10 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     const at33 = (await settle('pid-op-33', '3.3.0-rc.3')).audiences[0];
     assert.strictEqual(at33.platform_id, 'p');
     assert.strictEqual(at33.seller_id, 'p');
+    // No served release: the payload is in this SDK's release, so both names.
+    const unversioned = (await settle('pid-op-unversioned', undefined)).audiences[0];
+    assert.strictEqual(unversioned.platform_id, 'p');
+    assert.strictEqual(unversioned.seller_id, 'p');
     // Another tool's result is delivered as written.
     assert.deepStrictEqual((await settle('pid-op-other', '3.2.1', 'create_media_buy')).audiences[0], row);
   });
