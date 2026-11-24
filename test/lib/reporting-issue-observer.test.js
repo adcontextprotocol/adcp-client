@@ -1326,4 +1326,91 @@ describe('unreadable recurrence identity and timing (#3653 round 2)', () => {
     assert.notEqual(viaDispatcher.issue, null);
     assert.equal(viaDispatcher.issue.openedAt, T('03:00:00.000Z'));
   });
+
+  describe('marks recorded as fixed facts (#3653 round 4)', () => {
+    async function openedAt2(w) {
+      await unreadableAt1(w);
+      w.at(T('02:00:00.000Z'));
+      await w.store.putIssue(mark());
+    }
+
+    for (const [label, variant] of [
+      ['resolvedAt', { resolvedAt: T('05:00:00.000Z') }],
+      ['terminal issueState', { issueState: 'resolved', observedAt: T('05:00:00.000Z') }],
+    ]) {
+      test(`a retried write (${label}) cannot move the end or orphan the recurrence`, async () => {
+        const w = fixture();
+        await openedAt2(w);
+        const frozen = Object.freeze({ ...mark(), ...variant });
+
+        w.at(T('03:00:00.000Z'));
+        await w.store.putIssue(frozen);
+        assert.equal((await w.store.listIssues('ob-1'))[0].resolvedAt, T('03:00:00.000Z'));
+        assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+        const x = w.events()[2];
+        assert.equal(x.occurredAt, T('03:00:00.000Z'));
+
+        w.at(T('04:00:00.000Z'));
+        await w.store.putIssue(frozen);
+        assert.equal((await w.store.listIssues('ob-1'))[0].resolvedAt, T('03:00:00.000Z'), 'the end stays put');
+        assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened'], 'no extra events');
+
+        const mismatch = await projected(w, T('04:00:00.000Z'));
+        assert.equal(mismatch.issue.issueId, x.issueId);
+        assert.equal(mismatch.issue.openedAt, T('03:00:00.000Z'));
+
+        const seen = await deliver(w);
+        const rendered = seen.find(event => event.kind === 'opened' && event.issueId === x.issueId);
+        assert.notEqual(rendered.issue, null);
+        assert.equal(rendered.issue.openedAt, T('03:00:00.000Z'));
+      });
+    }
+
+    test('a terminal mark whose start and end are ahead of the store clock is recorded at the clock', async () => {
+      const w = fixture();
+      await unreadableAt1(w);
+      const original = w.events()[0].issueId;
+      w.at(T('02:00:00.000Z'));
+      await w.store.putIssue(
+        mark({
+          issueState: 'resolved',
+          openedAt: T('02:00:00.001Z'),
+          observedAt: T('02:00:00.002Z'),
+        })
+      );
+      const [stored] = await w.store.listIssues('ob-1');
+      assert.equal(stored.openedAt, T('02:00:00.000Z'));
+      assert.equal(stored.resolvedAt, T('02:00:00.000Z'));
+      assert.ok(stored.openedAt <= stored.resolvedAt);
+
+      assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+      const reopened = w.events()[2];
+      assert.equal(reopened.occurredAt, T('02:00:00.000Z'));
+      assert.notEqual(reopened.issueId, original);
+      const mismatch = await projected(w, T('02:00:00.003Z'));
+      assert.equal(mismatch.issue.issueId, reopened.issueId);
+
+      const seen = await deliver(w);
+      const rendered = seen.find(event => event.kind === 'opened' && event.issueId === reopened.issueId);
+      assert.notEqual(rendered.issue, null);
+    });
+
+    test('resolveIssue on an already-ended mark is a no-op', async () => {
+      const w = fixture();
+      await openedAt2(w);
+      w.at(T('03:00:00.000Z'));
+      await w.store.resolveIssue('mark-1', T('03:00:00.000Z'));
+      const before = structuredClone(await w.store.listIssues('ob-1'));
+      const kinds = w.kinds();
+      const x = w.events()[2];
+
+      w.at(T('04:00:00.000Z'));
+      await w.store.resolveIssue('mark-1', T('04:00:00.000Z'));
+      assert.deepEqual(await w.store.listIssues('ob-1'), before, 'the stored mark is unchanged');
+      assert.deepEqual(w.kinds(), kinds);
+      const mismatch = await projected(w, T('04:00:00.000Z'));
+      assert.equal(mismatch.issue.issueId, x.issueId);
+      assert.equal(mismatch.issue.openedAt, T('03:00:00.000Z'));
+    });
+  });
 });

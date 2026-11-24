@@ -6,6 +6,7 @@ const {
   assertSupportedReportingAuthoritativeParty,
   reportingConsumerStatusCapabilityV1,
   projectReportingConsumerStatusMismatchV1,
+  normalizeReportingUnreadableMarkWriteV1,
   UnsupportedReportingFeatureError,
 } = require('../../dist/lib/reporting/ledger/index.js');
 const { AdcpError } = require('../../dist/lib/server/decisioning/async-outcome.js');
@@ -786,5 +787,109 @@ describe('unreadable mark end instants (#3653 round 2)', () => {
       mark({ observedAt: '2026-03-09T01:00:00.000Z', resolvedAt: '2026-03-09T01:30:59.999Z' }),
     ]).issue;
     assert.equal(earlier.issueId, original.issueId);
+  });
+});
+
+describe('normalizeReportingUnreadableMarkWriteV1 (#3653 round 4)', () => {
+  const NOW = '2026-03-09T03:00:00.000Z';
+  const mark = (overrides = {}) => ({
+    issueId: 'mark-1',
+    reporting_obligation_id: 'ob-1',
+    reporting_revision_id: 'rev-1',
+    code: 'REVISION_UNREADABLE',
+    responsibleParty: 'seller',
+    severity: 'action_required',
+    recommendedAction: 'contact_seller',
+    openedAt: '2026-03-09T02:00:00.000Z',
+    observedAt: '2026-03-09T02:00:00.000Z',
+    ...overrides,
+  });
+  const normalize = (issue, prior) => normalizeReportingUnreadableMarkWriteV1(issue, prior, NOW);
+
+  test('other codes pass through unchanged', () => {
+    const other = mark({
+      code: 'REVISION_MISSING',
+      openedAt: '2026-03-09T09:00:00.000Z',
+      resolvedAt: '2026-03-09T09:00:00.000Z',
+    });
+    assert.equal(normalize(other, mark({ resolvedAt: '2026-03-09T02:30:00.000Z' })), other);
+  });
+
+  test('an open mark with an earlier start is unchanged in substance', () => {
+    const result = normalize(mark());
+    assert.equal(result.openedAt, '2026-03-09T02:00:00.000Z');
+    assert.equal(result.resolvedAt, undefined);
+  });
+
+  test('a future start, resolvedAt or terminal-state observedAt is clamped to now', () => {
+    const future = '2026-03-09T05:00:00.000Z';
+    assert.equal(normalize(mark({ openedAt: future })).openedAt, NOW);
+    assert.equal(normalize(mark({ resolvedAt: future })).resolvedAt, NOW);
+    for (const issueState of ['resolved', 'waived']) {
+      const result = normalize(mark({ issueState, observedAt: future }));
+      assert.equal(result.resolvedAt, NOW, issueState);
+    }
+  });
+
+  test('a non-terminal issueState with a future observedAt does not become an end', () => {
+    const result = normalize(mark({ issueState: 'open', observedAt: '2026-03-09T05:00:00.000Z' }));
+    assert.equal(result.resolvedAt, undefined);
+  });
+
+  test('the first write’s start wins', () => {
+    const prior = mark({ openedAt: '2026-03-09T01:30:00.000Z' });
+    assert.equal(normalize(mark({ openedAt: '2026-03-09T02:30:00.000Z' }), prior).openedAt, '2026-03-09T01:30:00.000Z');
+  });
+
+  test('a prior end is kept against later, earlier and absent incoming ends', () => {
+    const prior = mark({ resolvedAt: '2026-03-09T02:30:00.000Z' });
+    for (const incoming of [
+      mark({ resolvedAt: '2026-03-09T02:45:00.000Z' }),
+      mark({ resolvedAt: '2026-03-09T02:15:00.000Z' }),
+      mark(),
+      mark({ issueState: 'resolved', observedAt: '2026-03-09T02:50:00.000Z' }),
+    ]) {
+      assert.equal(normalize(incoming, prior).resolvedAt, '2026-03-09T02:30:00.000Z');
+    }
+  });
+
+  test('a prior terminal-state end is materialized and kept', () => {
+    const prior = mark({ issueState: 'waived', observedAt: '2026-03-09T02:30:00.000Z' });
+    assert.equal(
+      normalize(mark({ resolvedAt: '2026-03-09T02:45:00.000Z' }), prior).resolvedAt,
+      '2026-03-09T02:30:00.000Z'
+    );
+  });
+
+  test('a terminal observedAt earlier than the end is raised to the end', () => {
+    const result = normalize(
+      mark({ issueState: 'resolved', observedAt: '2026-03-09T02:10:00.000Z' }),
+      mark({ resolvedAt: '2026-03-09T02:30:00.000Z' })
+    );
+    assert.equal(result.resolvedAt, '2026-03-09T02:30:00.000Z');
+    assert.equal(result.observedAt, '2026-03-09T02:30:00.000Z');
+  });
+
+  test('the start is never after the end', () => {
+    const result = normalize(mark({ openedAt: '2026-03-09T02:50:00.000Z', resolvedAt: '2026-03-09T02:20:00.000Z' }));
+    assert.equal(result.resolvedAt, '2026-03-09T02:20:00.000Z');
+    assert.equal(result.openedAt, '2026-03-09T02:20:00.000Z');
+    // Also when both are ahead of now.
+    const ahead = normalize(
+      mark({ openedAt: '2026-03-09T05:00:00.001Z', issueState: 'resolved', observedAt: '2026-03-09T05:00:00.002Z' })
+    );
+    assert.equal(ahead.openedAt, NOW);
+    assert.equal(ahead.resolvedAt, NOW);
+  });
+
+  test('the input and prior are not mutated', () => {
+    const issue = Object.freeze(mark({ openedAt: '2026-03-09T05:00:00.000Z', resolvedAt: '2026-03-09T06:00:00.000Z' }));
+    const prior = Object.freeze(mark({ resolvedAt: '2026-03-09T02:30:00.000Z' }));
+    const issueCopy = structuredClone(issue);
+    const priorCopy = structuredClone(prior);
+    normalize(issue, prior);
+    normalize(issue);
+    assert.deepEqual(issue, issueCopy);
+    assert.deepEqual(prior, priorCopy);
   });
 });
