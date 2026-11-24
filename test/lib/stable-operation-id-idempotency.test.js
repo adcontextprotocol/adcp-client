@@ -456,3 +456,49 @@ test('a throwing webhook tools predicate does not leak the execution fence', asy
   assert.equal(sellerCalls, 1);
   assert.equal(retry.metadata.taskId, idempotentOperationId(agent.id, 'sync_accounts', key));
 });
+
+test('a throwing onActivity sink does not mask a webhook predicate error or leak the fence', async t => {
+  const { ProtocolClient, TaskExecutor } = require('../../dist/lib/index.js');
+  const originalCallTool = ProtocolClient.callTool;
+  t.after(() => {
+    ProtocolClient.callTool = originalCallTool;
+  });
+
+  const agent = { id: 'activity-agent', name: 'Activity', agent_uri: 'https://agent.example/mcp/', protocol: 'mcp' };
+  const key = 'activity-key-0000-0011';
+  let sellerCalls = 0;
+  ProtocolClient.callTool = async () => {
+    sellerCalls++;
+    return { status: 'completed', accounts: [] };
+  };
+
+  let fail = true;
+  const executor = new TaskExecutor({
+    agentId: agent.id,
+    webhookUrlTemplate: {
+      template: 'https://buyer.example/{operation_id}',
+      tools: () => {
+        if (fail) throw new Error('predicate failed');
+        return true;
+      },
+    },
+    onActivity: activity => {
+      if (fail && activity.type === 'status_change') throw new Error('activity sink unavailable');
+    },
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const run = options =>
+    executor.executeTask(agent, 'sync_accounts', { idempotency_key: key, accounts: [] }, undefined, options);
+
+  await assert.rejects(run({}), error => {
+    assert.match(error.message, /predicate failed/);
+    assert.doesNotMatch(error.message, /activity sink unavailable/);
+    return true;
+  });
+  assert.equal(sellerCalls, 0);
+
+  fail = false;
+  const retry = await run({ timeout: 2000 });
+  assert.equal(retry.success, true, retry.error);
+  assert.equal(sellerCalls, 1);
+});
