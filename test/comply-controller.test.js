@@ -864,7 +864,15 @@ describe('createComplyController — register()', () => {
     controller.register(fake);
     assert.strictEqual(fake.calls.length, 1);
     assert.strictEqual(fake.calls[0].name, 'comply_test_controller');
-    assert.deepStrictEqual(fake.calls[0].schemaKeys.sort(), ['account', 'context', 'ext', 'params', 'scenario']);
+    assert.deepStrictEqual(fake.calls[0].schemaKeys.sort(), [
+      'account',
+      'adcp_major_version',
+      'adcp_version',
+      'context',
+      'ext',
+      'params',
+      'scenario',
+    ]);
     assert.strictEqual(fake.calls[0].handlerType, 'function');
   });
 

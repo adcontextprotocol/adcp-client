@@ -63,7 +63,11 @@ import {
   type ReportingSubscriptionProbeSimulated,
 } from '../server/test-controller';
 import { getSdkServer, type AdcpServer } from '../server/adcp-server';
-import { parseDeclaredToolInput, validateToolInputAtAdcpLayer } from '../server/declared-input-schema';
+import {
+  parseDeclaredToolInput,
+  serveDeclaredToolAtRelease,
+  validateToolInputAtAdcpLayer,
+} from '../server/declared-input-schema';
 import type {
   ComplyTestControllerResponse,
   ControllerError,
@@ -891,7 +895,15 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
       },
       (async (rawInput: unknown) => {
         const parsed = await parseDeclaredToolInput(mcp, toolDefinition.name, rawInput);
-        return parsed.success ? handle(parsed.data as Record<string, unknown>) : parsed.response;
+        if (!parsed.success) return parsed.response;
+        const input = parsed.data as Record<string, unknown>;
+        // On an AdcpServer, answer at the caller's served release (adcp-client#3769).
+        return serveDeclaredToolAtRelease(
+          mcp,
+          toolDefinition.name,
+          { context: input.context, releaseArgs: input },
+          () => handle(input)
+        );
       }) as Parameters<typeof mcp.registerTool>[2]
     );
     validateToolInputAtAdcpLayer(mcp, toolDefinition.name, registered);
