@@ -2540,9 +2540,14 @@ export class SingleAgentClient {
         if (account !== ref) {
           // The natural key was the request's brand source (request_proposals
           // and buy_products require one). Keep its brand at the top level
-          // where the task takes one, without overriding an explicit brand.
+          // where the task takes one, unless the caller named a brand, either
+          // directly or through the legacy `brand_manifest` the request
+          // normalizer derives one from.
           const brand =
-            params.brand === undefined && 'brand' in ref && schemaAllowsTopLevelField(task, 'brand')
+            params.brand === undefined &&
+            params.brand_manifest === undefined &&
+            'brand' in ref &&
+            schemaAllowsTopLevelField(task, 'brand')
               ? ref.brand
               : undefined;
           return { ...params, account, ...(brand !== undefined && { brand }) };
