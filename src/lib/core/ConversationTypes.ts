@@ -753,12 +753,13 @@ export interface TaskResultFailure<T> extends TaskResultBase<T> {
    *   `ActionNotAllowedError`;
    * - an authentication rejection: `AuthenticationRequiredError`, including a
    *   rejected signed request and `AuthenticationCredentialsRejectedError` for
-   *   a rejected static credential. A `NeedsAuthorizationError` is kept only
-   *   when its MCP OAuth requirements were validated, for interactive
-   *   authorization flows;
+   *   a rejected static credential;
    * - in a multi-agent collection result, the `ADCPError` the agent's call threw.
    *
-   * Absent otherwise.
+   * A `NeedsAuthorizationError` is kept only when its MCP OAuth requirements
+   * were validated, so it is safe to start an interactive authorization flow
+   * from. Absent otherwise. Seller-supplied fields on these errors (such as
+   * `challenge`, `oauthMetadata` and `responseBody`) are untrusted text.
    */
   errorInstance?: import('../errors').ADCPError;
   /** Correlation ID from the error response context, for tracing across agents */
