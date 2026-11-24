@@ -23,6 +23,7 @@ import { withResponseSizeLimit } from './responseSizeLimit';
 import { withTransportDiagnostics, type TransportActivityHandler } from './transportDiagnostics';
 import { isAbortOrTimeoutError, resolveClientRequestTimeoutMs } from './abort';
 import { tryCallModernMCPTool } from './mcp-modern';
+import { forEachMcpToolsPage } from './mcp-tools-list';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -59,24 +60,38 @@ interface MCPTaskProtocolOptions {
 }
 
 /**
- * Track which MCP clients have had listTools() called.
+ * Tool names on the `tools/list` page each MCP client last cached.
  * The SDK's isToolTask() needs tool metadata from listTools() to determine
  * per-tool taskSupport. Without this, callToolStream silently degrades to
- * a synchronous tools/call (no task creation).
+ * a synchronous tools/call (no task creation). The SDK replaces its metadata
+ * cache with each page it lists, so only the last page listed is known.
  */
-const toolsListedClients = new WeakSet<MCPClient>();
+const cachedToolsPages = new WeakMap<MCPClient, ReadonlySet<string>>();
 
 /**
- * Ensure tool metadata is cached in the SDK so isToolTask() works.
- * Called once per client connection when tasks are supported.
+ * Ensure the SDK has cached `toolName`'s metadata so isToolTask() works.
+ * Pages through a paginated catalog until the page holding the tool, which
+ * leaves that page in the SDK's cache (adcp-client#3717).
  */
-async function ensureToolsListed(client: MCPClient, signal?: AbortSignal, requestTimeoutMs?: number): Promise<void> {
-  if (toolsListedClients.has(client)) return;
-  await client.listTools(undefined, {
+async function ensureToolsListed(
+  client: MCPClient,
+  toolName: string,
+  signal?: AbortSignal,
+  requestTimeoutMs?: number
+): Promise<void> {
+  if (cachedToolsPages.get(client)?.has(toolName)) return;
+  const options = {
     ...(signal && { signal }),
     ...(requestTimeoutMs !== undefined && { timeout: requestTimeoutMs }),
-  });
-  toolsListedClients.add(client);
+  };
+  await forEachMcpToolsPage(
+    cursor => client.listTools(cursor === undefined ? undefined : { cursor }, options),
+    tools => {
+      const names = new Set(tools.map(tool => tool.name));
+      cachedToolsPages.set(client, names);
+      return names.has(toolName);
+    }
+  );
 }
 
 /**
@@ -379,7 +394,7 @@ async function callToolOnClient(
   // Ensure tool metadata is cached so the SDK's isToolTask() works correctly.
   // Without this, callToolStream silently skips task creation for tools that
   // declare taskSupport: 'optional' | 'required'.
-  await ensureToolsListed(client, signal, resolvedRequestTimeoutMs);
+  await ensureToolsListed(client, toolName, signal, resolvedRequestTimeoutMs);
 
   debugLogs.push({
     type: 'info',
