@@ -128,6 +128,66 @@ returned `sourceScope`, then applies the source contract and existing ledger
 immutability checks. Return the resulting secret-free configuration state from
 your `sync_accounts` implementation.
 
+### Report definition versions and callers pinned below AdCP 3.3
+
+AdCP 3.3 adds report-definition `contract_version` 1.2, and callers pinned
+below 3.3 accept only 1.0 and 1.1. A seller must serve them only offerings
+whose definition is 1.0 or 1.1; a 1.2 offering serves 3.3 callers only
+(`core/reporting-report-definition.json` `x-adcp-validation.package_dimension`).
+An offering pins its definition by URI and SHA-256 only, so declare each
+definition's version, keyed by `report_definition_sha256`:
+
+```ts
+const reporting = createReliableReportingService({
+  // ...
+  reportDefinitionVersions: {
+    [mediaBuyOffering.report_definition_sha256]: '1.2',
+    [accountSummaryOffering.report_definition_sha256]: '1.1',
+  },
+  // undeclaredReportDefinitions: 'withhold_from_pre_3_3',
+});
+```
+
+`createAdcpServerFromPlatform` then:
+
+- drops the 1.2 offerings from `get_adcp_capabilities` for callers pinned below
+  3.3, and drops `media_buy.reporting_delivery` when none is left;
+- fails a `sync_accounts` request from those callers whose
+  `reporting_delivery_configs` name a 1.2 offering, as a whole and before
+  `accounts.upsert` runs, with `UNSUPPORTED_FEATURE`
+  (`field: "reporting_delivery_configs"`, `recovery: "correctable"`, `details`
+  carrying only the first offending config's `offering_id`, the seller's own
+  id; no request text is echoed). No entry is applied, so a `delete_missing` roster is
+  never shortened;
+- refuses to start a server pinned below 3.3 that has a 1.2 offering, which it
+  could serve to no one.
+
+The comparison is by `MAJOR.MINOR`, so every 3.3 prerelease is a 3.3 caller; a
+request with no served release is the SDK's pinned release, and one the SDK
+cannot parse is treated as older. Keys match case-insensitively. An offering
+the map does not declare is served to everyone as a 1.0 or 1.1 definition (the
+default `undeclaredReportDefinitions: 'assume_pre_1_2'`, which warns once at
+construction with the entry to add), or to 3.3 callers only under
+`'withhold_from_pre_3_3'`, whose refusal says the definition's
+`contract_version` is undeclared. The 3.3-only offerings are published as
+`platform.reporting.adcp33OnlyOfferings`. `get_reporting_status` is bound to the server's own
+pin, so callers pinned below 3.3 never read it on a 3.3 server, and account
+readback keeps a buyer's own configurations visible.
+
+If your `sync_accounts` handler calls `installConfiguration` outside
+`accounts.upsert`, pass the served release so the same refusal applies:
+
+```ts
+await reporting.installConfiguration(declaration, {
+  account: ctx.account,
+  servedAdcpVersion: ctx.servedAdcpVersion,
+});
+```
+
+Products are your own catalog: filter 1.2 offering ids out of
+`reporting_capabilities.reporting_delivery_offering_ids` in products you serve
+to callers pinned below 3.3.
+
 ### Reporting history before installation
 
 Trusted host code can grant an account reporting history independently of when

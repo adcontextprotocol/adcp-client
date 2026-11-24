@@ -284,6 +284,7 @@ import {
 import { legacyFormatRefsForDeclaration } from '../../../v2/projection/legacy-metadata';
 import { canonicalizeAgentUrl } from '../../../discovery/resolve-agent-properties';
 import { ADCP_VERSION } from '../../../version';
+import { acceptsReportDefinition12, reportingOfferingRequiresAdcp33Error } from '../../reporting-definition-release';
 
 function supportsCanonicalCreativeCapability(version: unknown): boolean {
   if (typeof version !== 'string') return false;
@@ -3114,6 +3115,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   if (reportingDelivery && !isAdcpVersionAtLeast(configuredAdcpVersion, '3.2.0-rc.4')) {
     throw new PlatformConfigError('Reliable Reporting Core requires an AdCP 3.2.0-rc.4 or newer schema pin');
   }
+  // A 1.2 report definition serves AdCP 3.3 callers only, so a server pinned below 3.3 could serve
+  // such an offering to no one (core/reporting-report-definition.json package_dimension).
+  const reportingAdcp33OnlyOfferingIds = Object.keys(platform.reporting?.adcp33OnlyOfferings ?? {});
+  if (reportingAdcp33OnlyOfferingIds.length > 0 && !acceptsReportDefinition12(configuredAdcpVersion)) {
+    throw new PlatformConfigError(
+      `Reporting offerings ${reportingAdcp33OnlyOfferingIds.map(id => JSON.stringify(id)).join(', ')} serve ` +
+        `AdCP 3.3 callers only (a contract_version 1.2 report definition, or undeclared under ` +
+        `withhold_from_pre_3_3), but this server is pinned to ${configuredAdcpVersion}. Serve them from an ` +
+        'AdCP 3.3 server, or publish a 1.0 or 1.1 definition.'
+    );
+  }
   // Reliable Reporting renders one frozen protocol contract. A multi-release
   // server may continue serving older releases for its other tools, but it
   // must not advertise the mounted reporting composition on those releases:
@@ -3428,6 +3440,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }),
     ...(platform.capabilities.accountRequests !== undefined && {
       accountRequests: structuredClone(platform.capabilities.accountRequests),
+    }),
+    ...(reportingAdcp33OnlyOfferingIds.length > 0 && {
+      reportingAdcp33OnlyOfferingIds: [...reportingAdcp33OnlyOfferingIds],
     }),
     ...(hasOverridesObject && {
       overrides: {
@@ -9521,6 +9536,21 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
   const acceptedEntries: SyncAccountsEntry[] = [];
 
   const isUpstreamManagedNamespace = normalizeAccountResolution(platform.accounts.resolution) === 'derived';
+  // A caller pinned below AdCP 3.3 was never served a 1.2 report definition. Naming one fails the
+  // whole request before the handler runs: dropping just that entry would shorten a delete_missing
+  // roster (deleting the account), and an entry keyed by account_id has no row a 3.2 caller accepts.
+  if (!acceptsReportDefinition12(resolveCtx.servedAdcpVersion)) {
+    const unserved = new Map(Object.entries(platform.reporting?.adcp33OnlyOfferings ?? {}));
+    for (const entry of unserved.size > 0 ? entries : []) {
+      const configs = (entry as { reporting_delivery_configs?: unknown }).reporting_delivery_configs;
+      for (const config of Array.isArray(configs) ? configs : []) {
+        const offeringId = (config as { offering_id?: unknown } | null)?.offering_id;
+        const reason = typeof offeringId === 'string' ? unserved.get(offeringId) : undefined;
+        if (reason === undefined) continue;
+        throw reportingOfferingRequiresAdcp33Error(offeringId as string, reason);
+      }
+    }
+  }
 
   entries.forEach((entry, index) => {
     // Account-model gate first: an entry is refused on its key shape
