@@ -1,6 +1,11 @@
 // Multi-agent orchestrator providing simple, intuitive API
 
 import type { AgentConfig } from '../types';
+import { ADCPError } from '../errors';
+import {
+  NeedsAuthorizationError,
+  hasValidatedMcpAuthorizationRequirements,
+} from '../auth/oauth/authorization-required';
 import {
   AgentClient,
   type CanonicalGetProductsResponse,
@@ -118,10 +123,19 @@ export class AgentCollection {
         return result.value;
       }
       const client = clients[index]!;
+      const reason: unknown = result.reason;
+      // The error a single-agent call would have thrown, so callers can branch
+      // with `instanceof`. As on task results, a NeedsAuthorizationError counts
+      // only when its MCP requirements are validated.
+      const surfaced =
+        reason instanceof ADCPError &&
+        (!(reason instanceof NeedsAuthorizationError) ||
+          hasValidatedMcpAuthorizationRequirements(reason.requirements, client.getAgent().agent_uri));
       return {
         success: false as const,
         status: 'failed' as const,
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        error: reason instanceof Error ? reason.message : String(reason),
+        ...(surfaced && { errorInstance: reason }),
         metadata: {
           taskId: '',
           taskName: '',
