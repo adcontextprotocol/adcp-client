@@ -544,6 +544,46 @@ function unreadableMarkEnd(mark: ReportingLedgerIssueV1): string | undefined {
 }
 
 /**
+ * Normalize a seller `REVISION_UNREADABLE` mark as a store records it at `now`
+ * (adcp-client#3653). A consumer-mismatch recurrence takes its identity and
+ * `openedAt` from the mark's start and end, so both must be facts of the ledger:
+ *
+ * - nothing about the mark is later than the write recording it: a start or
+ *   end ahead of the store's clock is clamped to `now`;
+ * - the start is fixed by the first write (`prior`), as `openedAt` is for every
+ *   issue;
+ * - the end is materialized as `resolvedAt` once the mark ends and never moves
+ *   afterwards, so a retried or later write cannot re-date an occurrence. A
+ *   retired issue is not reopened under the same id: a recurrence takes a new
+ *   one.
+ *
+ * Other issue codes are returned unchanged.
+ *
+ * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
+ */
+export function normalizeReportingUnreadableMarkWriteV1(
+  issue: ReportingLedgerIssueV1,
+  prior: ReportingLedgerIssueV1 | undefined,
+  now: string
+): ReportingLedgerIssueV1 {
+  if (issue.code !== 'REVISION_UNREADABLE') return issue;
+  const notAfterNow = (instant: string): string => (compareReportingInstants(instant, now) > 0 ? now : instant);
+  const priorEnd = prior?.code === 'REVISION_UNREADABLE' ? unreadableMarkEnd(prior) : undefined;
+  const incomingEnd = unreadableMarkEnd(issue);
+  const end = priorEnd ?? (incomingEnd === undefined ? undefined : notAfterNow(incomingEnd));
+  let openedAt = notAfterNow(prior?.openedAt ?? issue.openedAt);
+  if (end !== undefined && compareReportingInstants(openedAt, end) > 0) openedAt = end;
+  const terminal = issue.issueState === 'resolved' || issue.issueState === 'waived';
+  return {
+    ...issue,
+    openedAt,
+    ...(end !== undefined && { resolvedAt: end }),
+    // A terminal state dated before the end would move it earlier.
+    ...(terminal && end !== undefined && compareReportingInstants(issue.observedAt, end) < 0 && { observedAt: end }),
+  };
+}
+
+/**
  * The issue identity is one logical condition: this obligation plus the exact
  * consumer statement that caused it. Deliberately excludes severity and the
  * read time so the same `issueId` and `openedAt` carry across the `delayed` →

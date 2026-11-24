@@ -19,7 +19,10 @@ import {
   reportingLedgerSubscriptionKeyV1,
   reportingLedgerSubscriptionVisibleV1,
 } from '../reporting/ledger/coverage';
-import { projectReportingObligationHealthV1 } from '../reporting/ledger/health';
+import {
+  normalizeReportingUnreadableMarkWriteV1,
+  projectReportingObligationHealthV1,
+} from '../reporting/ledger/health';
 import { compareReportingInstants, compareReportingInstantToOffset } from '../reporting/ledger/instant';
 import {
   planReportingIssueEventsV1,
@@ -360,17 +363,13 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
       this.issues.set(value.issueId, clone(value));
       return;
     }
-    // A mark cannot end after the write that records it. An end ahead of this
-    // store's clock is clamped to it, so the mismatch reopens at a settle that
-    // happens now, not at an instant no later write revisits.
+    // The mark's start and end date a mismatch recurrence; record them as
+    // ledger facts (clamped to this write, end kept once set).
     const now = this.instant();
-    const ahead = (instant: unknown) => typeof instant === 'string' && compareReportingInstants(instant, now) > 0;
-    const terminal = value.issueState === 'resolved' || value.issueState === 'waived';
-    this.issues.set(value.issueId, {
-      ...clone(value),
-      ...(ahead(value.resolvedAt) && { resolvedAt: now }),
-      ...(terminal && ahead(value.observedAt) && { observedAt: now }),
-    });
+    this.issues.set(
+      value.issueId,
+      clone(normalizeReportingUnreadableMarkWriteV1(value, this.issues.get(value.issueId), now))
+    );
     this.settleIssueObligation(value.reporting_obligation_id, now);
   }
 
