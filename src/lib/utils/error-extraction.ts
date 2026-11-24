@@ -27,6 +27,8 @@ export interface ExtractedAdcpError {
    * `message` is buyer-safe by spec (no vendor identifiers, no internal IDs).
    */
   buyer_reason?: { code: string; message: string };
+  /** Mirrors `AdcpErrorInfo.mutation_outcome`. */
+  mutation_outcome?: AdcpErrorInfo['mutation_outcome'];
   /** Where the error was found in the response */
   source: 'structuredContent' | 'text_json' | 'text_pattern';
   /** The compliance level this delivery achieves */
@@ -206,6 +208,11 @@ function mapBuyerReason(raw: unknown): { code: string; message: string } | undef
   return { code, message };
 }
 
+/** AdCP 3.3 `error.mutation_outcome`, when it is one of the defined values. */
+function mapMutationOutcome(raw: unknown): AdcpErrorInfo['mutation_outcome'] {
+  return raw === 'applied' || raw === 'not_applied' || raw === 'unknown' ? raw : undefined;
+}
+
 function buildExtracted(
   obj: any,
   source: ExtractedAdcpError['source'],
@@ -227,6 +234,8 @@ function buildExtracted(
   if (mappedIssues) result.issues = mappedIssues;
   const buyerReason = mapBuyerReason(obj.buyer_reason);
   if (buyerReason) result.buyer_reason = buyerReason;
+  const mutationOutcome = mapMutationOutcome(obj.mutation_outcome);
+  if (mutationOutcome) result.mutation_outcome = mutationOutcome;
   return result;
 }
 
@@ -294,12 +303,17 @@ export function extractAdcpErrorInfo(data: any): AdcpErrorInfo | undefined {
     if (mappedIssues) info.issues = mappedIssues;
     const buyerReason = mapBuyerReason(ae.buyer_reason);
     if (buyerReason) info.buyer_reason = buyerReason;
+    // A seller may put the outcome only on its errors[] entry (adcp-client#3689).
+    const mutationOutcome =
+      mapMutationOutcome(ae.mutation_outcome) ??
+      (Array.isArray(data.errors) ? mapMutationOutcome(data.errors[0]?.mutation_outcome) : undefined);
+    if (mutationOutcome) info.mutation_outcome = mutationOutcome;
     if (ae.synthetic) info.synthetic = true;
     return info;
   }
 
   // Legacy `{ errors: [...] }` envelope — L1 compat only. Extracts code/message/recovery
-  // (and `buyer_reason` when the seller populated it on the first entry) from errors[0];
+  // (and `buyer_reason` / `mutation_outcome` when the seller populated them on the first entry) from errors[0];
   // does not forward issues[], field, suggestion, or details since this path is only
   // reached for non-standard envelopes that are unlikely to carry them.
   if (Array.isArray(data.errors) && data.errors.length > 0) {
@@ -310,6 +324,8 @@ export function extractAdcpErrorInfo(data: any): AdcpErrorInfo | undefined {
       if (recovery) info.recovery = recovery;
       const buyerReason = mapBuyerReason(first.buyer_reason);
       if (buyerReason) info.buyer_reason = buyerReason;
+      const mutationOutcome = mapMutationOutcome(first.mutation_outcome);
+      if (mutationOutcome) info.mutation_outcome = mutationOutcome;
       return info;
     }
   }

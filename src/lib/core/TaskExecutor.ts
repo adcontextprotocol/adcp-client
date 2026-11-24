@@ -6224,10 +6224,21 @@ export class TaskExecutor {
     const transportData = error?.data || error?.response?.data;
     const adcpErrorInfo = extractAdcpErrorInfo(transportData);
     const correlationId = extractCorrelationId(transportData);
+    // Keep the seller's structured error body, as a returned failure does: it
+    // carries `mutation_outcome`, which tells the buyer whether the failed
+    // mutation took effect (adcp-client#3689).
+    const sellerErrorBody =
+      transportData &&
+      typeof transportData === 'object' &&
+      !Array.isArray(transportData) &&
+      (('adcp_error' in transportData && transportData.adcp_error) || Array.isArray(transportData.errors))
+        ? transportData
+        : undefined;
 
     return {
       success: false as const,
       status: 'failed' as const,
+      ...(sellerErrorBody !== undefined && { data: sellerErrorBody as T }),
       error: error.message || String(error),
       adcpError: adcpErrorInfo,
       errorInstance:

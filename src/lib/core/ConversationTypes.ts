@@ -545,6 +545,15 @@ export interface AdcpErrorInfo {
    * `core/error.json`'s `buyer_reason` field for the normative contract.
    */
   buyer_reason?: { code: string; message: string };
+  /**
+   * Whether the failed mutation changed seller state (AdCP 3.3
+   * `error.mutation_outcome`). `'not_applied'` means nothing was written and a
+   * retry or replan is safe; `'applied'` means the change took effect despite
+   * the error; `'unknown'` means the seller cannot tell, so reconcile before
+   * retrying with a new idempotency key or reporting a refusal. Absent when the
+   * seller made no claim; treat that as unknown for a mutation.
+   */
+  mutation_outcome?: 'applied' | 'not_applied' | 'unknown';
   /** True when the SDK inferred this error from unstructured text (L1 compliance) */
   synthetic?: boolean;
 }
