@@ -1662,7 +1662,12 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   webhookSigningProfile?: 'adcp/webhook-signing/v1' | 'web-bot-auth';
   /** Default off disables provisioning gates; auto/strict use the provisioning registry. */
   accountPolicy?: AccountPolicy;
-  /** Auto selects seller IDs only with stable_account_id or an AdCP 4+ wire contract. Natural-key preserves legacy implicit references. */
+  /**
+   * Auto sends a provisioned account's seller `account_id` in place of its
+   * natural key on account-scoped tasks negotiated at AdCP 3.3 or later (or
+   * when the seller declares `stable_account_id`). Natural-key sends every
+   * reference as written.
+   */
   accountReferenceMode?: 'auto' | 'natural-key';
   accountStorage?: BuyerAccountStorage;
   /**
@@ -2205,6 +2210,9 @@ function propertyListResolutionErrorCode(err: unknown): string {
   return 'property_list_resolution_failed';
 }
 
+/** The first AdCP release in which every seller MUST accept `{ account_id }` (adcontextprotocol/adcp#8474). */
+const ACCOUNT_ID_REFERENCE_MIN_ADCP_VERSION = '3.3.0-beta.0';
+
 export class SingleAgentClient {
   private _accounts?: BuyerAccountRegistry;
   private accountRegistryExplicitlyAccessed = false;
@@ -2409,7 +2417,11 @@ export class SingleAgentClient {
     };
   }
 
-  private usesStableAccountIds(capabilities: AdcpCapabilities): boolean {
+  /**
+   * Whether the seller declares stable account IDs: the `stable_account_id`
+   * flag (deprecated in AdCP 3.3), or an AdCP 4 contract on both sides.
+   */
+  private declaresStableAccountIds(capabilities: AdcpCapabilities): boolean {
     if (capabilities._synthetic) return false;
     return (
       capabilities.account?.stableAccountId === true ||
@@ -2420,21 +2432,42 @@ export class SingleAgentClient {
     );
   }
 
+  /**
+   * Whether a provisioned account is referenced as `{ account_id }` on the
+   * wire. AdCP 3.3 makes the seller's `account_id` the account's identity:
+   * every seller accepts it on every account-scoped task, and buyers MUST NOT
+   * require `stable_account_id` before sending it. Below 3.3 accepting an id
+   * was optional, so the natural key stays unless the seller declared it.
+   */
+  private referencesAccountsById(capabilities: AdcpCapabilities, options?: TaskOptions): boolean {
+    if (capabilities._synthetic) return false;
+    if (this.declaresStableAccountIds(capabilities)) return true;
+    const pinned = options?.wireAdcpVersion ?? this.config.wireAdcpVersion;
+    const negotiated = pinned === undefined ? negotiateAdcpRelease(this.resolvedAdcpVersion, capabilities) : undefined;
+    const release = pinned ?? (negotiated && !isNegotiationFailure(negotiated) ? negotiated.version : undefined);
+    return isAdcpVersionAtLeast(release, ACCOUNT_ID_REFERENCE_MIN_ADCP_VERSION);
+  }
+
   private accountWireReference(
     account: AccountReference,
     accountId: string | undefined,
-    capabilities: AdcpCapabilities
+    capabilities: AdcpCapabilities,
+    options?: TaskOptions
   ): AccountReference {
     if (
       'account_id' in account ||
       this.config.accountReferenceMode === 'natural-key' ||
-      !this.usesStableAccountIds(capabilities)
+      !this.referencesAccountsById(capabilities, options)
     )
       return account;
-    if (!accountId)
+    if (!accountId) {
+      // Every 3.x seller still accepts the natural key. Only a seller that
+      // declared stable IDs and returned none is a setup error.
+      if (!this.declaresStableAccountIds(capabilities)) return account;
       throw new AccountSetupRequiredError(
         'The seller declares stable account IDs but did not return an account_id. Reconcile with syncAccounts.'
       );
+    }
     return { account_id: accountId };
   }
 
@@ -2453,7 +2486,7 @@ export class SingleAgentClient {
       if (
         policy === 'strict' &&
         ['get_products', 'list_products'].includes(task) &&
-        this.usesStableAccountIds(await this.getCapabilities(options))
+        this.declaresStableAccountIds(await this.getCapabilities(options))
       )
         throw new AccountNotProvisionedError(undefined, task);
       return params;
@@ -2472,7 +2505,10 @@ export class SingleAgentClient {
       known &&
       !['unknown', 'provisioning', 'failed_provisioning'].includes(known.status) &&
       !('account_id' in ref) &&
-      this.config.accountReferenceMode !== 'natural-key'
+      this.config.accountReferenceMode !== 'natural-key' &&
+      // A governance authorization binds the payload as authored, account
+      // included; rewriting it would break the token's payload hash.
+      params.governance_context === undefined
     ) {
       const scope = this.accountScope();
       capabilities = await this.getCapabilities(options);
@@ -2500,8 +2536,22 @@ export class SingleAgentClient {
         );
       }
       if (capabilities) {
-        const account = this.accountWireReference(ref, known.account_id, capabilities);
-        if (account !== ref) return { ...params, account };
+        const account = this.accountWireReference(ref, known.account_id, capabilities, options);
+        if (account !== ref) {
+          // The natural key was the request's brand source (request_proposals
+          // and buy_products require one). Keep its brand at the top level
+          // where the task takes one, unless the caller named a brand, either
+          // directly or through the legacy `brand_manifest` the request
+          // normalizer derives one from.
+          const brand =
+            params.brand === undefined &&
+            params.brand_manifest === undefined &&
+            'brand' in ref &&
+            schemaAllowsTopLevelField(task, 'brand')
+              ? ref.brand
+              : undefined;
+          return { ...params, account, ...(brand !== undefined && { brand }) };
+        }
       }
       return params;
     }
@@ -8096,7 +8146,16 @@ export class SingleAgentClient {
       if (!request.buying_mode && !request.brief) {
         request = { ...request, buying_mode: 'wholesale' };
       }
-      const account = canonicalAccountRoutingSnapshot(accountReference);
+      // Format routes are keyed by the account the caller authored: that is
+      // the reference createMediaBuy and syncCreatives look them up by, while
+      // the account policy may have sent the seller's account_id instead.
+      const authoredLegacyAccountId = (params as { account_id?: unknown }).account_id;
+      const account = canonicalAccountRoutingSnapshot(
+        params.account ??
+          (typeof authoredLegacyAccountId === 'string' && authoredLegacyAccountId
+            ? { account_id: authoredLegacyAccountId }
+            : undefined)
+      );
       const cache =
         !effectiveOptions.skipRequestValidation &&
         !this.usesScopedDiscoveryTransport(effectiveOptions) &&
@@ -10413,7 +10472,7 @@ export class SingleAgentClient {
         );
       }
       const resolved = (account: AccountReference, accountId?: string): AccountReference | ResolveAccountResult => {
-        const reference = this.accountWireReference(account, accountId, capabilities);
+        const reference = this.accountWireReference(account, accountId, capabilities, effectiveOptions);
         return hints.includeDetails
           ? {
               reference,
@@ -10527,7 +10586,9 @@ export class SingleAgentClient {
       if (!this.accountRegistryOptedIn()) {
         // SDK 14.0 behavior: sync on every call so callers observe the
         // seller's current status. The memoized registry path is opt-in.
-        const registry = this.usesStableAccountIds(capabilities) ? this.getAccountRegistry() : undefined;
+        const registry = this.referencesAccountsById(capabilities, effectiveOptions)
+          ? this.getAccountRegistry()
+          : undefined;
         const registryScope = registry ? this.accountScope() : undefined;
         const observationEpoch = registry?.captureObservation();
         const result = await this.syncAccounts(
