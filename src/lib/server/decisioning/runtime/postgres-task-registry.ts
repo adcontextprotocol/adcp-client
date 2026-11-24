@@ -65,7 +65,7 @@ import type {
   TaskStatus,
 } from './task-registry';
 import { sanitizeTaskProgressForStorage } from './task-registry';
-import { assertPlatformIdsAgree, withDualPlatformIds } from '../../../utils/platform-id';
+import { findPlatformIdMismatch, PlatformIdMismatchError, toolHasPlatformIdRows } from '../../../utils/platform-id';
 
 /**
  * Minimal subset of the `pg.Pool` interface used by the registry.
@@ -672,6 +672,17 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
     }
   };
 
+  const taskTool = async (taskId: string, scope: TaskRegistryScope): Promise<string | undefined> => {
+    const { rows } = await query(
+      'complete.taskTool',
+      `SELECT tool FROM ${table}
+       WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4`,
+      [taskId, namespace, scope.accountId, scope.ownerScope]
+    );
+    const tool = rows[0]?.tool;
+    return typeof tool === 'string' ? tool : undefined;
+  };
+
   const classifyAfterInvalidPayload = async (
     operation: string,
     taskId: string,
@@ -757,12 +768,15 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       if (scope.registryId !== undefined && scope.registryId !== registryId) return { outcome: 'not_found_in_scope' };
       let json: string;
       try {
-        // AdCP 3.3: stored sync_event_sources / sync_audiences rows carry both
-        // platform identifier names. The tool isn't known here; only those
-        // two results have identifier-bearing rows.
-        assertPlatformIdsAgree(result);
-        json = safeStringify(withDualPlatformIds(result), taskId);
+        json = safeStringify(result, taskId);
         assertResultSize(json, taskId);
+        // AdCP 3.3: a sync_event_sources / sync_audiences row's platform_id
+        // and seller_id must agree. Look the task's tool up only when the
+        // result has a disagreeing row, so other task types are untouched.
+        const mismatch = findPlatformIdMismatch(result);
+        if (mismatch && toolHasPlatformIdRows(await taskTool(taskId, scope))) {
+          throw new PlatformIdMismatchError(mismatch);
+        }
       } catch (payloadError) {
         return await classifyAfterInvalidPayload('complete', taskId, scope, payloadError);
       }

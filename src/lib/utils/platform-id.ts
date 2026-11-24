@@ -165,22 +165,3 @@ export function releaseCarriesPlatformId(release: string): boolean {
 export function projectPlatformIdsForRelease<T>(result: T, release: string): T {
   return releaseCarriesPlatformId(release) ? withDualPlatformIds(result) : withSellerIdOnly(result);
 }
-
-/**
- * @internal In-place form of {@link withDualPlatformIds} for sanitizers that
- * mutate the result they persist. Rows whose two names differ are left
- * untouched.
- */
-export function addDualPlatformIdsInPlace(result: unknown): void {
-  if (!isRecord(result)) return;
-  for (const key of ROW_ARRAY_KEYS) {
-    const rows = result[key];
-    if (!Array.isArray(rows)) continue;
-    for (const row of rows) {
-      if (!isRecord(row)) continue;
-      const { platform_id, seller_id } = row;
-      if (typeof platform_id === 'string' && seller_id === undefined) row.seller_id = platform_id;
-      else if (typeof seller_id === 'string' && platform_id === undefined) row.platform_id = seller_id;
-    }
-  }
-}

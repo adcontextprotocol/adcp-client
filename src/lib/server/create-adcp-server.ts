@@ -8044,6 +8044,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // read, but belt-and-suspenders: handler-returned objects
               // can alias pieces of the formatted envelope.
               const cachedFormatted = cloneFormattedResponse(checkResult.response as McpToolResponse);
+              // A response cached before AdCP 3.3 platform identifier dual
+              // emission carries one name; give it the names the request's
+              // release defines, as a fresh response would.
+              if (
+                toolHasPlatformIdRows(toolName) &&
+                !isErrorEnvelope(cachedFormatted) &&
+                cachedFormatted.structuredContent
+              ) {
+                const projected = projectPlatformIdsForRelease(
+                  cachedFormatted.structuredContent,
+                  requestRelease.validationVersion
+                );
+                if (projected !== cachedFormatted.structuredContent) {
+                  const mirrors = contentTextMirrorsStructuredContent(
+                    cachedFormatted,
+                    cachedFormatted.structuredContent
+                  );
+                  cachedFormatted.structuredContent = projected;
+                  syncContentJsonText(cachedFormatted, projected, mirrors);
+                }
+              }
               // Only stamp `replayed: true` on success envelopes — the
               // field is defined for successful replays, and transient
               // error cache entries (VALIDATION_ERROR from strict-mode
@@ -9487,12 +9508,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           (response.status === 'completed' || response.status === 'failed' || response.status === 'rejected') &&
           task.result !== undefined
         ) {
-          const result = _sanitizeStoredTaskResultForWire(task.result, {
+          const sanitized = _sanitizeStoredTaskResultForWire(task.result, {
             taskId: task.taskId,
             accountId,
             ownerScope,
             ...(taskRegistry.registryId !== undefined && { registryId: taskRegistry.registryId }),
           });
+          // Stored rows carry whichever platform identifier name the seller
+          // wrote. Give them the names the server's release defines; an older
+          // reader's projection below converts them again (AdCP 3.3).
+          const result = toolHasPlatformIdRows(task.tool)
+            ? projectPlatformIdsForRelease(sanitized, adcpVersion)
+            : sanitized;
           if (result !== undefined) response.result = result as GetTaskStatusResponse['result'];
           else logger.warn('Omitting unsafe stored task result during get_task_status poll');
         }

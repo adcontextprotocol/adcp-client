@@ -88,9 +88,10 @@ response that reports the identifier carries both names with identical values.
 
 **Sellers:** return either name from `syncEventSources` / `syncAudiences`, or
 both with the same value. The server sends both to callers served 3.3 or later
-and `seller_id` alone to callers served 3.2 or earlier. Task results stored for
-`tasks/get`, completion webhooks and push settlement carry both names, and
-older readers get `seller_id`. If a row's two names differ, the server answers
+and `seller_id` alone to callers served 3.2 or earlier. Task results are stored
+as you wrote them; `tasks/get`, `tasks_get`, completion webhooks and push
+settlement give each reader the names its release defines. If a row's two names
+differ, the server answers
 `INTERNAL_ERROR` (a handed-off task fails with it), `TaskRegistry.complete()`
 throws without storing, and push settlement refuses the result. A result you
 send yourself through a webhook sender goes out as you built it.

@@ -98,7 +98,11 @@ import {
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentRegistry } from '../buyer-agent';
 import { suggestBilling } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
-import { findPlatformIdMismatch, toolHasPlatformIdRows } from '../../../utils/platform-id';
+import {
+  findPlatformIdMismatch,
+  projectPlatformIdsForRelease,
+  toolHasPlatformIdRows,
+} from '../../../utils/platform-id';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { CanonicalPreviewCreativeRequest } from '../../../v2/projection/creative-delivery';
@@ -3802,7 +3806,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         fwLogger,
         runtimeOpts.resolveSessionKey,
         opts.credentialPolicy,
-        implicitIdentityPolicy
+        implicitIdentityPolicy,
+        configuredAdcpVersion
       );
       return {
         ...opts.customTools,
@@ -4405,7 +4410,8 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   logger: AdcpLogger,
   resolveSessionKey: AdcpServerConfig<Account>['resolveSessionKey'] | undefined,
   credentialPolicy: CredentialPolicy | undefined,
-  implicitIdentityPolicy: ImplicitIdentityPolicy
+  implicitIdentityPolicy: ImplicitIdentityPolicy,
+  serverAdcpVersion: string
 ) {
   const credentialPolicyPatterns =
     credentialPolicy === undefined || typeof credentialPolicy === 'string' ? undefined : credentialPolicy.patterns;
@@ -4768,12 +4774,18 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         (record.status === 'completed' || record.status === 'failed' || record.status === 'rejected') &&
         record.result !== undefined
       ) {
-        const result = _sanitizeStoredTaskResultForWire(record.result, {
+        const sanitized = _sanitizeStoredTaskResultForWire(record.result, {
           taskId: record.taskId,
           accountId: resolvedAccountId,
           ownerScope: expectedOwnerScope,
           ...(taskRegistry.registryId !== undefined && { registryId: taskRegistry.registryId }),
         });
+        // Stored rows carry whichever platform identifier name the seller
+        // wrote. Give them the names the server's release defines; an older
+        // reader's projection converts them again (AdCP 3.3).
+        const result = toolHasPlatformIdRows(record.tool)
+          ? projectPlatformIdsForRelease(sanitized, serverAdcpVersion)
+          : sanitized;
         if (result !== undefined) payload.result = result;
         else logger.warn?.('Omitting unsafe stored task result during tasks_get poll');
       }
