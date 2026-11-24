@@ -19,7 +19,8 @@
 import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
 import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 import { activationKey, signalId } from '@adcp/sdk';
-import type { GetSignalsResponse, ServeContext } from '@adcp/sdk';
+import type { GetSignalsResponse } from '@adcp/sdk';
+import type { ServeContext } from '@adcp/sdk/server';
 
 // ---------------------------------------------------------------------------
 // Audience segment catalog — typed to match the AdCP signals response schema

@@ -39,7 +39,7 @@ import {
   MEDIA_BUY_TRANSITIONS,
   serve,
   type ServeContext,
-} from '@adcp/sdk';
+} from '@adcp/sdk/server';
 
 // ---------------------------------------------------------------------------
 // Typed domain state.

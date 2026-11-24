@@ -136,6 +136,37 @@ and `pnpm why -r @adcp/sdk` to inspect the resulting graph. See
 [pnpm's dependency-resolution settings](https://github.com/pnpm/pnpm/blob/main/pnpm/docs/settings/dependency-resolution.md)
 and [peer-dependency settings](https://pnpm.io/settings#dedupepeerdependents).
 
+## Server and testing names on the root entry are deprecated
+
+The package root (`@adcp/sdk`) and `@adcp/sdk/client` still re-export the
+server and testing helpers, so importing anything from them loads the SDK's
+server and testing modules too (#3664). In 17.0 those re-exports are marked
+`@deprecated`; SDK 18.0 removes them. Nothing changes at runtime in 17.x: the
+names resolve to the same functions, classes and types as before.
+
+| Name came from | Import it from |
+| --- | --- |
+| Server helpers: `serve`, `createTaskCapableServer`, `adcpError`, the `legacy*Response` builders, idempotency, state and task stores, `ServeContext`, the `*Payload` types, `mediaBuyActionResolver`, … | `@adcp/sdk/server` |
+| Test helpers: `testAgent*`, `createTestAgent`, `creativeAgent`, `expectController*`, `RateLimitTripObserver`, … | `@adcp/sdk/testing` |
+
+Two root names are aliases. Import `ListOptions` and `ListResult` from
+`@adcp/sdk/server` in place of the root's `StateListOptions` and
+`StateListResult`.
+
+Editors show the deprecated imports struck through. To list them, enable
+`@typescript-eslint/no-deprecated` (or `deprecation/deprecation`) on code that
+imports from `@adcp/sdk` or `@adcp/sdk/client`.
+
+Every other root export stays in 18.0. To keep a client-only process from
+loading the server and testing modules today, import from the lean subpaths
+instead of the root: `@adcp/sdk/client/core`, `@adcp/sdk/errors`,
+`@adcp/sdk/version`, `@adcp/sdk/registry`, `@adcp/sdk/utils`,
+`@adcp/sdk/discovery`, `@adcp/sdk/media-buy` and `@adcp/sdk/media-buy/actions`.
+A few root type names, such as `CreateMediaBuyRequest`, `Product` and
+`PackageRequest`, are the canonical aliases from `@adcp/sdk/v2/projection` and
+differ from the same names on `@adcp/sdk/types`, so check the type when you
+move one of those imports.
+
 ## Protocol and discovery
 
 The SDK packages the exact 3.3 beta schema and compliance bundle alongside

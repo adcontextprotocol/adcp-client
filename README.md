@@ -462,7 +462,7 @@ handlers: {
 Building a server that receives AdCP tool calls? **v6 (recommended for new agents):** declare a typed `DecisioningPlatform` per-specialism and let the framework wire idempotency, signing, capability projection, async tasks, status normalization, and lifecycle state.
 
 ```typescript
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import {
   createAdcpServerFromPlatform,
   createIdempotencyStore,

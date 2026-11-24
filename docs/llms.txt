@@ -28,7 +28,7 @@ The SDK is compact-lifecycle first: `list_products → buy_products → control_
 ## Server framework reference
 
 ```typescript
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import {
   createAdcpServerFromPlatform,
   createIdempotencyStore,

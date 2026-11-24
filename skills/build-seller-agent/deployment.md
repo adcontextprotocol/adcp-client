@@ -15,7 +15,7 @@ Companion to [`SKILL.md`](./SKILL.md). Read this only when you need deployment s
 Pass functions for `publicUrl` and `protectedResource`, branch on `ctx.host` in the factory, and turn on `trustForwardedHost` when a proxy terminates TLS:
 
 ```typescript
-import { UnknownHostError, hostname } from '@adcp/sdk';
+import { UnknownHostError, hostname } from '@adcp/sdk/server';
 import { createAdcpServerFromPlatform, serve, verifyBearer, type DecisioningPlatform } from '@adcp/sdk/server';
 
 declare const snapPlatform: DecisioningPlatform;
