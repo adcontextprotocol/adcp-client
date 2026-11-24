@@ -186,6 +186,156 @@ describe('issue-lifecycle events over PostgreSQL', { skip: !DATABASE_URL && 'Pos
     return w;
   }
 
+  describe('seller REVISION_UNREADABLE marks (#3653)', () => {
+    const markFor = (w, overrides = {}) => {
+      const at = new Date().toISOString();
+      return {
+        issueId: 'mark-pg-1',
+        reporting_obligation_id: w.obligation.reporting_obligation_id,
+        reporting_revision_id: w.revision.reporting_revision_id,
+        code: 'REVISION_UNREADABLE',
+        responsibleParty: 'seller',
+        severity: 'action_required',
+        recommendedAction: 'contact_seller',
+        openedAt: at,
+        observedAt: at,
+        ...overrides,
+      };
+    };
+    const markRow = async w => {
+      const { rows } = await w.pool.query(
+        `SELECT data, resolved_at, observed_at, clock_timestamp() AS db_now
+           FROM adcp_reporting_issues WHERE issue_id = 'mark-pg-1'`
+      );
+      return rows[0];
+    };
+    const consumerKinds = async (w, consumer) => (await w.events(consumer)).map(row => row.kind);
+
+    /** The buyer's `unreadable` statement is recorded, then the seller files an open mark after it. */
+    async function openedThenMarked(name) {
+      const w = await world(name, { issueEvents: true });
+      const consumer = `unreadable-${name}`;
+      await w.file(consumer, 'unreadable');
+      await sleep(15);
+      await w.store.putIssue(markFor(w));
+      return { w, consumer };
+    }
+
+    test('a seller mark resolves the unreadable occurrence; retiring it opens a recurrence at the mark end', async () => {
+      const { w, consumer } = await openedThenMarked('mark-resolve');
+      assert.deepEqual(await consumerKinds(w, consumer), ['opened', 'resolved']);
+      const [opened, resolved] = await w.events(consumer);
+      assert.equal(resolved.issue_id, opened.issue_id);
+
+      await sleep(15);
+      await w.store.resolveIssue('mark-pg-1', new Date().toISOString());
+      const events = await w.events(consumer);
+      assert.deepEqual(
+        events.map(row => row.kind),
+        ['opened', 'resolved', 'opened']
+      );
+      const reopened = events[2];
+      assert.notEqual(reopened.issue_id, opened.issue_id, 'a recurrence takes a new issue id');
+      assert.equal(reopened.reporting_status_id, opened.reporting_status_id, 'the same statement');
+      const row = await markRow(w);
+      assert.equal(sdk.compareReportingInstants(reopened.occurred_at, row.data.resolvedAt), 0);
+
+      // The observer receives every transition, with the recurrence under its own id.
+      const seen = [];
+      const dispatcher = sdk.createReportingIssueEventDispatcherV1({
+        store: w.store,
+        observer: event => void seen.push(event),
+      });
+      await dispatcher.runOnce({ accountId: w.request.account.account_id });
+      const mine = seen.filter(event => event.consumerId === consumer);
+      const kindsFor = issueId => mine.filter(event => event.issueId === issueId).map(event => event.kind);
+      assert.equal(mine.length, 3);
+      assert.deepEqual(kindsFor(opened.issue_id), ['opened', 'resolved'], 'the observer gets the resolve');
+      assert.deepEqual(kindsFor(reopened.issue_id), ['opened'], 'the recurrence under its own id');
+    });
+
+    test('an end ahead of the store clock is clamped to it, and the stored row agrees', async () => {
+      const { w, consumer } = await openedThenMarked('mark-clamp');
+      const future = new Date(Date.now() + 3_600_000).toISOString();
+      await w.store.resolveIssue('mark-pg-1', future);
+
+      const row = await markRow(w);
+      assert.ok(row.data.resolvedAt, 'data.resolvedAt set');
+      assert.ok(row.resolved_at, 'resolved_at set');
+      assert.ok(row.observed_at, 'observed_at set');
+      assert.ok(Date.parse(row.data.resolvedAt) <= row.db_now.getTime(), 'data end clamped');
+      assert.ok(row.resolved_at.getTime() <= row.db_now.getTime(), 'column end clamped');
+      assert.ok(row.observed_at.getTime() <= row.db_now.getTime(), 'observed_at clamped');
+      assert.ok(Date.parse(row.data.resolvedAt) < Date.parse(future));
+      assert.equal(Date.parse(row.data.resolvedAt), row.resolved_at.getTime(), 'data and column agree');
+
+      assert.deepEqual(await consumerKinds(w, consumer), ['opened', 'resolved', 'opened']);
+      const [, , reopened] = await w.events(consumer);
+      assert.ok(Date.parse(reopened.occurred_at) <= row.db_now.getTime(), 'the recurrence opens no later than now');
+      assert.equal(sdk.compareReportingInstants(reopened.occurred_at, row.data.resolvedAt), 0);
+    });
+
+    test('resolveIssue on an already-ended mark changes nothing and emits no event', async () => {
+      const { w, consumer } = await openedThenMarked('mark-noop');
+      await w.store.resolveIssue('mark-pg-1', new Date(Date.now() + 3_600_000).toISOString());
+      const before = await markRow(w);
+      const eventsBefore = await w.events(consumer);
+      const changedBefore = (
+        await w.pool.query(`SELECT changed_at FROM adcp_reporting_issues WHERE issue_id = 'mark-pg-1'`)
+      ).rows[0].changed_at;
+
+      await sleep(15);
+      await w.store.resolveIssue('mark-pg-1', new Date(Date.now() + 7_200_000).toISOString());
+      const after = await markRow(w);
+      assert.deepEqual(after.data, before.data);
+      assert.equal(after.resolved_at.getTime(), before.resolved_at.getTime());
+      assert.equal(after.observed_at.getTime(), before.observed_at.getTime());
+      assert.equal(
+        (
+          await w.pool.query(`SELECT changed_at FROM adcp_reporting_issues WHERE issue_id = 'mark-pg-1'`)
+        ).rows[0].changed_at.getTime(),
+        changedBefore.getTime(),
+        'the row was not rewritten'
+      );
+      assert.deepEqual(await w.events(consumer), eventsBefore, 'no new outbox rows');
+    });
+
+    for (const [label, variant] of [
+      ['resolvedAt', () => ({ resolvedAt: new Date(Date.now() + 3_600_000).toISOString() })],
+      ['terminal issueState', () => ({ issueState: 'resolved', observedAt: new Date().toISOString() })],
+    ]) {
+      test(`a retried putIssue (${label}) cannot move the end or orphan the recurrence`, async () => {
+        const { w, consumer } = await openedThenMarked(`mark-retry-${label.replace(/\W/g, '')}`);
+        await sleep(15);
+        await w.store.putIssue(markFor(w, variant()));
+        const first = await markRow(w);
+        assert.ok(first.data.resolvedAt);
+        assert.deepEqual(await consumerKinds(w, consumer), ['opened', 'resolved', 'opened']);
+        const eventsFirst = await w.events(consumer);
+        const recurrence = eventsFirst[2];
+        assert.equal(sdk.compareReportingInstants(recurrence.occurred_at, first.data.resolvedAt), 0);
+
+        await sleep(15);
+        await w.store.putIssue(
+          markFor(w, { ...variant(), resolvedAt: new Date(Date.now() + 7_200_000).toISOString() })
+        );
+        const second = await markRow(w);
+        assert.equal(second.data.resolvedAt, first.data.resolvedAt, 'the end stays put');
+        assert.equal(second.resolved_at.getTime(), first.resolved_at.getTime());
+        assert.deepEqual(await w.events(consumer), eventsFirst, 'no extra events; the recurrence is intact');
+        assert.equal(
+          (
+            await w.pool.query('SELECT count(*)::int AS n FROM adcp_reporting_issue_events WHERE issue_id = $1', [
+              recurrence.issue_id,
+            ])
+          ).rows[0].n,
+          1,
+          'the recurrence is not orphaned'
+        );
+      });
+    }
+  });
+
   describe('migration 0012', () => {
     test('is additive: one table plus indexes, and migrate() applies it', async () => {
       const sql = lib.REPORTING_ISSUE_EVENTS_MIGRATION;
