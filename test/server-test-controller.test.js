@@ -1616,7 +1616,15 @@ describe('registerTestController compliance_testing auto-emission', () => {
 
 describe('TOOL_INPUT_SHAPE', () => {
   it('exposes the canonical controller account and operation fields', () => {
-    assert.deepStrictEqual(Object.keys(TOOL_INPUT_SHAPE).sort(), ['account', 'context', 'ext', 'params', 'scenario']);
+    assert.deepStrictEqual(Object.keys(TOOL_INPUT_SHAPE).sort(), [
+      'account',
+      'adcp_major_version',
+      'adcp_version',
+      'context',
+      'ext',
+      'params',
+      'scenario',
+    ]);
   });
 
   it('requires scenario and a sandbox account assertion', () => {
