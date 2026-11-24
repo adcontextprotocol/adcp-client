@@ -380,3 +380,63 @@ describe('rc.3 consumer-status narrative against the live handler', () => {
     assert.match(issue.recommended_action, /^contact_/, 'a retry hint must not survive the boundary');
   });
 });
+
+// adcp-client#3653: the seller's own record can resolve the caller's mismatch.
+describe('seller-side resolution against the live handler (#3653)', () => {
+  let store;
+  let handler;
+
+  beforeEach(() => {
+    store = new NarrativeStore();
+    handler = createReportingStatusHandler(store, { resolveConsumerId: ctx => ctx.consumer });
+  });
+
+  test('a content_mismatch disappears after the seller commits a restatement, and health returns to healthy', async () => {
+    store.statuses.push(
+      statement(
+        'narrative-mismatch-0001',
+        'content_mismatch',
+        { reporting_revision_id: 'rev-1', observed_revision_content_sha256: DIGEST, mismatch_code: 'coverage_short' },
+        EXPECTED_AT
+      )
+    );
+
+    store.ledgerAsOf = '2026-09-02T01:05:00.000Z';
+    const disputed = await read(handler);
+    assert.equal(periodOf(disputed).health, 'action_required');
+    assert.equal(mismatchOf(disputed).reporting_status_id, 'narrative-mismatch-0001');
+
+    // The seller restates; the caller's statement never changes.
+    store.revisions.push(revision('rev-2', 2, '2026-09-02T01:10:00.000Z', 'rev-1'));
+    store.ledgerAsOf = '2026-09-02T01:20:00.000Z';
+    assertUndegraded(await read(handler), 'a restatement resolves the dispute on the superseded revision');
+    assert.ok(['healthy', 'complete'].includes((await read(handler, 'summary')).health), 'summary agrees');
+  });
+
+  test("a restatement leaves another consumer's view of its own statement alone", async () => {
+    store.statuses.push(
+      statement(
+        'narrative-mismatch-0001',
+        'content_mismatch',
+        { reporting_revision_id: 'rev-1', observed_revision_content_sha256: DIGEST, mismatch_code: 'coverage_short' },
+        EXPECTED_AT
+      ),
+      {
+        ...statement(
+          'narrative-received-b-0001',
+          'received',
+          { reporting_revision_id: 'rev-1', observed_revision_content_sha256: DIGEST },
+          EXPECTED_AT
+        ),
+        consumerId: OTHER_CONSUMER,
+      }
+    );
+    store.revisions.push(revision('rev-2', 2, '2026-09-02T01:10:00.000Z', 'rev-1'));
+
+    store.ledgerAsOf = '2026-09-02T01:20:00.000Z';
+    assertUndegraded(await read(handler, 'periods', CONSUMER), 'content_mismatch cleared by the restatement');
+    const other = await read(handler, 'periods', OTHER_CONSUMER);
+    assert.equal(periodOf(other).health, 'delayed', 'a stale received is still in its grace window');
+    assert.equal(mismatchOf(other).reporting_status_id, 'narrative-received-b-0001');
+  });
+});

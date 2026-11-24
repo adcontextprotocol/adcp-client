@@ -223,9 +223,9 @@ describe('memory store records issue events with the write', () => {
     assert.equal(event.eventId, reportingIssueEventIdV1(event.issueId, event.consumerId, 'opened'));
   });
 
-  // Under today's TypeScript projection a real restatement cannot clear a mismatch (adcp-client#3653), so
-  // this seeds an open occurrence for a leaf that does not conflict and pins that commitRevision's settle
-  // branch is wired: it resolves what the projection no longer reports.
+  // Seeds an open occurrence for a leaf that does not conflict (a seller restatement now also settles
+  // a content_mismatch: see 'seller-side resolution' below) and pins that commitRevision's settle branch
+  // resolves what the projection no longer reports.
   test('commitRevision resolves an open occurrence whose leaf no longer conflicts', async () => {
     const w = fixture();
     w.at('2026-09-02T00:30:00.000Z');
@@ -1061,5 +1061,103 @@ describe('createReliableReportingService issueObserver', () => {
     const service = createReliableReportingService(options({ storage: memoryStorage() }));
     const cycle = await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
     assert.equal(cycle.issueEvents, undefined);
+  });
+});
+
+// adcp-client#3653: the seller's record can settle an occurrence, not only the buyer's next statement.
+describe('seller-side resolution of consumer mismatch occurrences', () => {
+  const unreadableMark = (overrides = {}) => ({
+    issueId: 'mark-1',
+    reporting_obligation_id: 'ob-1',
+    reporting_revision_id: 'ob-1-rev-1',
+    code: 'REVISION_UNREADABLE',
+    responsibleParty: 'seller',
+    severity: 'action_required',
+    recommendedAction: 'contact_seller',
+    openedAt: '2026-09-02T02:00:00.000Z',
+    observedAt: '2026-09-02T02:00:00.000Z',
+    ...overrides,
+  });
+
+  test('a restatement resolves a content_mismatch occurrence on the superseded revision', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync(
+      'k1',
+      w.status(sid(1), 'content_mismatch', { reporting_revision_id: 'ob-1-rev-1', mismatch_code: 'coverage_short' })
+    );
+    assert.deepEqual(w.kinds(), ['opened']);
+    const [opened] = w.events();
+
+    w.at('2026-09-02T02:00:00.000Z');
+    await w.commit(2);
+    assert.deepEqual(w.kinds(), ['opened', 'resolved']);
+    const resolved = w.events()[1];
+    assert.equal(resolved.issueId, opened.issueId);
+    assert.equal(resolved.occurredAt, '2026-09-02T02:00:00.000Z');
+    assert.equal(resolved.reportingStatusId, sid(1));
+  });
+
+  test('a content_mismatch on the current revision stays open across an unrelated write', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync(
+      'k1',
+      w.status(sid(1), 'content_mismatch', { reporting_revision_id: 'ob-1-rev-1', mismatch_code: 'coverage_short' })
+    );
+    w.at('2026-09-02T02:00:00.000Z');
+    await w.store.putIssue(unreadableMark({ reporting_revision_id: 'ob-1-rev-1', code: 'REVISION_UNREADABLE' }));
+    assert.deepEqual(w.kinds(), ['opened'], 'an unreadable mark does not answer a content dispute');
+  });
+
+  test('a seller REVISION_UNREADABLE mark resolves an unreadable occurrence; retiring it opens a new occurrence', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync('k1', w.status(sid(1), 'unreadable', { reporting_revision_id: 'ob-1-rev-1' }));
+    assert.deepEqual(w.kinds(), ['opened']);
+    const first = w.events()[0];
+
+    w.at('2026-09-02T02:00:00.000Z');
+    await w.store.putIssue(unreadableMark());
+    assert.deepEqual(w.kinds(), ['opened', 'resolved']);
+    assert.equal(w.events()[1].issueId, first.issueId);
+    assert.equal(w.events()[1].occurredAt, '2026-09-02T02:00:00.000Z');
+
+    w.at('2026-09-02T03:00:00.000Z');
+    await w.store.resolveIssue('mark-1', '2026-09-02T03:00:00.000Z');
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+    const reopened = w.events()[2];
+    assert.notEqual(reopened.issueId, first.issueId, 'a recurrence takes a new issue id');
+    assert.equal(reopened.reportingStatusId, sid(1), 'the same statement');
+    assert.equal(reopened.occurredAt, '2026-09-02T03:00:00.000Z');
+  });
+
+  test('a mark on a different revision does not settle an unreadable occurrence', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync('k1', w.status(sid(1), 'unreadable', { reporting_revision_id: 'ob-1-rev-1' }));
+    w.at('2026-09-02T02:00:00.000Z');
+    await w.store.putIssue(unreadableMark({ reporting_revision_id: 'ob-1-rev-2' }));
+    assert.deepEqual(w.kinds(), ['opened']);
+  });
+
+  test('a mark filed before the statement is recorded leaves it open (no mark yet ended after it)', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T00:45:00.000Z');
+    await w.store.putIssue(unreadableMark({ observedAt: '2026-09-02T00:40:00.000Z' }));
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync('k1', w.status(sid(1), 'unreadable', { reporting_revision_id: 'ob-1-rev-1' }));
+    // The mark is open when the statement lands, so the seller already agrees with it.
+    assert.deepEqual(w.kinds(), []);
   });
 });
