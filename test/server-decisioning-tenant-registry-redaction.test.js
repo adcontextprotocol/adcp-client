@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 
 const { createTenantRegistry, createSelfSignedTenantKey } = require('../dist/lib/server/decisioning/tenant-registry');
 
-const DEFAULT_SERVER_OPTIONS = { capabilities: { specialisms: [] } };
+const DEFAULT_SERVER_OPTIONS = {};
 
 function basePlatform() {
   return {
