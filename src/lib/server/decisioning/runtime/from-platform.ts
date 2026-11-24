@@ -3116,7 +3116,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   }
   // A 1.2 report definition serves AdCP 3.3 callers only, so a server pinned below 3.3 could serve
   // such an offering to no one (core/reporting-report-definition.json package_dimension).
-  const reportingAdcp33OnlyOfferingIds = platform.reporting?.adcp33OnlyOfferingIds ?? [];
+  const reportingAdcp33OnlyOfferingIds = Object.keys(platform.reporting?.adcp33OnlyOfferings ?? {});
   if (reportingAdcp33OnlyOfferingIds.length > 0 && !acceptsReportDefinition12(configuredAdcpVersion)) {
     throw new PlatformConfigError(
       `Reporting offerings ${reportingAdcp33OnlyOfferingIds.map(id => JSON.stringify(id)).join(', ')} serve ` +
@@ -9523,7 +9523,7 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
   // Offerings a caller pinned below AdCP 3.3 was never served (a 1.2 report definition).
   const unservedReportingOfferings = acceptsReportDefinition12(resolveCtx.servedAdcpVersion)
     ? undefined
-    : new Set(platform.reporting?.adcp33OnlyOfferingIds);
+    : new Map(Object.entries(platform.reporting?.adcp33OnlyOfferings ?? {}));
 
   entries.forEach((entry, index) => {
     // Account-model gate first: an entry is refused on its key shape
@@ -9591,6 +9591,7 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
       if (unserved !== undefined) {
         failure = reportingOfferingRequiresAdcp33Error(
           unserved.offering_id,
+          unservedReportingOfferings.get(unserved.offering_id)!,
           typeof unserved.delivery_config_id === 'string' ? unserved.delivery_config_id : undefined
         ).toStructuredError();
       }

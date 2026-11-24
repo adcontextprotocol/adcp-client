@@ -160,12 +160,15 @@ const reporting = createReliableReportingService({
 - refuses to start a server pinned below 3.3 that has a 1.2 offering, which it
   could serve to no one.
 
-The comparison is by `MAJOR.MINOR`, so every 3.3 prerelease is a 3.3 caller,
-and a request with no served release is the SDK's pinned release. An offering
+The comparison is by `MAJOR.MINOR`, so every 3.3 prerelease is a 3.3 caller; a
+request with no served release is the SDK's pinned release, and one the SDK
+cannot parse is treated as older. Keys match case-insensitively. An offering
 the map does not declare is served to everyone as a 1.0 or 1.1 definition (the
 default `undeclaredReportDefinitions: 'assume_pre_1_2'`, which warns once at
 construction with the entry to add), or to 3.3 callers only under
-`'withhold_from_pre_3_3'`. `get_reporting_status` is bound to the server's own
+`'withhold_from_pre_3_3'`, whose refusal says the definition's
+`contract_version` is undeclared. The 3.3-only offerings are published as
+`platform.reporting.adcp33OnlyOfferings`. `get_reporting_status` is bound to the server's own
 pin, so callers pinned below 3.3 never read it on a 3.3 server, and account
 readback keeps a buyer's own configurations visible.
 

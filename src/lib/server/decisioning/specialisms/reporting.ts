@@ -1,6 +1,7 @@
 import type { Account, ResolveContext } from '../account';
 import type { RequestContext } from '../context';
 import type { AdcpToolMap } from '../../create-adcp-server';
+import type { ReportingAdcp33OnlyReasonV1 } from '../../reporting-definition-release';
 import type {
   ListAccountsRequest,
   ListAccountsResponse,
@@ -25,13 +26,14 @@ export interface ReliableReportingPlatform<TCtxMeta = Record<string, unknown>> {
   readonly capabilities: ReportingDeliveryCapabilities;
 
   /**
-   * `capabilities.offerings` ids served to AdCP 3.3 callers only, because their report definition is
-   * at `contract_version` 1.2 (`core/reporting-report-definition.json`
-   * `x-adcp-validation.package_dimension`). The framework drops them from `get_adcp_capabilities` for
-   * callers pinned below 3.3, refuses those callers' `sync_accounts` `reporting_delivery_configs`
-   * naming them, and refuses to start a server pinned below 3.3 that has any.
+   * `capabilities.offerings` served to AdCP 3.3 callers only, by offering id, with the reason: the
+   * report definition is at `contract_version` 1.2 (`core/reporting-report-definition.json`
+   * `x-adcp-validation.package_dimension`), or it is undeclared under `withhold_from_pre_3_3`. The
+   * framework drops them from `get_adcp_capabilities` for callers pinned below 3.3, refuses those
+   * callers' `sync_accounts` `reporting_delivery_configs` naming them, and refuses to start a server
+   * pinned below 3.3 that has any.
    */
-  readonly adcp33OnlyOfferingIds?: readonly string[];
+  readonly adcp33OnlyOfferings?: Readonly<Record<string, ReportingAdcp33OnlyReasonV1>>;
 
   /** Snapshot-stable reads from the authoritative reporting ledger. */
   getReportingStatus(
