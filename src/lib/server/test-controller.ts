@@ -97,7 +97,11 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AdcpServer } from './adcp-server';
 import { ADCP_CAPABILITIES, getSdkServer } from './adcp-server';
-import { parseDeclaredToolInput, validateToolInputAtAdcpLayer } from './declared-input-schema';
+import {
+  parseDeclaredToolInput,
+  serveDeclaredToolAtRelease,
+  validateToolInputAtAdcpLayer,
+} from './declared-input-schema';
 import type { GetAdCPCapabilitiesResponse } from '../types/tools.generated';
 import type {
   ListScenariosSuccess,
@@ -1789,6 +1793,10 @@ export const TOOL_INPUT_SHAPE = {
   params: z.record(z.string(), z.unknown()).optional().describe('Scenario-specific parameters'),
   context: z.record(z.string(), z.unknown()).optional().describe('AdCP context object'),
   ext: z.record(z.string(), z.unknown()).optional().describe('AdCP extension object'),
+  // The request's version envelope. Parsing keeps these so the response is
+  // served at the caller's release (adcp-client#3769).
+  adcp_version: z.string().optional().describe('AdCP release the caller pins; the response is served at it'),
+  adcp_major_version: z.number().int().optional().describe('AdCP major version the caller supports'),
 };
 
 // ────────────────────────────────────────────────────────────
@@ -1849,11 +1857,20 @@ export function registerTestController(
     (async (rawInput: unknown) => {
       const parsed = await parseDeclaredToolInput(mcp, 'comply_test_controller', rawInput);
       if (!parsed.success) return parsed.response;
-      const response = await handleTestControllerRequest(storeOrFactory, parsed.data as Record<string, unknown>, {
-        seedCache,
-        ...(options?.seedScopePrefix !== undefined && { seedScopePrefix: options.seedScopePrefix }),
-      });
-      return toMcpResponse(response);
+      const input = parsed.data as Record<string, unknown>;
+      // On an AdcpServer, answer at the caller's served release (adcp-client#3769).
+      return serveDeclaredToolAtRelease(
+        mcp,
+        'comply_test_controller',
+        { context: input.context, releaseArgs: input },
+        async () =>
+          toMcpResponse(
+            await handleTestControllerRequest(storeOrFactory, input, {
+              seedCache,
+              ...(options?.seedScopePrefix !== undefined && { seedScopePrefix: options.seedScopePrefix }),
+            })
+          )
+      );
     }) as Parameters<typeof mcp.registerTool>[2]
   );
   validateToolInputAtAdcpLayer(mcp, 'comply_test_controller', registered);

@@ -58,10 +58,22 @@ export type DeclaredInputErrorFinalizer = (
   rejection: DeclaredInputRejection
 ) => McpToolResponse;
 
+/**
+ * Runs a declared-input tool at the caller's served release: selects it from
+ * `call.releaseArgs`, refuses an unservable pin before `run`, and converts the
+ * response down to that release with `adcp_version` echoed (DR-0024).
+ */
+export type DeclaredToolReleaseServer = (
+  toolName: string,
+  call: DeclaredInputRejection,
+  run: () => Promise<McpToolResponse>
+) => Promise<McpToolResponse>;
+
 interface DeclaredInputState {
   schemas: Map<string, AnySchema>;
   discoveryInstalled: boolean;
   finalizeError?: DeclaredInputErrorFinalizer;
+  serveAtRelease?: DeclaredToolReleaseServer;
   exposeSchemaPath?: boolean;
 }
 
@@ -88,11 +100,32 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 export function configureDeclaredInputErrors(
   server: McpServer,
-  options: { finalize: DeclaredInputErrorFinalizer; exposeSchemaPath: boolean }
+  options: {
+    finalize: DeclaredInputErrorFinalizer;
+    serveAtRelease?: DeclaredToolReleaseServer;
+    exposeSchemaPath: boolean;
+  }
 ): void {
   const state = stateFor(server);
   state.finalizeError = options.finalize;
+  state.serveAtRelease = options.serveAtRelease;
   state.exposeSchemaPath = options.exposeSchemaPath;
+}
+
+/**
+ * Run a tool registered after `createAdcpServer` returned (the
+ * `comply_test_controller` helpers) at the caller's served release, as the
+ * spec-tool dispatcher does (adcp-client#3769). On a server without release
+ * configuration, such as a raw SDK `McpServer`, `run` answers unchanged.
+ */
+export function serveDeclaredToolAtRelease(
+  server: McpServer,
+  name: string,
+  call: DeclaredInputRejection,
+  run: () => Promise<McpToolResponse>
+): Promise<McpToolResponse> {
+  const serve = states.get(server)?.serveAtRelease;
+  return serve === undefined ? run() : serve(name, call, run);
 }
 
 /**
