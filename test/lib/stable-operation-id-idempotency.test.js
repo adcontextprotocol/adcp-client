@@ -414,3 +414,45 @@ test('a child dispatch does not re-point a caller-supplied parent operationId on
   assert.match(error.message, /explicit-parent-operation/);
   assert.doesNotMatch(error.message, /idem-/);
 });
+
+test('a throwing webhook tools predicate does not leak the execution fence', async t => {
+  const { ProtocolClient, TaskExecutor } = require('../../dist/lib/index.js');
+  const originalCallTool = ProtocolClient.callTool;
+  t.after(() => {
+    ProtocolClient.callTool = originalCallTool;
+  });
+
+  const agent = { id: 'predicate-agent', name: 'Predicate', agent_uri: 'https://agent.example/mcp/', protocol: 'mcp' };
+  const key = 'predicate-key-0000-0010';
+  let sellerCalls = 0;
+  ProtocolClient.callTool = async () => {
+    sellerCalls++;
+    return { status: 'completed', accounts: [] };
+  };
+
+  let fail = true;
+  const executor = new TaskExecutor({
+    agentId: agent.id,
+    webhookUrlTemplate: {
+      template: 'https://buyer.example/{operation_id}',
+      tools: () => {
+        if (fail) throw new Error('transient webhook-policy error');
+        return true;
+      },
+    },
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const run = options =>
+    executor.executeTask(agent, 'sync_accounts', { idempotency_key: key, accounts: [] }, undefined, options);
+
+  const controller = new AbortController();
+  await assert.rejects(run({ signal: controller.signal }), /transient webhook-policy error/);
+  assert.equal(sellerCalls, 0);
+
+  controller.abort();
+  fail = false;
+  const retry = await run({ timeout: 2000 });
+  assert.equal(retry.success, true, retry.error);
+  assert.equal(sellerCalls, 1);
+  assert.equal(retry.metadata.taskId, idempotentOperationId(agent.id, 'sync_accounts', key));
+});
