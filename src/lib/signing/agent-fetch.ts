@@ -99,10 +99,13 @@ export function extractAdcpOperation(body: unknown): string | undefined {
 }
 
 /**
- * Detect webhook receiver credentials in the outbound JSON-RPC payload. The
- * verifier rejects unsigned requests carrying these credentials regardless of
- * the seller's operation-level capability advertisement, so the client must
- * sign them even while the capability cache is cold or silent for that op.
+ * Detect webhook receiver credentials in the outbound JSON-RPC payload. A
+ * signing-capable verifier rejects unsigned requests carrying these
+ * credentials regardless of its operation-level `required_for` (3.x condition
+ * (b), removed in 4.0), so the client signs them even while the capability
+ * cache is cold or silent for that op. It does not sign them for a seller
+ * whose fetched capabilities advertise no request signing: that seller cannot
+ * verify the signature, and the rule binds only signing-capable sellers.
  * The scan is bounded; if the body exceeds the inspection budget, sign it.
  */
 function carriesWebhookAuthentication(body: unknown): boolean {
@@ -279,12 +282,17 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
   const upstream: FetchLike = explicitUpstream ?? ((input, init) => defaultUpstream()(input, init));
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
-    const capability = getCapability()?.requestSigning;
+    const entry = getCapability();
+    const capability = entry?.requestSigning;
     // Credentials and oversized payloads must not bypass strict policy selection.
     const policyMethods = hasProtocolSigningPolicy(capability, signing)
       ? jsonRpcMethodsForSigning(init?.body)
       : undefined;
-    if (carriesWebhookAuthentication(init?.body)) {
+    // Fetched capabilities without request signing: the seller can't verify a
+    // signature, so webhook credentials alone don't trigger one (adcp#9204).
+    // A cold cache or failed discovery is unknown, and still signs.
+    const sellerCannotVerify = entry !== undefined && !entry.discoveryFailed && capability?.supported !== true;
+    if (!sellerCannotVerify && carriesWebhookAuthentication(init?.body)) {
       if (signing.profile === 'web-bot-auth' && !signingListIncludes(capability?.profiles, 'web-bot-auth'))
         throw new TypeError('Seller did not advertise the Web Bot Auth request signing profile');
       return true;

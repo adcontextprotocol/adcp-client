@@ -98,6 +98,7 @@ export async function ensureCapabilityLoaded(
         adcpVersion: undefined,
         fetchedAt: now,
         staleAt: now + NEGATIVE_CACHE_TTL_SECONDS,
+        discoveryFailed: true,
       };
       cache.set(key, entry);
       return entry;

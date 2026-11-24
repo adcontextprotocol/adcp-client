@@ -16,6 +16,12 @@ export interface CachedCapability {
    * for the full 5-minute TTL.
    */
   staleAt?: number;
+  /**
+   * True on a negative entry written after discovery failed. Such an entry
+   * says nothing about the seller's advertisement, so callers that must tell
+   * "the seller does not advertise X" from "we don't know" check this.
+   */
+  discoveryFailed?: true;
 }
 
 export interface CapabilityCacheOptions {
