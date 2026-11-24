@@ -4078,7 +4078,17 @@ ${managedDueArm}       )
    */
   private async settleUnreadableMarkOn(client: ReportingLedgerTransactionV1, issue: ReportingLedgerIssueV1) {
     if (issue.code !== 'REVISION_UNREADABLE' || !(await this.issueEventsOn(client))) return;
-    await settleIssueObligationOn(client, issue.reporting_obligation_id, await databaseInstantOn(client));
+    // Settle no earlier than the mark's end, or a mark ending ahead of the
+    // database clock would never reopen the mismatch.
+    const now = await databaseInstantOn(client);
+    const end =
+      issue.resolvedAt ??
+      (issue.issueState === 'resolved' || issue.issueState === 'waived' ? issue.observedAt : undefined);
+    await settleIssueObligationOn(
+      client,
+      issue.reporting_obligation_id,
+      end !== undefined && compareReportingInstants(end, now) > 0 ? end : now
+    );
   }
 
   async listIssues(obligationId: string): Promise<ReportingLedgerIssueV1[]> {
@@ -4765,7 +4775,8 @@ ${managedDueArm}       )
                   obligationRevisions,
                   sellerHealth,
                   ledgerAsOf,
-                  this.consumerMismatchEscalation
+                  this.consumerMismatchEscalation,
+                  issues
                 );
                 const baseProjection = { ...coreProjection, health: sellerHealth };
                 const managed = projectManagedDelivery({

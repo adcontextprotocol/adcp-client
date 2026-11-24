@@ -357,7 +357,15 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
   /** A seller `REVISION_UNREADABLE` mark agrees with an `unreadable` statement, so it settles occurrences. */
   private setIssue(value: Row): void {
     this.issues.set(value.issueId, clone(value));
-    if (value.code === 'REVISION_UNREADABLE') this.settleIssueObligation(value.reporting_obligation_id, this.instant());
+    if (value.code !== 'REVISION_UNREADABLE') return;
+    // Settle no earlier than the mark's end, or a mark ending ahead of this
+    // store's clock would never reopen the mismatch.
+    const now = this.instant();
+    const end = value.resolvedAt ?? (['resolved', 'waived'].includes(value.issueState) ? value.observedAt : undefined);
+    this.settleIssueObligation(
+      value.reporting_obligation_id,
+      end !== undefined && compareReportingInstants(end, now) > 0 ? end : now
+    );
   }
 
   private issuesOn(obligationId: string): Row[] {

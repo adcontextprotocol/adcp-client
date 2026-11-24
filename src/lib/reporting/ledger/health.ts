@@ -515,17 +515,30 @@ function reportingConsumerStatementConflictV1(
         ) {
           continue;
         }
-        const endedAt =
-          mark.resolvedAt ??
-          (mark.issueState === 'resolved' || mark.issueState === 'waived' ? mark.observedAt : undefined);
+        const endedAt = unreadableMarkEnd(mark);
         if (endedAt === undefined || compareReportingInstants(endedAt, at) > 0) return undefined;
-        if (compareReportingInstants(endedAt, status.recorded_at) <= 0) continue;
+        // A mark ending as the statement was recorded still reopens it: two
+        // writes can share an instant.
+        if (compareReportingInstants(endedAt, status.recorded_at) < 0) continue;
         const order = ended ? compareReportingInstants(endedAt, ended.endedAt) : 1;
         if (order > 0 || (order === 0 && mark.issueId > ended!.issueId)) ended = { issueId: mark.issueId, endedAt };
       }
       return ended ? { unreadableMarkEnded: ended } : {};
     }
   }
+}
+
+/**
+ * When a seller `REVISION_UNREADABLE` mark ended, or `undefined` while it is
+ * open. A mark ends through a terminal `issueState` (dated by `observedAt`) or
+ * through `resolvedAt`. The earlier one wins, so recording the second later
+ * cannot move an end an occurrence was already derived from.
+ */
+function unreadableMarkEnd(mark: ReportingLedgerIssueV1): string | undefined {
+  const byState = mark.issueState === 'resolved' || mark.issueState === 'waived' ? mark.observedAt : undefined;
+  if (mark.resolvedAt === undefined) return byState;
+  if (byState === undefined) return mark.resolvedAt;
+  return compareReportingInstants(byState, mark.resolvedAt) <= 0 ? byState : mark.resolvedAt;
 }
 
 /**
