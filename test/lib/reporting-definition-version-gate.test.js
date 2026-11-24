@@ -146,6 +146,10 @@ function twoOfferings(overrides = {}) {
 
 const account = { id: 'account-a', ctx_metadata: {} };
 
+const MESSAGE_12 = `Reporting offering ${JSON.stringify(ID_12)} serves AdCP 3.3 callers only: its report definition is at contract_version 1.2. Choose an offering from get_adcp_capabilities.`;
+const messageUndeclared = id =>
+  `Reporting offering ${JSON.stringify(id)} serves AdCP 3.3 callers only: its report definition's contract_version is undeclared. Choose an offering from get_adcp_capabilities.`;
+
 /** Captures console.warn lines tagged [adcp/reporting] while `fn` runs. */
 function captureWarnings(fn) {
   const original = console.warn;
@@ -160,14 +164,33 @@ function captureWarnings(fn) {
 }
 
 describe('reportDefinitionVersions option validation', () => {
-  test('rejects a key that is not 64 lowercase hex', () => {
-    for (const key of ['abc', 'A'.repeat(64), SHA_11.toUpperCase(), `${SHA_11}0`, 'g'.repeat(64)]) {
+  test('rejects a key that is not 64 hex characters', () => {
+    for (const key of ['abc', `${SHA_11}0`, 'g'.repeat(64)]) {
       assert.throws(
         () => serviceFixture({ reportDefinitionVersions: { [key]: '1.1' } }),
-        error => error instanceof TypeError && /lowercase-hex/.test(error.message),
+        error => error instanceof TypeError && /hex report_definition_sha256/.test(error.message),
         `key ${key}`
       );
     }
+  });
+
+  test('matches keys case-insensitively', () => {
+    const { service } = serviceFixture({
+      adapters: { fixture: adapter({ offeringId: ID_12, sha: SHA_12 }) },
+      reportDefinitionVersions: { [SHA_12.toUpperCase()]: '1.2' },
+    });
+    assert.deepEqual(service.platform.adcp33OnlyOfferings, { [ID_12]: '1.2' });
+  });
+
+  test('refuses one sha declared in two cases with different versions, and accepts the same version', () => {
+    assert.throws(
+      () => serviceFixture({ reportDefinitionVersions: { [SHA_11]: '1.1', [SHA_11.toUpperCase()]: '1.2' } }),
+      error => error instanceof TypeError && /twice with different versions/.test(error.message)
+    );
+    const { service } = serviceFixture({
+      reportDefinitionVersions: { [SHA_11]: '1.1', [SHA_11.toUpperCase()]: '1.1' },
+    });
+    assert.equal('adcp33OnlyOfferings' in service.platform, false);
   });
 
   test('rejects a version outside 1.0, 1.1, 1.2', () => {
@@ -206,27 +229,28 @@ describe('reportDefinitionVersions option validation', () => {
 
   test('accepts a map covering every version', () => {
     const { service } = serviceFixture({ reportDefinitionVersions: { [SHA_11]: '1.0' } });
-    assert.equal(service.platform.adcp33OnlyOfferingIds, undefined);
+    assert.equal(service.platform.adcp33OnlyOfferings, undefined);
   });
 });
 
-describe('platform.adcp33OnlyOfferingIds', () => {
-  test('lists only the offerings declared 1.2', () => {
+describe('platform.adcp33OnlyOfferings', () => {
+  test('maps only the offerings declared 1.2, in a frozen record', () => {
     const { service } = twoOfferings();
-    assert.deepEqual(service.platform.adcp33OnlyOfferingIds, [ID_12]);
+    assert.deepEqual(service.platform.adcp33OnlyOfferings, { [ID_12]: '1.2' });
+    assert.ok(Object.isFrozen(service.platform.adcp33OnlyOfferings));
   });
 
   test('is absent when every offering is declared 1.0 or 1.1', () => {
     const { service } = serviceFixture({ reportDefinitionVersions: { [SHA_11]: '1.1' } });
-    assert.equal('adcp33OnlyOfferingIds' in service.platform, false);
+    assert.equal('adcp33OnlyOfferings' in service.platform, false);
   });
 
   test('is absent for an undeclared offering under the default', () => {
     const { service } = serviceFixture({ adapters: { fixture: adapter({ offeringId: 'undeclared-default-absent' }) } });
-    assert.equal('adcp33OnlyOfferingIds' in service.platform, false);
+    assert.equal('adcp33OnlyOfferings' in service.platform, false);
   });
 
-  test('withhold_from_pre_3_3 adds the undeclared offerings to the declared 1.2 ones', () => {
+  test('withhold_from_pre_3_3 adds the undeclared offerings, marked undeclared, to the declared 1.2 ones', () => {
     const { service } = twoOfferings({
       adapters: {
         v11: adapter(),
@@ -235,7 +259,7 @@ describe('platform.adcp33OnlyOfferingIds', () => {
       },
       undeclaredReportDefinitions: 'withhold_from_pre_3_3',
     });
-    assert.deepEqual([...service.platform.adcp33OnlyOfferingIds].sort(), [ID_12, 'undeclared-offering'].sort());
+    assert.deepEqual(service.platform.adcp33OnlyOfferings, { [ID_12]: '1.2', 'undeclared-offering': 'undeclared' });
   });
 
   test('withhold_from_pre_3_3 does not withhold a declared 1.1 offering', () => {
@@ -243,7 +267,7 @@ describe('platform.adcp33OnlyOfferingIds', () => {
       reportDefinitionVersions: { [SHA_11]: '1.1' },
       undeclaredReportDefinitions: 'withhold_from_pre_3_3',
     });
-    assert.equal('adcp33OnlyOfferingIds' in service.platform, false);
+    assert.equal('adcp33OnlyOfferings' in service.platform, false);
   });
 });
 
@@ -294,7 +318,7 @@ describe('installConfiguration servedAdcpVersion gate', () => {
     });
   }
 
-  for (const served of ['3.2', '3.2.10']) {
+  for (const served of ['3.2', '3.2.10', 'not-a-version']) {
     test(`refuses a 1.2 offering for a caller served ${served}`, async () => {
       await assert.rejects(
         () => install(served, ID_12),
@@ -303,6 +327,7 @@ describe('installConfiguration servedAdcpVersion gate', () => {
           assert.equal(error.code, 'UNSUPPORTED_FEATURE');
           assert.equal(error.recovery, 'correctable');
           assert.equal(error.field, 'reporting_delivery_configs');
+          assert.equal(error.message, MESSAGE_12);
           assert.deepEqual(error.details, { offering_id: ID_12, delivery_config_id: 'delivery-config' });
           return true;
         }
@@ -310,7 +335,21 @@ describe('installConfiguration servedAdcpVersion gate', () => {
     });
   }
 
-  for (const served of ['3.3', '3.3.0-rc.3', '3.3.0-beta.1', undefined, 'not-a-version']) {
+  test('refuses an undeclared offering under withhold_from_pre_3_3 with the undeclared message', async () => {
+    const { service } = serviceFixture({ undeclaredReportDefinitions: 'withhold_from_pre_3_3' });
+    await assert.rejects(
+      () => service.installConfiguration(configuration(ID_11), { account, servedAdcpVersion: '3.2' }),
+      error => {
+        assert.ok(error instanceof AdcpError);
+        assert.equal(error.code, 'UNSUPPORTED_FEATURE');
+        assert.equal(error.message, messageUndeclared(ID_11));
+        assert.deepEqual(error.details, { offering_id: ID_11, delivery_config_id: 'delivery-config' });
+        return true;
+      }
+    );
+  });
+
+  for (const served of ['3.3', '3.3.0-rc.3', '3.3.0-beta.1', undefined]) {
     test(`does not refuse a 1.2 offering for a caller served ${String(served)}`, async () => {
       // A refusal would be the AdcpError; anything later in installation is out of scope here.
       await install(served, ID_12).catch(error => {
@@ -457,12 +496,20 @@ describe('sync_accounts reporting_delivery_configs', () => {
     delivery_config_version: 1,
   });
 
-  async function sync(adcpVersion, accounts) {
-    const { service } = twoOfferings();
-    const received = [];
+  /**
+   * A roster-replacing `upsert` spy: it stores exactly the entries it is asked to apply, as a
+   * delete_missing sync does, so an entry dropped from the call would be deleted.
+   */
+  function rosterFixture(service = twoOfferings().service) {
+    const calls = [];
+    const roster = new Map();
     const platform = platformFor(service, {
-      upsert: async (refs, _ctx) => {
-        received.push(...refs);
+      upsert: async refs => {
+        calls.push(refs.map(ref => ref.operator ?? ref.account?.account_id));
+        roster.clear();
+        refs.forEach((ref, i) => {
+          roster.set(ref.operator, ref);
+        });
         return refs.map((ref, i) => ({
           account_id: `acct-${i}`,
           brand: ref.brand,
@@ -475,62 +522,91 @@ describe('sync_accounts reporting_delivery_configs', () => {
     });
     platform.capabilities.supportedBillings = ['operator'];
     const server = serverFor(platform, { validation: { requests: 'off', responses: 'off' } });
-    const result = await server.dispatchTestRequest({
-      method: 'tools/call',
-      params: {
-        name: 'sync_accounts',
-        arguments: {
-          accounts,
-          idempotency_key: 'definition-gate-0001',
-          ...(adcpVersion ? { adcp_version: adcpVersion } : {}),
+    let key = 0;
+    const sync = (adcpVersion, accounts, extra = {}) =>
+      server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'sync_accounts',
+          arguments: {
+            accounts,
+            idempotency_key: `definition-gate-${String(++key).padStart(4, '0')}`,
+            ...(adcpVersion ? { adcp_version: adcpVersion } : {}),
+            ...extra,
+          },
         },
-      },
-    });
-    return { result, received, rows: result.structuredContent?.accounts };
+      });
+    return { sync, calls, roster };
   }
 
-  test('a 3.2 caller: the 1.2 row fails per entry and only the other reaches upsert', async () => {
-    const { received, rows, result } = await sync('3.2', [
+  function assertRefused(result, { offeringId = ID_12, deliveryConfigId, message = MESSAGE_12 }) {
+    assert.equal(result.isError, true, JSON.stringify(result.structuredContent));
+    const error = result.structuredContent.adcp_error;
+    assert.equal(error.code, 'UNSUPPORTED_FEATURE');
+    assert.equal(error.recovery, 'correctable');
+    assert.equal(error.field, 'reporting_delivery_configs');
+    assert.equal(error.message, message);
+    assert.deepEqual(error.details, { offering_id: offeringId, delivery_config_id: deliveryConfigId });
+  }
+
+  test('a 3.2 caller: naming a 1.2 offering fails the whole request, upsert never runs', async () => {
+    const { sync, calls } = rosterFixture();
+    const result = await sync('3.2', [
+      accountEntry('first', [config(ID_11, 'cfg-11')]),
+      accountEntry('second', [config(ID_12, 'cfg-12-a'), config(ID_12, 'cfg-12-b')]),
+      accountEntry('third', [config(ID_12, 'cfg-12-c')]),
+    ]);
+    assertRefused(result, { deliveryConfigId: 'cfg-12-a' });
+    assert.deepEqual(calls, [], 'accounts.upsert must not run, even for the valid entry');
+  });
+
+  test('a 3.2 caller: an undeclared offering under withhold_from_pre_3_3 fails with the undeclared message', async () => {
+    const { service } = serviceFixture({ undeclaredReportDefinitions: 'withhold_from_pre_3_3' });
+    const { sync, calls } = rosterFixture(service);
+    const result = await sync('3.2', [accountEntry('first', [config(ID_11, 'cfg-11')]), accountEntry('second')]);
+    assertRefused(result, { offeringId: ID_11, deliveryConfigId: 'cfg-11', message: messageUndeclared(ID_11) });
+    assert.deepEqual(calls, []);
+  });
+
+  test('a 3.2 caller: entries naming only 1.1 offerings or none pass through', async () => {
+    const { sync, calls } = rosterFixture();
+    const result = await sync('3.2', [accountEntry('first', [config(ID_11, 'cfg-11')]), accountEntry('second')]);
+    assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepEqual(calls, [['first.example', 'second.example']]);
+  });
+
+  test('a 3.3 caller passes every entry to upsert', async () => {
+    const { sync, calls } = rosterFixture();
+    const result = await sync(CALLER_3_3, [
       accountEntry('first', [config(ID_12, 'cfg-12')]),
       accountEntry('second', [config(ID_11, 'cfg-11')]),
     ]);
     assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
-    assert.equal(rows[0].action, 'failed');
-    const [error] = rows[0].errors;
-    assert.equal(error.code, 'UNSUPPORTED_FEATURE');
-    assert.equal(error.recovery, 'correctable');
-    assert.equal(error.field, 'reporting_delivery_configs');
-    assert.deepEqual(error.details, { offering_id: ID_12, delivery_config_id: 'cfg-12' });
-    assert.notEqual(rows[1].action, 'failed');
-    assert.equal(received.length, 1);
-    assert.equal(received[0].operator, 'second.example');
+    assert.deepEqual(calls, [['first.example', 'second.example']]);
   });
 
-  test('a 3.2 caller: an entry with no configs is applied', async () => {
-    const { received, rows } = await sync('3.2', [
-      accountEntry('first', [config(ID_12, 'cfg-12')]),
+  test('delete_missing: a refused request leaves every seeded account in place', async () => {
+    const { sync, calls, roster } = rosterFixture();
+    const seeded = await sync(CALLER_3_3, [accountEntry('a'), accountEntry('b')]);
+    assert.notEqual(seeded.isError, true, JSON.stringify(seeded.structuredContent));
+    assert.deepEqual([...roster.keys()], ['a.example', 'b.example']);
+    const refused = await sync(
+      '3.2',
+      [accountEntry('a', [config(ID_12, 'cfg-12')]), accountEntry('b', [config(ID_11, 'cfg-11')])],
+      { delete_missing: true }
+    );
+    assertRefused(refused, { deliveryConfigId: 'cfg-12' });
+    assert.equal(calls.length, 1, 'only the seeding call reached upsert');
+    assert.deepEqual([...roster.keys()], ['a.example', 'b.example'], 'A was not dropped from the roster');
+  });
+
+  test('a settings update keyed only by account_id also fails the whole request', async () => {
+    const { sync, calls } = rosterFixture();
+    const result = await sync('3.2', [
+      { account: { account_id: 'A' }, reporting_delivery_configs: [config(ID_12, 'cfg-12')] },
       accountEntry('second'),
     ]);
-    assert.equal(rows[0].action, 'failed');
-    assert.notEqual(rows[1].action, 'failed');
-    assert.deepEqual(
-      received.map(entry => entry.operator),
-      ['second.example']
-    );
-  });
-
-  test('a 3.3 caller passes both entries to upsert', async () => {
-    const { received, rows } = await sync(CALLER_3_3, [
-      accountEntry('first', [config(ID_12, 'cfg-12')]),
-      accountEntry('second', [config(ID_11, 'cfg-11')]),
-    ]);
-    assert.ok(
-      rows.every(row => row.action !== 'failed'),
-      JSON.stringify(rows)
-    );
-    assert.deepEqual(
-      received.map(entry => entry.operator),
-      ['first.example', 'second.example']
-    );
+    assertRefused(result, { deliveryConfigId: 'cfg-12' });
+    assert.deepEqual(calls, []);
   });
 });
