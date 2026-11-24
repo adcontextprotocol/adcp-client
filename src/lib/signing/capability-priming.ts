@@ -26,9 +26,11 @@ type FetchRaw = (args: Record<string, unknown>) => Promise<unknown>;
 function extractCapability(response: unknown): {
   requestSigning: VerifierCapability | undefined;
   adcpVersion: number | undefined;
+  advertised: boolean;
 } {
   const payload = unwrapProtocolResponse(response);
-  if (!payload || typeof payload !== 'object') return { requestSigning: undefined, adcpVersion: undefined };
+  if (!payload || typeof payload !== 'object')
+    return { requestSigning: undefined, adcpVersion: undefined, advertised: false };
 
   const body = payload as Record<string, unknown>;
   const requestSigning = body.request_signing as VerifierCapability | undefined;
@@ -37,7 +39,15 @@ function extractCapability(response: unknown): {
   const adcpVersion =
     versions && versions.length > 0 && typeof versions[0] === 'number' ? (versions[0] as number) : undefined;
 
-  return { requestSigning, adcpVersion };
+  // `adcp` is required on every capabilities document. Without it this is an
+  // error payload or an envelope we couldn't unwrap, not an advertisement, so
+  // it can't establish that the seller lacks request signing.
+  const advertised = !!adcp && typeof adcp === 'object';
+  return { requestSigning, adcpVersion, advertised };
+}
+
+function isMcpToolError(response: unknown): boolean {
+  return !!response && typeof response === 'object' && (response as { isError?: unknown }).isError === true;
 }
 
 /**
@@ -77,13 +87,29 @@ export async function ensureCapabilityLoaded(
   const pending = cache._getInFlight(key);
   if (pending) return pending;
 
+  const writeNegativeEntry = (): CachedCapability => {
+    const now = Math.floor(Date.now() / 1000);
+    const entry: CachedCapability = {
+      requestSigning: undefined,
+      adcpVersion: undefined,
+      fetchedAt: now,
+      staleAt: now + NEGATIVE_CACHE_TTL_SECONDS,
+      discoveryFailed: true,
+    };
+    cache.set(key, entry);
+    return entry;
+  };
+
   const promise = fetchRaw({})
     .then(raw => {
-      const { requestSigning, adcpVersion } = extractCapability(raw);
+      // An MCP tool error resolves rather than rejects; it is a failed discovery.
+      if (isMcpToolError(raw)) return writeNegativeEntry();
+      const { requestSigning, adcpVersion, advertised } = extractCapability(raw);
       const entry: CachedCapability = {
         requestSigning,
         adcpVersion,
         fetchedAt: Math.floor(Date.now() / 1000),
+        ...(advertised ? {} : { discoveryFailed: true as const }),
       };
       cache.set(key, entry);
       return entry;
@@ -92,15 +118,7 @@ export async function ensureCapabilityLoaded(
       if (isAbortOrTimeoutError(error)) {
         throw error;
       }
-      const now = Math.floor(Date.now() / 1000);
-      const entry: CachedCapability = {
-        requestSigning: undefined,
-        adcpVersion: undefined,
-        fetchedAt: now,
-        staleAt: now + NEGATIVE_CACHE_TTL_SECONDS,
-      };
-      cache.set(key, entry);
-      return entry;
+      return writeNegativeEntry();
     })
     .finally(() => {
       cache._deleteInFlight(key);

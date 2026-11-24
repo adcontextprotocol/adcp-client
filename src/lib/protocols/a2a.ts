@@ -266,6 +266,7 @@ export async function cancelA2ATask(
     requestFetch = buildAgentSigningFetch({
       upstream: requestFetch,
       getCapability: signingContext.getCapability,
+      isCapabilityStale: signingContext.isCapabilityStale,
       adcpVersion: signingContext.adcpVersion,
       signing: {
         ...signingContext.signing,
@@ -623,6 +624,7 @@ function buildFetchImpl(authToken: string | undefined, agentUrl: string) {
     upstream: (input, init) => baseFetch(input as any, init),
     signing: signingContext.signing,
     getCapability: signingContext.getCapability,
+    isCapabilityStale: signingContext.isCapabilityStale,
     adcpVersion: signingContext.adcpVersion,
   });
   return wrapFetchWithCapture(signingFetch as typeof fetch);

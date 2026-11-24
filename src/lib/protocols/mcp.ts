@@ -882,6 +882,7 @@ async function connectMCPWithFallbackImpl(
         upstream: wrapFetchWithSignedRequestRejection(diagnosticFetch, url.toString()),
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
+        isCapabilityStale: signingContext.isCapabilityStale,
         adcpVersion: signingContext.adcpVersion,
       }) as typeof fetch)
     : diagnosticFetch;
@@ -1371,6 +1372,7 @@ export async function connectMCP(options: {
         upstream: wrapFetchWithSignedRequestRejection(diagnosticFetch, agentUrl),
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
+        isCapabilityStale: signingContext.isCapabilityStale,
         adcpVersion: signingContext.adcpVersion,
       }) as typeof fetch)
     : diagnosticFetch;

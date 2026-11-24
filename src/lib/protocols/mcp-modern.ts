@@ -411,6 +411,7 @@ async function createNegotiatedClient(
         upstream: wrapFetchWithSignedRequestRejection(diagnosticFetch, options.agentUrl),
         signing: options.signingContext.signing,
         getCapability: options.signingContext.getCapability,
+        isCapabilityStale: options.signingContext.isCapabilityStale,
         adcpVersion: options.signingContext.adcpVersion,
       }) as typeof fetch)
     : diagnosticFetch;
