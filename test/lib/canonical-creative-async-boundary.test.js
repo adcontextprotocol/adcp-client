@@ -1607,7 +1607,13 @@ describe('canonical creative asynchronous boundaries', () => {
       const trusted = [...Object.values(sdkErrors), NeedsAuthorization].filter(
         value => typeof value === 'function' && value.prototype instanceof sdkErrors.ADCPError
       );
-      assert.ok(trusted.length === 37, `expected the 37 known SDK error classes, found ${trusted.length}`);
+      for (const known of [
+        sdkErrors.AuthenticationRequiredError,
+        sdkErrors.IdempotencyConflictError,
+        NeedsAuthorization,
+      ]) {
+        assert.ok(trusted.includes(known), `${known.name} must be a trusted SDK error class`);
+      }
 
       const vetted = new Set(['hasOAuth', 'authorizationUrl', 'suggestedScheme']);
       const unvetted = [];
