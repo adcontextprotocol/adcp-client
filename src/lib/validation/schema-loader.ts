@@ -27,6 +27,7 @@ import { ConfigurationError } from '../errors';
 import { bindEnvelopeSchemaLoader } from '../utils/envelope-status-compat';
 import {
   clearBundledSchemaStoreCache,
+  expandBundledSchemaDocument,
   hasBundledSchemaStore,
   listBundledSchemaFiles,
   loadBundledSchemaFile,
@@ -388,7 +389,8 @@ interface LoaderState {
   canonicalValidators: Map<string, ValidateFunction>;
   fileIndex: Map<string, string>;
   validators: Map<string, ValidateFunction>;
-  rawSchemas: Map<string, Record<string, unknown>>;
+  /** The root's parsed documents, shared with its schema-ref validators (see {@link documentStore}). */
+  documents: DocumentStore;
   entityPaths: Map<string, SchemaEntityPath[]>;
   schemaIdFiles?: Map<string, string>;
   root: string;
@@ -503,6 +505,9 @@ function clearStatesForBundle(bundleKey: string): void {
   }
   for (const cacheKey of schemaRefValidators.keys()) {
     if (cacheKey.startsWith(`${bundleKey}\0`)) schemaRefValidators.delete(cacheKey);
+  }
+  for (const [root, entry] of documentStores) {
+    if (entry.bundleKeys.has(bundleKey)) documentStores.delete(root);
   }
 }
 
@@ -1005,6 +1010,112 @@ function loadJson(file: string): LoadedSchema {
   return openExtensibleReportingDimensions(JSON.parse(readFileSync(file, 'utf-8')) as LoadedSchema);
 }
 
+/** One document of a {@link DocumentStore}: what {@link loadJson} returns or throws, read once. */
+interface StoredDocument {
+  /** The parsed document, deep-frozen; absent when reading or parsing threw. */
+  schema?: LoadedSchema;
+  /** What reading or parsing threw. */
+  error?: unknown;
+  /**
+   * The document's content for {@link rootContentDigest}: a hash of the text
+   * read, of an archive entry, or the read error's code. Only recorded while
+   * ADCP_VALIDATOR_CACHE_DIR is enabled, the only time a digest is taken.
+   */
+  content?: string;
+}
+
+type DocumentStore = Map<string, StoredDocument>;
+
+/**
+ * Parsed documents per schema root. Every reader of a root in the same epoch
+ * (core registration, the tool and canonical validators, schema-ref
+ * validators, the content digest and the document getters) shares one read
+ * and one parse of each file, instead of each reading the whole root again,
+ * whichever bundle key (`3.3.0-rc.3`, `3.3-rc.3`, ...) selected the root.
+ * Cleared when the loader states of any bundle key that used the root are,
+ * so a new epoch reads the files again; a state keeps the store it started
+ * with, which holds the documents its validators compiled.
+ *
+ * Documents are deep-frozen: one caller's mutation cannot reach another, and
+ * an attempt throws in strict-mode code. Callers that need a modified schema
+ * copy it first, as the envelope widening, nested-$id strip, compaction and
+ * draft overlays already do.
+ */
+const documentStores: Map<string, { store: DocumentStore; bundleKeys: Set<string> }> = new Map();
+
+function documentStore(bundleKey: string, root: string): DocumentStore {
+  let entry = documentStores.get(root);
+  if (!entry) {
+    entry = { store: new Map(), bundleKeys: new Set() };
+    documentStores.set(root, entry);
+  }
+  entry.bundleKeys.add(bundleKey);
+  return entry.store;
+}
+
+/** {@link loadJson} through `store`: the file is read and parsed at most once per store. */
+function readStoredDocument(store: DocumentStore, file: string): LoadedSchema {
+  let entry = store.get(file);
+  if (!entry) {
+    entry = loadStoredDocument(file);
+    store.set(file, entry);
+  }
+  if ('error' in entry) throw entry.error;
+  return entry.schema!;
+}
+
+function loadStoredDocument(file: string): StoredDocument {
+  const recordContent = validatorCacheDir() !== undefined;
+  const bundled = file.includes(`${path.sep}bundled${path.sep}`);
+  let text: string;
+  try {
+    // The utf-8 read is one native call; a Buffer read costs several.
+    text = readFileSync(file, 'utf-8');
+  } catch (readError) {
+    // Bundled paths not on disk are entries of the root's compact archive.
+    let entry: LoadedSchema | undefined;
+    if (bundled) {
+      try {
+        entry = loadBundledSchemaFile(file);
+      } catch {
+        entry = undefined;
+      }
+    }
+    if (!entry) {
+      return {
+        error: readError,
+        ...(recordContent && { content: `unreadable\0${(readError as NodeJS.ErrnoException).code ?? ''}` }),
+      };
+    }
+    const content = recordContent ? `archive\0${contentHash(JSON.stringify(entry))}` : undefined;
+    return { schema: deepFreeze(openExtensibleReportingDimensions(entry)), ...(content && { content }) };
+  }
+  const content = recordContent ? `file\0${contentHash(text)}` : undefined;
+  try {
+    const parsed = JSON.parse(text) as LoadedSchema;
+    const schema = bundled ? (expandBundledSchemaDocument(parsed) as LoadedSchema) : parsed;
+    return { schema: deepFreeze(openExtensibleReportingDimensions(schema)), ...(content && { content }) };
+  } catch (error) {
+    return { error, ...(content && { content }) };
+  }
+}
+
+function contentHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function deepFreeze<T>(value: T): T {
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node && typeof node === 'object') {
+      Object.freeze(node);
+      for (const child of Object.values(node)) pending.push(child);
+    }
+  }
+  return value;
+}
+
 const REPORTING_DIMENSION_PATTERN = '^[a-z][a-z0-9_]*$';
 
 /**
@@ -1072,13 +1183,14 @@ const releaseEnvelopeFields = new Map<string, ReleaseEnvelopeFields>();
  * published. `adcp_version` / `adcp_major_version` are always included: they
  * are the version echo, accepted on every response.
  */
-function envelopeFieldsForRelease(root: string): ReleaseEnvelopeFields {
+function envelopeFieldsForRelease(root: string, documents?: DocumentStore): ReleaseEnvelopeFields {
   const cached = releaseEnvelopeFields.get(root);
   if (cached) return cached;
+  const read = (file: string): LoadedSchema => (documents ? readStoredDocument(documents, file) : loadJson(file));
   const fields = new Map<string, Record<string, unknown>>();
   const envelopeFile = path.join(root, 'core', 'protocol-envelope.json');
   const declared = existsSync(envelopeFile)
-    ? Object.keys((loadJson(envelopeFile).properties ?? {}) as Record<string, unknown>)
+    ? Object.keys((read(envelopeFile).properties ?? {}) as Record<string, unknown>)
     : [...Object.keys(ENVELOPE_FIELD_SCHEMAS), 'status'];
   for (const name of new Set([...declared, 'adcp_version', 'adcp_major_version'])) {
     // `payload` is the conceptual grouping of the body on the abstract
@@ -1086,7 +1198,7 @@ function envelopeFieldsForRelease(root: string): ReleaseEnvelopeFields {
     if (name === 'payload') continue;
     if (name === 'status') {
       const statusFile = path.join(root, 'enums', 'task-status.json');
-      const values = existsSync(statusFile) ? (loadJson(statusFile).enum as unknown) : undefined;
+      const values = existsSync(statusFile) ? (read(statusFile).enum as unknown) : undefined;
       fields.set('status', Array.isArray(values) ? { type: 'string', enum: values } : { type: 'string' });
     } else if (ENVELOPE_FIELD_SCHEMAS[name]) {
       fields.set(name, ENVELOPE_FIELD_SCHEMAS[name]);
@@ -1132,8 +1244,13 @@ function composesProtocolEnvelope(schema: LoadedSchema): boolean {
  */
 /** @internal Shared by opt-in overlays that retain response-envelope compatibility. */
 export function acceptEnvelopeOnClosedResponseRoot(schema: LoadedSchema, root: string): LoadedSchema {
+  return acceptEnvelopeFromRelease(schema, root);
+}
+
+/** {@link acceptEnvelopeOnClosedResponseRoot}, reading the release's envelope through `documents`. */
+function acceptEnvelopeFromRelease(schema: LoadedSchema, root: string, documents?: DocumentStore): LoadedSchema {
   if (composesProtocolEnvelope(schema)) return schema;
-  const { fields } = envelopeFieldsForRelease(root);
+  const { fields } = envelopeFieldsForRelease(root, documents);
   const widen = (node: Record<string, unknown>): Record<string, unknown> => {
     const clone = { ...node };
     if (clone.additionalProperties === false) {
@@ -1182,7 +1299,8 @@ export function acceptEnvelopeOnClosedResponseRootForVersion(
   schema: LoadedSchema,
   version: string = ADCP_VERSION
 ): LoadedSchema {
-  return acceptEnvelopeOnClosedResponseRoot(schema, ensureInit(version).root);
+  const state = ensureInit(version);
+  return acceptEnvelopeFromRelease(schema, state.root, state.documents);
 }
 
 function getAjvRegisteredIds(ajv: Ajv): Set<string> {
@@ -1324,7 +1442,7 @@ function ensureInit(version: string): LoaderState {
     canonicalValidators: new Map(),
     fileIndex: buildFileIndex(root),
     validators: new Map(),
-    rawSchemas: new Map(),
+    documents: documentStore(key, root),
     entityPaths: new Map(),
     root,
     coreLoaded: false,
@@ -1393,7 +1511,7 @@ function registerCoreDocuments(s: LoaderState): void {
     const file = authoredToolSchemaFile(s, indexedFile);
     const response = !key.endsWith('::request');
     if (response) responseToolFiles.add(file);
-    const schema = loadJson(file);
+    const schema = readStoredDocument(s.documents, file);
     if (typeof schema.$id === 'string') {
       const previous = selectedToolsById.get(schema.$id);
       if (!previous || previous.file === file) selectedToolsById.set(schema.$id, { file, response });
@@ -1405,16 +1523,16 @@ function registerCoreDocuments(s: LoaderState): void {
     if (!isRuntimeSchemaDirectory(entry.name)) continue;
     const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
-      const schema = loadJson(file);
+      const schema = readStoredDocument(s.documents, file);
       const selected = typeof schema.$id === 'string' ? selectedToolsById.get(schema.$id) : undefined;
       const selectedShadowsModular = selected !== undefined && selected.file !== file;
-      const selectedSchema = selectedShadowsModular ? loadJson(selected.file) : schema;
+      const selectedSchema = selectedShadowsModular ? readStoredDocument(s.documents, selected.file) : schema;
       const prepared =
         selectedShadowsModular && selected.file.includes(`${path.sep}bundled${path.sep}`)
           ? stripNestedIds(selectedSchema)
           : selectedSchema;
       const isResponseTool = selected?.response ?? responseToolFiles.has(file);
-      const schemaToRegister = isResponseTool ? acceptEnvelopeOnClosedResponseRoot(prepared, s.root) : prepared;
+      const schemaToRegister = isResponseTool ? acceptEnvelopeFromRelease(prepared, s.root, s.documents) : prepared;
       if (typeof schemaToRegister.$id === 'string' && !registeredIds.has(schemaToRegister.$id)) {
         s.ajv.addSchema(schemaToRegister);
         registeredIds.add(schemaToRegister.$id);
@@ -1459,7 +1577,7 @@ function validatorForState(s: LoaderState, toolName: string, direction: Directio
   const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
   if (!fromBundled) ensureCoreLoaded(s);
 
-  const rawSchema = loadJson(file);
+  const rawSchema = readStoredDocument(s.documents, file);
   // Bundled files inline every referenced subschema with the original
   // canonical `$id` (e.g. `core/version-envelope.json` appears nested
   // inside every bundled tool response). Bundled files carry no external
@@ -1476,7 +1594,7 @@ function validatorForState(s: LoaderState, toolName: string, direction: Directio
   const prepared = fromBundled ? stripNestedIds(rawSchema) : rawSchema;
   // Relax the authored composition before factoring can move a closed arm
   // behind a private ref. Canonical validators deliberately skip it.
-  const envelope = direction === 'request' ? prepared : acceptEnvelopeOnClosedResponseRoot(prepared, s.root);
+  const envelope = direction === 'request' ? prepared : acceptEnvelopeFromRelease(prepared, s.root, s.documents);
   if (fromBundled && s.bundledCache) {
     const resolved = resolveBundledValidatorWithCache(s, s.bundledCache, cacheKey, envelope);
     s.validators.set(cacheKey, resolved);
@@ -1568,8 +1686,8 @@ function flushDeferredCompiles(s: LoaderState): void {
 
 /**
  * The state's root content digest, computed once, or `undefined` when the
- * state registered its documents before the digest was taken: those bytes
- * may differ from what the digest would read now.
+ * state registered its documents before the digest was taken, or when a
+ * document it covers was read without its content recorded.
  */
 function stateContentDigest(s: LoaderState): string | undefined {
   if (s.contentDigest === undefined) s.contentDigest = s.coreLoaded ? null : rootContentDigest(s);
@@ -1591,13 +1709,19 @@ function contentUnchangedSinceDigest(s: LoaderState): boolean {
 
 /**
  * SHA-256 over every document a modular compile in `s` can read, by
- * root-relative path and bytes: JSON files at the root and in its runtime
+ * root-relative path and content: JSON files at the root and in its runtime
  * directories (what ensureCoreLoaded registers and getValidator reads), the
  * index entries, and each indexed file the loader reads in place of a missing
  * authored one. Content, not stat: a byte-identical copy of a root has the
  * same digest.
+ *
+ * Each document's content comes from the state's document store, the same
+ * read the compile uses, so a document is read once whether it is digested,
+ * compiled or both. A later digest walks the directories again, so a document
+ * added or removed since the first one changes it. `null` when a document was
+ * read without its content recorded (the cache was enabled after that read).
  */
-function rootContentDigest(s: LoaderState): string {
+function rootContentDigest(s: LoaderState): string | null {
   const files = new Set<string>();
   for (const entry of readdirSync(s.root, { withFileTypes: true })) {
     if (entry.isDirectory()) {
@@ -1615,28 +1739,21 @@ function rootContentDigest(s: LoaderState): string {
     hash.update(`index\0${key}\0${path.relative(s.root, file)}\0`);
   }
   for (const file of [...files].sort(byPath)) {
-    hash.update(`file\0${path.relative(s.root, file)}\0`);
-    hash.update(documentBytes(file));
-    hash.update('\0');
+    const content = storedDocumentContent(s.documents, file);
+    if (content === undefined) return null;
+    hash.update(`file\0${path.relative(s.root, file)}\0${content}\0`);
   }
   return hash.digest('hex');
 }
 
-/** A document's bytes, an archive entry's JSON, or a marker for an unreadable file. */
-function documentBytes(file: string): Buffer | string {
+/** The content {@link loadStoredDocument} recorded for `file`, reading it into `store` if needed. */
+function storedDocumentContent(store: DocumentStore, file: string): string | undefined {
   try {
-    return readFileSync(file);
-  } catch (error) {
-    if (file.includes(`${path.sep}bundled${path.sep}`)) {
-      try {
-        const entry = loadBundledSchemaFile(file);
-        if (entry) return `archive\0${JSON.stringify(entry)}`;
-      } catch {
-        // Recorded as unreadable below.
-      }
-    }
-    return `unreadable\0${(error as NodeJS.ErrnoException).code ?? ''}`;
+    readStoredDocument(store, file);
+  } catch {
+    // Unparseable and unreadable documents still record their content.
   }
+  return store.get(file)?.content;
 }
 
 /** Loader modules whose code shapes a compiled bundled validator. */
@@ -1912,7 +2029,7 @@ function runtimeToolSchemaFile(state: LoaderState, indexedFile: string, directio
   // A modular response may alias a closed non-tool fragment. Relaxing that
   // shared fragment globally would also loosen nested request validation.
   // Its paired bundled tree provides a context-local composition to widen.
-  return hasCompositionReference(loadJson(authoredFile)) ? indexedFile : authoredFile;
+  return hasCompositionReference(readStoredDocument(state.documents, authoredFile)) ? indexedFile : authoredFile;
 }
 
 function compactSchemaForValidation(schema: LoadedSchema): LoadedSchema {
@@ -1927,6 +2044,8 @@ function compactSchemaForValidation(schema: LoadedSchema): LoadedSchema {
  * resolver used by runtime validation. Unlike `getValidator().schema`, response
  * documents never receive envelope widening, so callers can publish
  * the protocol-authored schema verbatim from an on-demand discovery tool.
+ * The document is deep-frozen and shared with every other reader of the
+ * bundle, as {@link getSchemaDocumentByRef}'s are; copy it to modify it.
  */
 export function getToolSchemaDocument(
   toolName: string,
@@ -1936,10 +2055,10 @@ export function getToolSchemaDocument(
   const state = ensureInit(version);
   const file = state.fileIndex.get(`${toolName}::${direction}`);
   if (!file) return undefined;
-  const schema = loadJson(file) as Record<string, unknown>;
+  const schema = readStoredDocument(state.documents, file) as Record<string, unknown>;
   let resolvedVersion = state.version;
   try {
-    const index = loadJson(path.join(state.root, 'index.json')) as Record<string, unknown>;
+    const index = readStoredDocument(state.documents, path.join(state.root, 'index.json')) as Record<string, unknown>;
     if (typeof index.adcp_version === 'string') resolvedVersion = index.adcp_version;
   } catch {
     // Legacy/external bundles may omit index.json; the resolved key remains an
@@ -1973,25 +2092,11 @@ export function getSchemaDocumentByRef(
   if (!existsSync(file)) return undefined;
 
   // Bundle documents are immutable for the lifetime of their loader state,
-  // just like compiled validators. Freeze shared documents so domain audits
-  // can memoize by identity without allowing callers to mutate a schema.
-  const readDocument = (ref: string): Record<string, unknown> => {
-    const key = `document::${ref}`;
-    let schema = state.rawSchemas.get(key);
-    if (!schema) {
-      schema = loadJson(path.join(state.root, ref));
-      const pending: unknown[] = [schema];
-      while (pending.length > 0) {
-        const value = pending.pop();
-        if (value && typeof value === 'object') {
-          for (const child of Object.values(value)) pending.push(child);
-          Object.freeze(value);
-        }
-      }
-      state.rawSchemas.set(key, schema);
-    }
-    return schema;
-  };
+  // just like compiled validators. The store's documents are frozen and
+  // shared, so domain audits can memoize by identity without allowing callers
+  // to mutate a schema.
+  const readDocument = (ref: string): Record<string, unknown> =>
+    readStoredDocument(state.documents, path.join(state.root, ref));
 
   let resolvedVersion = state.version;
   try {
@@ -2100,7 +2205,8 @@ function compileSchemaReference(
   });
   addFormats(ajv);
   for (const keyword of keywords ?? []) ajv.addKeyword(keyword);
-  const authoredSchema = identity33ReferenceSchema(loadJson(file), version);
+  const documents = documentStore(bundleKey, root);
+  const authoredSchema = identity33ReferenceSchema(readStoredDocument(documents, file), version);
   const rawSchema = projection ? projection.project(authoredSchema) : authoredSchema;
   const dependencySchemas: LoadedSchema[] = [];
   const registeredIds = new Map<string, LoadedSchema>();
@@ -2112,7 +2218,7 @@ function compileSchemaReference(
       continue;
     }
     if (schemaFile === file) continue;
-    const schema = identity33ReferenceSchema(loadJson(schemaFile), version);
+    const schema = identity33ReferenceSchema(readStoredDocument(documents, schemaFile), version);
     if (typeof schema.$id === 'string') {
       // Compare mirrors against the authored root, before any caller-specific
       // envelope projection. Never register the same root id as a dependency.
@@ -2155,7 +2261,7 @@ export function getCanonicalToolValidatorForVersion(
   const indexedFile = state.fileIndex.get(cacheKey);
   if (!indexedFile) return undefined;
   const file = authoredToolSchemaFile(state, indexedFile);
-  const rawSchema = loadJson(file);
+  const rawSchema = readStoredDocument(state.documents, file);
   const ajv = ensureCanonicalAjv(state);
   const existing = typeof rawSchema.$id === 'string' ? ajv.getSchema(rawSchema.$id) : undefined;
   // External/legacy schema roots may contain only self-contained bundled
@@ -2183,7 +2289,7 @@ function ensureCanonicalAjv(state: LoaderState): Ajv {
       continue;
     }
 
-    const schema = loadJson(schemaFile);
+    const schema = readStoredDocument(state.documents, schemaFile);
     if (typeof schema.$id !== 'string') continue;
     const previous = schemasById.get(schema.$id);
     if (previous) {
@@ -2652,6 +2758,7 @@ export function _resetValidationLoader(version?: string): void {
   if (version === undefined) {
     states.clear();
     schemaRefValidators.clear();
+    documentStores.clear();
     epochRootFingerprints.clear();
     rootDocumentIdentityCache().clear();
     keywordCacheGeneration++;
@@ -2669,7 +2776,7 @@ export function _resetValidationLoader(version?: string): void {
  *
  * Reads the raw JSON schema file without compiling — avoids coupling to AJV
  * internals. Only inspects the top-level `properties` map; nested sub-schemas
- * are not traversed. Results are memoized in `LoaderState.rawSchemas` so
+ * are not traversed. The document comes from the state's document store, so
  * multi-step storyboard runs don't re-read the same file on each step.
  *
  * **Semantic note**: AdCP 3.1.0-beta.3 set `additionalProperties: true` on
@@ -2696,11 +2803,7 @@ export function schemaAllowsTopLevelField(toolName: string, field: string, versi
     const cacheKey = `${toolName}::request`;
     const file = s.fileIndex.get(cacheKey);
     if (!file) return true;
-    let schema = s.rawSchemas.get(cacheKey);
-    if (!schema) {
-      schema = loadJson(file) as Record<string, unknown>;
-      s.rawSchemas.set(cacheKey, schema);
-    }
+    const schema = readStoredDocument(s.documents, file);
     const props = schema.properties as Record<string, unknown> | undefined;
     return props !== undefined && field in props;
   } catch {
@@ -2736,7 +2839,7 @@ export function getRequestSchemaEntityPaths(
     const file = s.fileIndex.get(cacheKey);
     if (!file) return [];
 
-    const root = loadJson(file) as Record<string, unknown>;
+    const root = readStoredDocument(s.documents, file) as Record<string, unknown>;
     const found = new Map<string, SchemaEntityPath>();
     const stack = new Set<string>();
 
@@ -2784,7 +2887,7 @@ export function getRequestSchemaEntityPaths(
           const idToFile = new Map<string, string>();
           for (const schemaFile of walkJsonFiles(s.root)) {
             try {
-              const schema = loadJson(schemaFile);
+              const schema = readStoredDocument(s.documents, schemaFile);
               if (typeof schema.$id === 'string') idToFile.set(schema.$id, schemaFile);
             } catch {
               // A malformed unrelated schema is not a usable ref target.
@@ -2795,7 +2898,7 @@ export function getRequestSchemaEntityPaths(
         targetFile = s.schemaIdFiles.get(refPath);
       }
       if (!targetFile) return undefined;
-      const document = loadJson(targetFile) as Record<string, unknown>;
+      const document = readStoredDocument(s.documents, targetFile) as Record<string, unknown>;
       return {
         node: resolvePointer(document, fragment),
         file: targetFile,
@@ -2883,16 +2986,10 @@ export function getSchemaDefaultByPath(schemaRef: string, dottedPath: string, ve
     const normalized = normalizeSchemaRef(schemaRef);
     if (!normalized) return undefined;
 
-    const cacheKey = `schema-ref::${normalized}`;
     const file = path.join(s.root, normalized);
     if (!existsSync(file)) return undefined;
 
-    let schema = s.rawSchemas.get(cacheKey);
-    if (!schema) {
-      schema = loadJson(file) as Record<string, unknown>;
-      s.rawSchemas.set(cacheKey, schema);
-    }
-
+    const schema = readStoredDocument(s.documents, file);
     const node = resolveSchemaPropertyPath(schema, dottedPath);
     if (!node || !Object.prototype.hasOwnProperty.call(node, 'default')) return undefined;
     return cloneJsonValue((node as { default: unknown }).default);
