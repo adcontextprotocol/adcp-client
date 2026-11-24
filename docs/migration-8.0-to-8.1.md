@@ -157,7 +157,8 @@ import { packageRefsForFormatOptions } from '@adcp/sdk/v2/projection';
 `packageRefsForCapabilities()` remains available from the explicit
 `@adcp/sdk/v2/projection` migration subpath for callers pinned to beta.3
 fixtures or sellers. It is deprecated and emits a one-time warning because its
-return value is intentionally beta.3-only.
+return value is intentionally beta.3-only. SDK 17 removes it; see
+[Removed beta.3 `capability_ids` helpers](./migration-16-to-17.md#removed-beta3-capability_ids-helpers).
 
 Projection diagnostics also use the beta.5 field name:
 `diagnostic.error.details.format_option_id`. If you log or branch on the old

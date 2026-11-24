@@ -375,6 +375,26 @@ Rejections on these tools echo the caller's `context` even when the schema
 strips it: validation, version, authorization, and errors your handler returns
 or throws.
 
+## Removed beta.3 `capability_ids` helpers
+
+`@adcp/sdk/v2/projection` no longer exports `packageRefsForCapabilities`,
+`legacyFormatIdsForCapability`, `CapabilityIdsLookupError`,
+`CapabilityIdsLookupErrorCode` or `PackageCapabilityRefs` (#1899). They emitted
+the AdCP 3.1.0-beta.3 `capability_ids` package field, which beta.5 and later
+sellers reject, and were deprecated in SDK 8.1.
+
+| Removed | Use instead |
+| --- | --- |
+| `packageRefsForCapabilities(product, ids)` | `packageRefsForFormatOptions(product, selectors)`, spread into the package |
+| `legacyFormatIdsForCapability(product, id)` | `legacyFormatIdsForFormatOption(product, selector)` |
+| `CapabilityIdsLookupError` / `CapabilityIdsLookupErrorCode` | `FormatOptionRefsLookupError` / `FormatOptionRefsLookupErrorCode` |
+| `PackageCapabilityRefs` | `PackageFormatRefs` |
+
+Selectors are `format_option_id` values, or `{ publisher_domain,
+format_option_id }` for publisher-catalog options. A beta.3 catalog that only
+publishes `capability_id` has no beta.5 equivalent; pick its declaration from
+`product.format_options[]` and pass it to `legacyFormatIdsFromOptions`.
+
 ## AdCP 3.3.0-rc.3
 
 SDK 17 now pins AdCP `3.3.0-rc.3` and no longer packages or advertises
