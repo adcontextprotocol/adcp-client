@@ -3,6 +3,8 @@ import { RequestSigningErrorCodeMetadata } from '../types/enums.generated';
 import { parseWWWAuthenticate } from '../auth/oauth/diagnostics';
 import { redactSensitiveJsonOrText, sanitizeTransportHeaders, sanitizeTransportUrl } from './transportDiagnostics';
 import { recordRawResponseCapture } from './rawResponseCapture';
+import { buildAuthFailureDiagnostics, redactReflected, signatureSecrets } from './authDiagnostics';
+import { signingContextStorage } from '../signing/agent-context';
 
 const CAPTURE_BYTES = 16 * 1024;
 const EXCERPT_LENGTH = 2048;
@@ -10,6 +12,7 @@ const CAPTURE_TIMEOUT_MS = 1000;
 // Protocol metadata is public and short version strings would otherwise
 // corrupt ordinary seller prose and JSON-RPC IDs. Unknown custom headers
 // remain protected because callers can use arbitrary names for credentials.
+// `Signature` is not listed: its bytes must not survive a seller echo.
 const PUBLIC_HEADERS = new Set([
   'accept',
   'content-type',
@@ -23,7 +26,6 @@ const PUBLIC_HEADERS = new Set([
   'mcp-session-id',
   'traceparent',
   'tracestate',
-  'signature',
   'signature-input',
   'content-digest',
 ]);
@@ -74,11 +76,20 @@ export function wrapFetchWithSignedRequestRejection(upstream: typeof fetch, agen
       if (/[\uD800-\uDBFF]/.test(body[end - 1]!)) end--;
       excerpt = body.slice(0, end) + '…';
     }
+    // The connection cache is keyed by the signing context's AdCP version, so
+    // the active context names the pin this request was signed under.
+    const authDiagnostics = buildAuthFailureDiagnostics(
+      response.status,
+      headers,
+      response.headers,
+      signingContextStorage.getStore()?.adcpVersion
+    );
     // A received 401 remains an authentication failure even if the caller
     // cancels while the optional diagnostic body is being captured.
     throw new AuthenticationRequiredError(sanitizeTransportUrl(agentUrl ?? url), undefined, undefined, challenge, {
       status: response.status,
       responseBody: excerpt,
+      ...(authDiagnostics && { authDiagnostics }),
     });
   };
 }
@@ -105,32 +116,10 @@ function getHeaderSecrets(headers: Headers): string[] {
       }
     }
   });
+  // The bare signature bytes, in either Base64 alphabet, as well as the
+  // `sig1=:...:` header value pushed above.
+  secrets.push(...signatureSecrets(headers));
   return secrets;
-}
-
-/** Mask the union of matches in the original text, including overlaps. */
-function redactReflected(value: string, secrets: string[]): string {
-  const mask = new Uint8Array(value.length);
-  for (const secret of secrets) {
-    for (let from = 0; from < value.length; ) {
-      const at = value.indexOf(secret, from);
-      if (at < 0) break;
-      mask.fill(1, at, at + secret.length);
-      from = at + 1;
-    }
-  }
-  let out = '';
-  let cursor = 0;
-  for (let at = 0; at < value.length; ) {
-    if (!mask[at]) {
-      at++;
-      continue;
-    }
-    out += value.slice(cursor, at) + '[redacted]';
-    while (at < value.length && mask[at]) at++;
-    cursor = at;
-  }
-  return out + value.slice(cursor);
 }
 
 async function captureBody(

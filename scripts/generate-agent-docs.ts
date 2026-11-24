@@ -1511,6 +1511,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  streaming?: boolean; // Uncaptured body: terminal observation follows consumption or abort`);
   ln(`  outcome?: TransportResponseOutcome; // response_completed only`);
   ln(`  bytes?: number; // Bytes forwarded before the terminal outcome; no stream payload retained`);
+  ln(
+    `  authDiagnostics?: AuthFailureDiagnostics; // 401/403 only: Signature-Input params, Content-Digest, challenge code; no secrets`
+  );
   ln(`}`);
   ln();
   ln(`// Share discovery across request-local clients using an application-owned authorization identity.`);

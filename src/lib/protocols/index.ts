@@ -633,6 +633,8 @@ export class ProtocolClient {
           protocol: agent.protocol,
           tool: toolName,
           taskType: toolName,
+          // Same pin as the signing context below.
+          adcpVersion: wireAdcpVersion ?? adcpVersion ?? ADCP_VERSION,
           ...transportActivityContext,
           onTransportActivity,
         },

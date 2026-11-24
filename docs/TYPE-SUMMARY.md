@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-11-23
+> Generated at: 2026-11-24
 > @adcp/sdk v17.0.0-beta.37
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -80,6 +80,7 @@ interface TransportActivity {
   streaming?: boolean; // Uncaptured body: terminal observation follows consumption or abort
   outcome?: TransportResponseOutcome; // response_completed only
   bytes?: number; // Bytes forwarded before the terminal outcome; no stream payload retained
+  authDiagnostics?: AuthFailureDiagnostics; // 401/403 only: Signature-Input params, Content-Digest, challenge code; no secrets
 }
 
 // Share discovery across request-local clients using an application-owned authorization identity.
