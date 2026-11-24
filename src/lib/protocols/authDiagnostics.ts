@@ -1,6 +1,7 @@
 import type { AuthFailureDiagnostics, RequestSignatureDiagnostics, WwwAuthenticateDiagnostics } from '../errors';
 import { parseWWWAuthenticate } from '../auth/oauth/diagnostics';
-import { parseSignatureInput } from '../signing/parser';
+import { parseDictionary } from 'structured-headers';
+import { parseSignatureInput, rejectDuplicateDictionaryKeys } from '../signing/parser';
 import { RequestSigningErrorCodeMetadata } from '../types/enums.generated';
 
 const BEARER_ERROR_CODES = new Set(['invalid_request', 'invalid_token', 'insufficient_scope']);
@@ -41,15 +42,26 @@ const PUBLIC_REQUEST_HEADERS = new Set([
   'mcp-protocol-version',
   'traceparent',
   'tracestate',
+  'last-event-id',
+  'x-adcp-agent-id',
+  'x-adcp-request-id',
+  'x-correlation-id',
+  'x-request-id',
+  'x-scope3-debug-id',
   'signature-input',
   'content-digest',
 ]);
+// Header names that carry a credential. Their values, the nonce, and the
+// signature bytes are protected at any length; other header values are
+// metadata matched exactly or when long enough to be a credential.
+const CREDENTIAL_HEADER_RE =
+  /(^|[_-])(authorization|auth|cookie|credentials?|secret|token|api[_-]?key|key|password|session|signature)([_-]|$)/i;
 // Real signatures are 86+ Base64 characters. A floor keeps short fixture
 // values from masking ordinary seller words.
 const MIN_SIGNATURE_BYTES_LENGTH = 16;
-// Shorter protected values are matched exactly, so an incidental short header
-// value cannot blank out a legitimate key id.
-const MIN_CONTAINED_SECRET_LENGTH = 8;
+// Shorter metadata values are matched exactly, so an incidental short header
+// value such as `X-Api-Version: 1` cannot blank out a legitimate key id.
+const MIN_CONTAINED_METADATA_LENGTH = 8;
 const REDACTED = '[redacted]';
 const MAX_COMPONENTS = 32;
 const MAX_PARAM_LENGTH = 256;
@@ -101,7 +113,10 @@ export function buildAuthFailureDiagnostics(
   }
 }
 
-function signatureDiagnostics(header: string | null, secrets: string[]): RequestSignatureDiagnostics | undefined {
+function signatureDiagnostics(
+  header: string | null,
+  secrets: ProtectedValues
+): RequestSignatureDiagnostics | undefined {
   if (!header) return undefined;
   let parsed: ReturnType<typeof parseSignatureInput>;
   try {
@@ -110,26 +125,27 @@ function signatureDiagnostics(header: string | null, secrets: string[]): Request
     return undefined;
   }
   const screen = (value: string) => (containsSecret(value, secrets) ? REDACTED : bound(value));
+  const clean = (value: number) => !containsSecret(String(value), secrets);
   const { keyid, alg, created, expires, nonce, tag } = parsed.params;
   return {
     label: screen(parsed.label),
     ...(typeof keyid === 'string' && { keyid: screen(keyid) }),
     ...(typeof alg === 'string' && { alg: screen(alg) }),
-    ...(typeof created === 'number' && { created }),
-    ...(typeof expires === 'number' && { expires }),
+    ...(typeof created === 'number' && clean(created) && { created }),
+    ...(typeof expires === 'number' && clean(expires) && { expires }),
     noncePresent: typeof nonce === 'string',
     ...(typeof tag === 'string' && { tag: screen(tag) }),
     components: parsed.components.slice(0, MAX_COMPONENTS).map(screen),
   };
 }
 
-function contentDigestDiagnostic(header: string | null, secrets: string[]): string | undefined {
+function contentDigestDiagnostic(header: string | null, secrets: ProtectedValues): string | undefined {
   if (!header || header.length > MAX_CONTENT_DIGEST_LENGTH) return undefined;
   const value = header.trim();
   return CONTENT_DIGEST_RE.test(value) && !containsSecret(value, secrets) ? value : undefined;
 }
 
-function challengeDiagnostics(header: string | null, secrets: string[]): WwwAuthenticateDiagnostics | undefined {
+function challengeDiagnostics(header: string | null, secrets: ProtectedValues): WwwAuthenticateDiagnostics | undefined {
   const parsed = parseWWWAuthenticate(header);
   if (!parsed) return undefined;
   const error = parsed.error && isRecognizedChallengeError(parsed.error) ? parsed.error : undefined;
@@ -150,7 +166,7 @@ function isRecognizedChallengeError(error: string): boolean {
  * A registered scheme is a fixed word. Any other scheme survives only when it
  * overlaps no protected value; otherwise it is reported as `other`.
  */
-function safeScheme(scheme: string, secrets: string[]): string {
+function safeScheme(scheme: string, secrets: ProtectedValues): string {
   if (KNOWN_SCHEMES.has(scheme)) return scheme;
   return scheme.length <= MAX_SCHEME_LENGTH && !overlapsSecret(scheme, secrets) ? scheme : OTHER_SCHEME;
 }
@@ -160,33 +176,45 @@ function safeScheme(scheme: string, secrets: string[]): string {
  * substring relationship with any protected value. The whitespace-free
  * charset also rules out free-text prose.
  */
-function safeRealm(realm: string | undefined, secrets: string[]): string | undefined {
+function safeRealm(realm: string | undefined, secrets: ProtectedValues): string | undefined {
   if (!realm || realm.length > MAX_REALM_LENGTH || !REALM_RE.test(realm)) return undefined;
   return overlapsSecret(realm, secrets) ? undefined : realm;
 }
 
+interface ProtectedValues {
+  /** Credential header values, the nonce, and the signature bytes. */
+  strong: string[];
+  /** Other non-public request header values. */
+  metadata: string[];
+}
+
 /**
- * For seller-controlled text: any substring relationship in either direction.
- * Case-insensitive, because the challenge parser lowercases the scheme.
+ * For seller-controlled text: any substring relationship in either direction
+ * with any protected value. Case-insensitive, because the challenge parser
+ * lowercases the scheme.
  */
-function overlapsSecret(text: string, secrets: string[]): boolean {
+function overlapsSecret(text: string, secrets: ProtectedValues): boolean {
   const lower = text.toLowerCase();
-  return secrets.some(secret => {
+  return [...secrets.strong, ...secrets.metadata].some(secret => {
     const candidate = secret.toLowerCase();
     return lower.includes(candidate) || candidate.includes(lower);
   });
 }
 
 /**
- * For the SDK's own outbound values, which can only collide by accident: an
- * exact match, or containing a protected value long enough to be a credential.
+ * For the SDK's own outbound values. A credential, the nonce, or signature
+ * bytes match anywhere at any length. Metadata matches exactly, or anywhere
+ * once it is long enough to be a credential.
  */
-function containsSecret(text: string, secrets: string[]): boolean {
+function containsSecret(text: string, secrets: ProtectedValues): boolean {
   const lower = text.toLowerCase();
-  return secrets.some(secret => {
-    const candidate = secret.toLowerCase();
-    return lower === candidate || (candidate.length >= MIN_CONTAINED_SECRET_LENGTH && lower.includes(candidate));
-  });
+  return (
+    secrets.strong.some(secret => lower.includes(secret.toLowerCase())) ||
+    secrets.metadata.some(secret => {
+      const candidate = secret.toLowerCase();
+      return lower === candidate || (candidate.length >= MIN_CONTAINED_METADATA_LENGTH && lower.includes(candidate));
+    })
+  );
 }
 
 /**
@@ -194,23 +222,47 @@ function containsSecret(text: string, secrets: string[]): boolean {
  * credential part of `Authorization`-style values, structured-field byte
  * sequences, the nonce, and every form of the `Signature` bytes.
  */
-function protectedValues(headers: Headers): string[] {
-  const secrets: string[] = [];
+function protectedValues(headers: Headers): ProtectedValues {
+  const strong: string[] = [];
+  const metadata: string[] = [];
   headers.forEach((value, name) => {
-    if (!value || PUBLIC_REQUEST_HEADERS.has(name.toLowerCase())) return;
-    secrets.push(value);
+    const lower = name.toLowerCase();
+    if (!value || PUBLIC_REQUEST_HEADERS.has(lower)) return;
+    const into = CREDENTIAL_HEADER_RE.test(lower) ? strong : metadata;
+    into.push(value);
     // `Bearer <token>`, `Basic <credentials>`.
     const credential = value.replace(/^\S+\s+/, '');
-    if (credential && credential !== value) secrets.push(credential);
+    if (credential && credential !== value) into.push(credential);
     // Structured-field byte sequences.
-    for (const match of value.matchAll(/:([^:\s]+):/g)) secrets.push(match[1]!);
+    for (const match of value.matchAll(/:([^:\s]+):/g)) into.push(match[1]!);
   });
   // `Signature-Input` is public, but the diagnostics expose only whether a
   // nonce was sent, never its value.
-  for (const match of (headers.get('signature-input') ?? '').matchAll(/;\s*nonce="((?:[^"\\]|\\.)*)"/g)) {
-    if (match[1]) secrets.push(match[1].replace(/\\(.)/g, '$1'));
+  strong.push(...signatureNonces(headers.get('signature-input')), ...signatureSecrets(headers));
+  return { strong, metadata };
+}
+
+/**
+ * Every `nonce` parameter in `Signature-Input`, read with the Structured
+ * Fields parser so a `;nonce=` inside another quoted value cannot hide the
+ * real one. When the field does not parse cleanly, every quoted string in it
+ * is treated as a possible nonce.
+ */
+function signatureNonces(header: string | null): string[] {
+  if (!header) return [];
+  try {
+    rejectDuplicateDictionaryKeys(header, 'Signature-Input');
+    const nonces: string[] = [];
+    for (const [, member] of parseDictionary(header)) {
+      for (const [key, value] of member[1]) {
+        if (key === 'nonce' && typeof value === 'string' && value) nonces.push(value);
+      }
+    }
+    return nonces;
+  } catch {
+    // Quoted strings consumed left to right, so each is whole.
+    return [...header.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(match => match[1]!.replace(/\\(.)/g, '$1')).filter(Boolean);
   }
-  return [...secrets, ...signatureSecrets(headers)];
 }
 
 /**

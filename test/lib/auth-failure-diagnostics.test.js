@@ -397,9 +397,59 @@ test('outbound Signature-Input strings and Content-Digest are screened for prote
   for (const secret of [BEARER, NONCE, SIG.std, SIG.stdBare]) {
     assert.equal(JSON.stringify(diagnostics).includes(secret), false);
   }
-  // A short incidental header value does not blank out a legitimate key id.
-  const benign = await transportDiagnosticsFor(signedHeaders({ 'X-Tenant': 'seller' }), {});
+  // A short metadata header value does not blank out a legitimate key id or timestamp.
+  const benign = await transportDiagnosticsFor(signedHeaders({ 'X-Tenant': 'seller', 'X-Api-Version': '1' }), {});
   assert.equal(benign.requestSignature.keyid, 'seller-key-1');
+  assert.equal(benign.requestSignature.created, 1700000000);
+});
+
+test('short credentials and the nonce are protected at any length, including in numeric params', async () => {
+  const shortBearer = 'pass123';
+  const embedded = await transportDiagnosticsFor(
+    signedHeaders({
+      Authorization: `Bearer ${shortBearer}`,
+      'Signature-Input': `sig1=("@method");keyid="https://keys.example/${shortBearer}";nonce="abc123";tag="key-abc123"`,
+    }),
+    {}
+  );
+  assert.equal(embedded.requestSignature.keyid, '[redacted]');
+  assert.equal(embedded.requestSignature.tag, '[redacted]');
+  assert.equal(JSON.stringify(embedded).includes(shortBearer), false);
+  assert.equal(JSON.stringify(embedded).includes('abc123'), false);
+
+  const numeric = await transportDiagnosticsFor(
+    signedHeaders({
+      'X-API-Key': '123456789',
+      'Signature-Input': 'sig1=("@method");created=123456789;expires=123456999;keyid="k1"',
+    }),
+    {}
+  );
+  assert.equal('created' in numeric.requestSignature, false);
+  assert.equal(numeric.requestSignature.expires, 123456999);
+  assert.equal(JSON.stringify(numeric).includes('123456789'), false);
+});
+
+test('a nonce hidden behind a quoted ;nonce= is still protected from realm reflection', async () => {
+  const secretNonce = 'private-nonce-value';
+  const headers = signedHeaders({
+    'Signature-Input': `sig1=("@method");keyid="https://keys.example/k;nonce=";nonce="${secretNonce}"`,
+  });
+  const challengeHeader = { 'WWW-Authenticate': `Signature realm="${secretNonce}"` };
+  const diagnostics = await transportDiagnosticsFor(headers, challengeHeader);
+  assert.equal(diagnostics.wwwAuthenticate.realm, undefined);
+  assert.equal(diagnostics.requestSignature.noncePresent, true);
+  assert.equal(JSON.stringify(diagnostics).includes(secretNonce), false);
+
+  const error = await rejection(new Response('', { status: 401, headers: challengeHeader }), headers);
+  assert.equal(error.authDiagnostics.wwwAuthenticate.realm, undefined);
+
+  // Unparseable or duplicate-keyed input falls back to protecting every quoted string.
+  const duplicate = await transportDiagnosticsFor(
+    signedHeaders({ 'Signature-Input': `sig1=("@method");nonce="${secretNonce}", sig1=("@method");nonce="other"` }),
+    challengeHeader
+  );
+  assert.equal(duplicate.wwwAuthenticate.realm, undefined);
+  assert.equal(duplicate.requestSignature, undefined);
 });
 
 test('diagnostics use the headers fetch sends: init.headers replaces Request headers', async () => {
