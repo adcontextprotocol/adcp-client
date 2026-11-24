@@ -11845,7 +11845,7 @@ export class SingleAgentClient {
     // `transport.maxResponseBytes` extends to discovery / tools-list bodies.
     // `withResponseSizeLimit` installs the 4 MiB default when no cap is
     // configured (adcp-client#3253).
-    const { withResponseSizeLimit } = await import('../protocols/responseSizeLimit');
+    const { withPageResponseSizeLimit, withResponseSizeLimit } = await import('../protocols/responseSizeLimit');
     const { listAllMcpTools, toolsListPageParams } = await import('../protocols/mcp-tools-list');
     throwIfAborted(options?.signal);
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
@@ -11877,10 +11877,12 @@ export class SingleAgentClient {
       if (this.normalizedAgent._inProcessMcpClient) {
         const mcpClient = this.normalizedAgent._inProcessMcpClient;
         // Follow every page; the size cap applies to each page (adcp-client#3717).
-        const toolsList = await listAllMcpTools(cursor =>
-          withResponseSizeLimit(maxResponseBytes, () =>
-            mcpClient.listTools(toolsListPageParams(mcpListParams, cursor), mcpRequestOptions)
-          )
+        const { tools: toolsList } = await listAllMcpTools(
+          cursor =>
+            withPageResponseSizeLimit(maxResponseBytes, () =>
+              mcpClient.listTools(toolsListPageParams(mcpListParams, cursor), mcpRequestOptions)
+            ),
+          mcpClient
         );
         const tools = toolsList.map(tool => ({
           name: tool.name,
@@ -11976,10 +11978,12 @@ export class SingleAgentClient {
       // session so discovery and the tool calls that follow initialize once.
       const { withScopedLegacyConnection } = await import('../protocols/mcp');
       const scopedList = await withScopedLegacyConnection(connectOptions, 'tools/list', client =>
-        listAllMcpTools(cursor =>
-          withResponseSizeLimit(maxResponseBytes, () =>
-            client.listTools(toolsListPageParams(mcpListParams, cursor), mcpRequestOptions)
-          )
+        listAllMcpTools(
+          cursor =>
+            withPageResponseSizeLimit(maxResponseBytes, () =>
+              client.listTools(toolsListPageParams(mcpListParams, cursor), mcpRequestOptions)
+            ),
+          client
         )
       );
       if (scopedList) {
@@ -11988,7 +11992,7 @@ export class SingleAgentClient {
           description: undefined,
           protocol: this.normalizedAgent.protocol,
           url: agent.agent_uri,
-          tools: scopedList.value.map(tool => ({
+          tools: scopedList.value.tools.map(tool => ({
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,
@@ -11999,8 +12003,9 @@ export class SingleAgentClient {
 
       const { client: mcpClient } = await connectMCP(connectOptions);
       try {
-        const toolsList = await listAllMcpTools(cursor =>
-          withResponseSizeLimit(maxResponseBytes, () =>
+        // A one-shot client: its metadata cache is closed with it.
+        const { tools: toolsList } = await listAllMcpTools(cursor =>
+          withPageResponseSizeLimit(maxResponseBytes, () =>
             mcpClient.listTools(toolsListPageParams(mcpListParams, cursor), mcpRequestOptions)
           )
         );

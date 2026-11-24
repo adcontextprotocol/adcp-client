@@ -19,11 +19,11 @@ import { createMCPRequestHeaders } from '../auth';
 import { withSpan } from '../observability/tracing';
 import { signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactArgsForLog as sharedRedactArgsForLog } from '../utils/redact-args';
-import { withResponseSizeLimit } from './responseSizeLimit';
+import { withPageResponseSizeLimit, withResponseSizeLimit } from './responseSizeLimit';
 import { withTransportDiagnostics, type TransportActivityHandler } from './transportDiagnostics';
 import { isAbortOrTimeoutError, resolveClientRequestTimeoutMs } from './abort';
 import { tryCallModernMCPTool } from './mcp-modern';
-import { forEachMcpToolsPage } from './mcp-tools-list';
+import { forEachMcpToolsPage, listAllMcpTools } from './mcp-tools-list';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -60,18 +60,19 @@ interface MCPTaskProtocolOptions {
 }
 
 /**
- * Tool names on the `tools/list` page each MCP client last cached.
+ * Track which MCP clients have their whole tool catalog cached.
  * The SDK's isToolTask() needs tool metadata from listTools() to determine
  * per-tool taskSupport. Without this, callToolStream silently degrades to
- * a synchronous tools/call (no task creation). The SDK replaces its metadata
- * cache with each page it lists, so only the last page listed is known.
+ * a synchronous tools/call (no task creation).
  */
-const cachedToolsPages = new WeakMap<MCPClient, ReadonlySet<string>>();
+const toolsListedClients = new WeakSet<MCPClient>();
 
 /**
- * Ensure the SDK has cached `toolName`'s metadata so isToolTask() works.
- * Pages through a paginated catalog until the page holding the tool, which
- * leaves that page in the SDK's cache (adcp-client#3717).
+ * Ensure tool metadata is cached in the SDK so isToolTask() works. Reads
+ * every `tools/list` page (adcp-client#3717); `listAllMcpTools` leaves the
+ * whole catalog cached, as capability discovery on a shared client does too.
+ * Each page gets its own response-size allowance rather than sharing the
+ * tool call's.
  */
 async function ensureToolsListed(
   client: MCPClient,
@@ -79,19 +80,23 @@ async function ensureToolsListed(
   signal?: AbortSignal,
   requestTimeoutMs?: number
 ): Promise<void> {
-  if (cachedToolsPages.get(client)?.has(toolName)) return;
+  if (toolsListedClients.has(client)) return;
   const options = {
     ...(signal && { signal }),
     ...(requestTimeoutMs !== undefined && { timeout: requestTimeoutMs }),
   };
-  await forEachMcpToolsPage(
-    cursor => client.listTools(cursor === undefined ? undefined : { cursor }, options),
-    tools => {
-      const names = new Set(tools.map(tool => tool.name));
-      cachedToolsPages.set(client, names);
-      return names.has(toolName);
-    }
-  );
+  const listPage = (cursor: string | undefined) =>
+    withPageResponseSizeLimit(undefined, () =>
+      client.listTools(cursor === undefined ? undefined : { cursor }, options)
+    );
+  const { metadataCached } = await listAllMcpTools(listPage, client);
+  if (metadataCached) {
+    toolsListedClients.add(client);
+    return;
+  }
+  // The SDK could not take the whole catalog. Re-read up to the page holding
+  // this tool so its metadata is the page cached, and list again next call.
+  await forEachMcpToolsPage(listPage, tools => tools.some(tool => tool.name === toolName));
 }
 
 /**
