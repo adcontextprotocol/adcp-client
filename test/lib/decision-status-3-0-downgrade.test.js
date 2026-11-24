@@ -228,6 +228,7 @@ describe('3.0 decision-status adapters', () => {
     ['check_governance', 'verdict', 'denied'],
     ['report_plan_outcome', 'outcome_state', 'findings'],
     ['acquire_rights', 'rights_status', 'acquired'],
+    ['creative_approval', 'approval_status', 'rejected'],
   ];
 
   for (const [tool, field, value] of DECISIONS) {
