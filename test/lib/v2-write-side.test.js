@@ -7,17 +7,13 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { resetWarnings } = require('../../dist/lib/utils/deprecation.js');
 
 const {
   packageRefsForFormatOptions,
-  packageRefsForCapabilities,
   FormatOptionRefsLookupError,
-  CapabilityIdsLookupError,
   legacyFormatIdsFromOptions,
   tryLegacyFormatIdsFromOptions,
   legacyFormatIdsForFormatOption,
-  legacyFormatIdsForCapability,
   lintPackageFormatSelectorDimensions,
   projectCreativeForDelivery,
   projectMediaBuyCreativesForDelivery,
@@ -778,73 +774,6 @@ describe('packageRefsForFormatOptions (canonical surface with private downgrade 
   });
 });
 
-describe('packageRefsForCapabilities (3.1.0-beta.3 compatibility)', () => {
-  const beta3Product = {
-    product_id: 'p1',
-    format_options: [
-      {
-        format_kind: 'image',
-        capability_id: 'nytimes_mrec',
-        v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
-      },
-      {
-        format_kind: 'video_hosted',
-        capability_id: 'nytimes_video_30s',
-        v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'video_standard_30s' }],
-      },
-    ],
-  };
-
-  test('emits beta.3 capability_ids rather than beta.5 format_option_refs and warns once', () => {
-    resetWarnings();
-    const originalWarn = console.warn;
-    const warnings = [];
-    console.warn = message => warnings.push(String(message));
-    try {
-      const refs = packageRefsForCapabilities(beta3Product, ['nytimes_mrec', 'nytimes_video_30s', 'nytimes_mrec']);
-
-      assert.deepStrictEqual(refs.capability_ids, ['nytimes_mrec', 'nytimes_video_30s']);
-      assert.strictEqual('format_option_refs' in refs, false);
-      assert.deepStrictEqual(refs.format_ids.map(f => f.id).sort(), ['display_300x250_image', 'video_standard_30s']);
-
-      packageRefsForCapabilities(beta3Product, ['nytimes_mrec']);
-    } finally {
-      console.warn = originalWarn;
-    }
-    assert.strictEqual(warnings.length, 1);
-    assert.match(warnings[0], /Beta\.5\+ sellers reject capability_ids/);
-  });
-
-  test('preserves beta.3 error class and code names', () => {
-    assert.throws(
-      () => packageRefsForCapabilities(beta3Product, ['unknown_cap']),
-      err => {
-        assert.ok(err instanceof CapabilityIdsLookupError);
-        assert.strictEqual(err.code, 'unknown_capability_id');
-        assert.deepStrictEqual(err.available, ['nytimes_mrec', 'nytimes_video_30s']);
-        return true;
-      }
-    );
-  });
-
-  test('also accepts beta.5 format_option_id declarations for migration callers', () => {
-    const refs = packageRefsForCapabilities(
-      {
-        format_options: [
-          {
-            format_kind: 'image',
-            format_option_id: 'nytimes_mrec',
-            v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
-          },
-        ],
-      },
-      ['nytimes_mrec']
-    );
-
-    assert.deepStrictEqual(refs.capability_ids, ['nytimes_mrec']);
-  });
-});
-
 describe('legacyFormatIdsForFormatOption', () => {
   const product = {
     product_id: 'p1',
@@ -903,24 +832,5 @@ describe('legacyFormatIdsForFormatOption', () => {
       format_option_id: 'meta_reels',
     });
     assert.strictEqual(ids[0].id, 'meta_reels');
-  });
-});
-
-describe('legacyFormatIdsForCapability', () => {
-  test('resolves beta.3 capability_id declarations', () => {
-    const ids = legacyFormatIdsForCapability(
-      {
-        format_options: [
-          {
-            format_kind: 'video_hosted',
-            capability_id: 'video_30s',
-            v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'video_standard_30s' }],
-          },
-        ],
-      },
-      'video_30s'
-    );
-
-    assert.strictEqual(ids[0].id, 'video_standard_30s');
   });
 });
