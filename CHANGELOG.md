@@ -1,5 +1,13 @@
 # Changelog
 
+## 17.0.0-beta.39
+
+### Patch Changes
+
+- b9a1efd: Add structured, allowlisted diagnostics for HTTP 401 and 403 responses. `AuthenticationRequiredError.authDiagnostics` (on rejected SDK-signed requests) and `TransportActivity.authDiagnostics` (on `onTransportActivity` `response_received` events with status 401 or 403) carry the parsed outbound `Signature-Input` parameters (`label`, `keyid`, `alg`, `created`, `expires`, `tag`, covered components, and whether a nonce was sent), the outbound `Content-Digest`, the normalized `WWW-Authenticate` scheme with a recognized `error` code and a token-only `realm`, and the AdCP version pin. They never include `Signature` bytes, the nonce value, or request-body data. Every value is screened against request credentials; see the signing guide for the exact rule. Existing fields, messages, and `responseBody` behavior are unchanged. New public types: `AuthFailureDiagnostics`, `RequestSignatureDiagnostics`, `WwwAuthenticateDiagnostics`.
+
+  Also redact echoed request signatures. When a seller echoes the `Signature` the SDK sent, the signed-rejection `responseBody` excerpt, its raw-capture headers, and `onTransportActivity` response bodies now mask it. This covers both the `sig1=:…:` header value and bare signature bytes in either Base64 alphabet. Previously only echoed bearer tokens and custom credentials were masked in the rejection excerpt. `Signature-Input` parameters stay visible.
+
 ## 17.0.0-beta.38
 
 ### Patch Changes
