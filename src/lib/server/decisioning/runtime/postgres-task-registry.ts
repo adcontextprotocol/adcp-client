@@ -65,6 +65,7 @@ import type {
   TaskStatus,
 } from './task-registry';
 import { sanitizeTaskProgressForStorage } from './task-registry';
+import { assertPlatformIdsAgree, withDualPlatformIds } from '../../../utils/platform-id';
 
 /**
  * Minimal subset of the `pg.Pool` interface used by the registry.
@@ -756,7 +757,11 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       if (scope.registryId !== undefined && scope.registryId !== registryId) return { outcome: 'not_found_in_scope' };
       let json: string;
       try {
-        json = safeStringify(result, taskId);
+        // AdCP 3.3: stored sync_event_sources / sync_audiences rows carry both
+        // platform identifier names. The tool isn't known here; only those
+        // two results have identifier-bearing rows.
+        assertPlatformIdsAgree(result);
+        json = safeStringify(withDualPlatformIds(result), taskId);
         assertResultSize(json, taskId);
       } catch (payloadError) {
         return await classifyAfterInvalidPayload('complete', taskId, scope, payloadError);

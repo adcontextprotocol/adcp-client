@@ -24,6 +24,12 @@ import { randomUUID } from 'node:crypto';
 import type { AdcpStructuredError, TaskHandoffProgress } from '../async-outcome';
 import { stripCtxMetadata, stripImplementationConfig } from '../../ctx-metadata';
 import { sanitizeStructuredAdcpError } from '../../errors';
+import {
+  addDualPlatformIdsInPlace,
+  assertPlatformIdsAgree,
+  toolHasPlatformIdRows,
+  withDualPlatformIds,
+} from '../../../utils/platform-id';
 
 /**
  * AdCP-spec task lifecycle states. Mirrors `enums/task-status.json` —
@@ -410,8 +416,16 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       const existing = tasks.get(taskStorageKey(taskId, scope));
       if (!existing) return { outcome: 'not_found_in_scope' };
       if (isTerminalTaskStatus(existing.status)) return { outcome: 'already_terminal', status: existing.status };
+      let stored: TResult = result;
+      if (toolHasPlatformIdRows(existing.tool)) {
+        // AdCP 3.3: a stored result is served as stored to every later reader,
+        // so its rows carry both platform identifier names. Refuse two
+        // different values before anything is stored.
+        assertPlatformIdsAgree(result);
+        stored = withDualPlatformIds(result);
+      }
       existing.status = 'completed';
-      existing.result = result;
+      existing.result = stored;
       existing.updatedAt = new Date().toISOString();
       return { outcome: 'applied' };
     },
@@ -617,6 +631,10 @@ export function sanitizeTaskResultForWire<T>(result: T, taskRef?: ScopedTaskRef)
     stripImplementationConfig(record);
     sanitizeEmbeddedStructuredErrors(result);
     if (taskRef) stripIssuedTaskRef(result, taskRef);
+    // Stored results reach readers of every release; carry both platform
+    // identifier names (AdCP 3.3) so older readers' projection finds seller_id
+    // and newer readers get platform_id.
+    addDualPlatformIdsInPlace(result);
   }
   return result;
 }

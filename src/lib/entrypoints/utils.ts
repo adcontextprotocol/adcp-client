@@ -12,6 +12,7 @@ export { canonicalize, canonicalJsonSha256 } from '../utils/jcs';
 
 // Media-buy status.
 export { getAuthoritativeMediaBuyStatus, isMediaBuyStatus } from '../utils/media-buy-status';
+export { platformIdOf, type PlatformIdentifiedRow } from '../utils/platform-id';
 
 // Response unwrapping and classification.
 export {

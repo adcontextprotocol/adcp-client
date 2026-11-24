@@ -98,6 +98,7 @@ import {
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentRegistry } from '../buyer-agent';
 import { suggestBilling } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
+import { findPlatformIdMismatch, toolHasPlatformIdRows } from '../../../utils/platform-id';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { CanonicalPreviewCreativeRequest } from '../../../v2/projection/creative-delivery';
@@ -5882,6 +5883,16 @@ async function dispatchHitl<TResult>(
     let taskFnError: unknown;
     try {
       result = await taskFn(taskRef);
+      // AdCP 3.3: a row's platform_id and seller_id must agree. Fail the task
+      // here, through the normal failure path, rather than letting the
+      // registry refuse the write and strand the task in `submitted`.
+      const mismatch = toolHasPlatformIdRows(opts.tool) ? findPlatformIdMismatch(result) : undefined;
+      if (mismatch) {
+        throw new AdcpError('INTERNAL_ERROR', {
+          recovery: 'terminal',
+          message: `${opts.tool} returned a row whose platform_id and seller_id differ (${mismatch.pointer}). The seller must report one platform identifier.`,
+        });
+      }
     } catch (err) {
       taskFnError = err;
     }

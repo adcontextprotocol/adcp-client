@@ -44,6 +44,7 @@ import {
 } from './postgres-task-registry';
 import { sanitizeTaskResultForWire, type ScopedTaskRef, type TaskRegistry, type TaskStatus } from './task-registry';
 import { projectBoundTaskResultForRelease } from './task-result-release';
+import { findPlatformIdMismatch, toolHasPlatformIdRows } from '../../../utils/platform-id';
 
 export interface TaskPushSettlementConfig {
   /** Validated destination from the original push_notification_config. */
@@ -515,6 +516,12 @@ export function createPostgresTaskSettlementCoordinator(
         throw new TypeError('Task rejection reason must be a string');
       }
       assertWellFormedUnicode({ result, error, reason }, 'Task terminal result/error');
+      const platformIdMismatch = toolHasPlatformIdRows(observed.tool) ? findPlatformIdMismatch(result) : undefined;
+      if (platformIdMismatch) {
+        throw new TaskPushSettlementConfigurationError(
+          `Task result ${platformIdMismatch.pointer} carries different platform_id and seller_id; AdCP 3.3 requires them to be identical`
+        );
+      }
       // Validate the exact canonical domain used later for immutable
       // terminal and outbox fingerprints. JSON.stringify alone would
       // silently coerce NaN/Infinity and exotic objects.
