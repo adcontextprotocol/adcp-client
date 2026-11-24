@@ -29,6 +29,7 @@ const {
   MAX_TOOLS_LIST_PAGES,
   forEachMcpToolsPage,
   listAllMcpTools,
+  listMcpToolCatalog,
   toolsListPageParams,
 } = require('../../dist/lib/protocols/mcp-tools-list.js');
 
@@ -47,9 +48,10 @@ function pagedFetcher(pages, requested = []) {
 describe('mcp-tools-list: forEachMcpToolsPage / listAllMcpTools', () => {
   it('returns the union of tools across pages and sends each cursor in order', async () => {
     const requested = [];
-    const { tools } = await listAllMcpTools(
+    const { tools, pages } = await listAllMcpTools(
       pagedFetcher([[tool('a')], [tool('b')], [tool('c'), tool('d')]], requested)
     );
+    assert.equal(pages, 3);
     assert.deepEqual(
       tools.map(t => t.name),
       ['a', 'b', 'c', 'd']
@@ -142,37 +144,133 @@ describe('mcp-tools-list: forEachMcpToolsPage / listAllMcpTools', () => {
     assert.equal(await forEachMcpToolsPage(pagedFetcher([[tool('a')], [tool('b')], [tool('c')]]), () => {}), 3);
   });
 
-  describe('metadataCached', () => {
-    const twoPages = () => pagedFetcher([[tool('a')], [tool('b'), tool('a')]]);
+  it('listAllMcpTools returns the deduplicated union and the number of pages read', async () => {
+    const { tools, pages } = await listAllMcpTools(pagedFetcher([[tool('a')], [tool('b'), tool('a')]]));
+    assert.deepEqual(
+      tools.map(t => t.name),
+      ['a', 'b']
+    );
+    assert.equal(pages, 2);
+  });
 
-    it('resets the client tool-metadata cache to the whole deduplicated catalog after a multi-page read', async () => {
-      const cached = [];
-      const client = { cacheToolMetadata: tools => cached.push(tools.map(t => t.name)) };
-      const { metadataCached } = await listAllMcpTools(twoPages(), client);
-      assert.equal(metadataCached, true);
-      assert.deepEqual(cached, [['a', 'b']]);
-    });
+  describe('listMcpToolCatalog', () => {
+    const PARAMS = { _meta: { adcp_version: '3.0' } };
+    const OPTIONS = { timeout: 1234 };
+    const PAGES = [[tool('a')], [tool('b'), tool('a')], [tool('c')]];
 
-    it('is true without touching the client when the catalog is a single page', async () => {
-      const client = {
-        cacheToolMetadata: () => assert.fail('a single page already left the SDK cache complete'),
+    /** A fake legacy client over `pages`; `log` records every call in order. */
+    function fakeClient(pages, { commit = true, failOnPage } = {}) {
+      const log = [];
+      const result = cursor => {
+        const index = cursor === undefined ? 0 : Number(cursor.slice(1));
+        if (failOnPage === index) throw new Error(`page ${index} failed`);
+        return { tools: pages[index], ...(index + 1 < pages.length && { nextCursor: `c${index + 1}` }) };
       };
-      const { metadataCached } = await listAllMcpTools(pagedFetcher([[tool('a')]]), client);
-      assert.equal(metadataCached, true);
-    });
+      const client = {
+        async listTools(params, options) {
+          log.push({ via: 'listTools', cursor: params?.cursor, params, options });
+          return result(params?.cursor);
+        },
+        async request(req, schema, options) {
+          log.push({
+            via: 'request',
+            method: req.method,
+            cursor: req.params?.cursor,
+            params: req.params,
+            options,
+            schema,
+          });
+          return result(req.params?.cursor);
+        },
+        ...(commit && { cacheToolMetadata: tools => log.push({ via: 'commit', names: tools.map(t => t.name) }) }),
+      };
+      return { client, log };
+    }
 
-    it('is false for a multi-page read when no client is given', async () => {
-      assert.equal((await listAllMcpTools(twoPages())).metadataCached, false);
-    });
+    it('fetches every page through request() and commits the deduplicated union once, at the end', async () => {
+      const { client, log } = fakeClient(PAGES);
+      const { tools, metadataCached } = await listMcpToolCatalog(client, PARAMS, OPTIONS);
 
-    it('is false, changing nothing, when the client has no cacheToolMetadata (older or newer SDK)', async () => {
-      const { tools, metadataCached } = await listAllMcpTools(twoPages(), {});
-      assert.equal(metadataCached, false);
       assert.deepEqual(
         tools.map(t => t.name),
-        ['a', 'b'],
-        'the tool list itself is still complete'
+        ['a', 'b', 'c']
       );
+      assert.equal(metadataCached, true);
+      assert.deepEqual(
+        log.map(entry => entry.via),
+        ['request', 'request', 'request', 'commit'],
+        'no listTools() call (it would replace the SDK cache with one page), and the commit comes last'
+      );
+      assert.deepEqual(
+        log.slice(0, 3).map(entry => entry.cursor),
+        [undefined, 'c1', 'c2']
+      );
+      for (const entry of log.slice(0, 3)) {
+        assert.equal(entry.method, 'tools/list');
+        assert.equal(entry.options, OPTIONS);
+        assert.deepEqual(entry.params._meta, PARAMS._meta, '_meta rides on every page');
+        assert.ok(entry.schema, 'the result schema is passed');
+      }
+      assert.deepEqual(log[3].names, ['a', 'b', 'c']);
+    });
+
+    it('commits a single page once, also without listTools()', async () => {
+      const { client, log } = fakeClient([[tool('a')]]);
+      const { metadataCached } = await listMcpToolCatalog(client, PARAMS, OPTIONS);
+      assert.equal(metadataCached, true);
+      assert.deepEqual(
+        log.map(entry => entry.via),
+        ['request', 'commit']
+      );
+    });
+
+    it('never commits when a page fails mid-read, leaving the previous cache intact', async () => {
+      const { client, log } = fakeClient(PAGES, { failOnPage: 1 });
+      await assert.rejects(() => listMcpToolCatalog(client, PARAMS, OPTIONS), /page 1 failed/);
+      assert.deepEqual(
+        log.map(entry => entry.via),
+        ['request', 'request'],
+        'page 1 was fetched, page 2 failed, nothing committed'
+      );
+    });
+
+    it('wraps every page fetch with wrapPage', async () => {
+      const { client } = fakeClient(PAGES);
+      let wrapped = 0;
+      await listMcpToolCatalog(client, PARAMS, OPTIONS, async fetch => {
+        wrapped++;
+        return fetch();
+      });
+      assert.equal(wrapped, 3);
+    });
+
+    describe('when the SDK has no cacheToolMetadata', () => {
+      it('reads page 1 through listTools() and later pages through request(); metadataCached is false for several pages', async () => {
+        const { client, log } = fakeClient(PAGES, { commit: false });
+        const { tools, metadataCached } = await listMcpToolCatalog(client, PARAMS, OPTIONS);
+
+        assert.deepEqual(
+          tools.map(t => t.name),
+          ['a', 'b', 'c'],
+          'the tool list itself is still complete'
+        );
+        assert.equal(metadataCached, false);
+        assert.deepEqual(
+          log.map(entry => `${entry.via}:${entry.cursor}`),
+          ['listTools:undefined', 'request:c1', 'request:c2'],
+          'the SDK cache is left holding page 1, as it did before pagination was followed'
+        );
+      });
+
+      it('is metadataCached for a single page, read through listTools() alone', async () => {
+        const { client, log } = fakeClient([[tool('a')]], { commit: false });
+        const { metadataCached } = await listMcpToolCatalog(client, PARAMS, OPTIONS);
+        assert.equal(metadataCached, true);
+        assert.deepEqual(
+          log.map(entry => entry.via),
+          ['listTools']
+        );
+      });
     });
   });
 
@@ -387,7 +485,7 @@ describe('SingleAgentClient.getAgentInfo() follows every tools/list page (HTTP, 
  * a plain `get_products` on page 2 (the shape of adcp-client#3717's review
  * findings). `createdTasks()` counts task creations.
  */
-async function createPagedTasksServer(t, { taskToolPage = 1 } = {}) {
+async function createPagedTasksServer(t, { taskToolPage = 1, thirdPage = false } = {}) {
   const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
   const { InMemoryTaskStore } = require('../../dist/lib/server/tasks.js');
   const z = require('zod');
@@ -434,13 +532,22 @@ async function createPagedTasksServer(t, { taskToolPage = 1 } = {}) {
     registerPlainTool();
     registerTaskTool();
   }
+  if (thirdPage) {
+    mcp.registerTool('get_formats', { inputSchema: {} }, async () => ({ content: [{ type: 'text', text: '{}' }] }));
+  }
 
   // McpServer does not paginate, so wrap its tools/list handler to serve one
   // tool per page while keeping its task plumbing for tools/call.
   const lowLevel = mcp.server;
   const fullListHandler = lowLevel._requestHandlers.get('tools/list');
   const listCursors = [];
+  // `hold(cursor)` parks the next tools/list request for that cursor until released.
+  let gate;
   lowLevel._requestHandlers.set('tools/list', async (request, extra) => {
+    if (gate && request.params?.cursor === gate.cursor) {
+      gate.reached();
+      await gate.released;
+    }
     const full = await fullListHandler(request, extra);
     const index = request.params?.cursor === undefined ? 0 : Number(request.params.cursor.slice('page-'.length));
     listCursors.push(request.params?.cursor);
@@ -466,7 +573,17 @@ async function createPagedTasksServer(t, { taskToolPage = 1 } = {}) {
     protocol: 'mcp',
     _inProcessMcpClient: mcpClient,
   };
-  return { mcpClient, agent, listCursors, createdTasks: () => createdTasks };
+  const hold = cursor => {
+    let release;
+    let reached;
+    const held = {
+      reached: new Promise(resolve => (reached = resolve)),
+      release: () => release(),
+    };
+    gate = { cursor, reached, released: new Promise(resolve => (release = resolve)) };
+    return held;
+  };
+  return { mcpClient, agent, listCursors, hold, createdTasks: () => createdTasks };
 }
 
 describe('MCP tasks: ensureToolsListed reads the whole catalog (callMCPToolWithClient)', () => {
@@ -505,6 +622,90 @@ describe('MCP tasks: ensureToolsListed reads the whole catalog (callMCPToolWithC
     // Previously: "Server requires task augmentation for tool 'create_media_buy'".
     await callMCPToolWithClient(harness.mcpClient, 'create_media_buy', { campaign_name: 'second' });
     assert.equal(harness.createdTasks(), 2, 'the second call must also be a task');
+  });
+});
+
+describe('MCP tasks: discovery never disturbs the SDK metadata cache mid-read', () => {
+  it('keeps task augmentation for concurrent calls while discovery is held on page 3, and after it fails', async t => {
+    // Re-review finding 1: discovery used to page through listTools(), which
+    // replaces the SDK's cached task metadata on every page. A call made while
+    // discovery was between pages (or after a page failed) saw a cache holding
+    // only some pages, and a required-task tool lost task augmentation.
+    const harness = await createPagedTasksServer(t, { taskToolPage: 1, thirdPage: true });
+
+    await callMCPToolWithClient(harness.mcpClient, 'create_media_buy', { campaign_name: 'warm-up' });
+    assert.equal(harness.createdTasks(), 1);
+
+    const held = harness.hold('page-2');
+    const controller = new AbortController();
+    const client = new SingleAgentClient(harness.agent, { validateFeatures: false });
+    const discovery = client.getAgentInfo({ signal: controller.signal });
+    const discoveryOutcome = discovery.then(
+      () => 'resolved',
+      () => 'rejected'
+    );
+    await held.reached; // pages 1 and 2 are read; the page-3 response is held
+
+    await callMCPToolWithClient(harness.mcpClient, 'create_media_buy', { campaign_name: 'during-discovery' });
+    assert.equal(harness.createdTasks(), 2, 'a call made mid-discovery must still be a task');
+
+    controller.abort();
+    held.release();
+    assert.equal(await discoveryOutcome, 'rejected', 'the aborted discovery fails');
+
+    await callMCPToolWithClient(harness.mcpClient, 'create_media_buy', { campaign_name: 'after-failed-discovery' });
+    assert.equal(harness.createdTasks(), 3, 'a call after the failed discovery must still be a task');
+  });
+});
+
+describe('listMcpToolCatalog without cacheToolMetadata on a real v1 client', () => {
+  it('still validates a page-1 tool output after two-page discovery', async t => {
+    // Re-review finding 2: with the private method hidden, the fallback must
+    // leave page 1's metadata (its output validator) cached, as before pagination.
+    const server = new Server({ name: 'paged-validated', version: '1.0.0' }, { capabilities: { tools: {} } });
+    const valueTool = {
+      ...tool('get_value'),
+      outputSchema: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'] },
+    };
+    const pages = [valueTool, tool('other_tool')];
+    server.setRequestHandler(ListToolsRequestSchema, async request => {
+      const index = request.params?.cursor === undefined ? 0 : Number(request.params.cursor.slice('page-'.length));
+      return { tools: [pages[index]], ...(index + 1 < pages.length && { nextCursor: `page-${index + 1}` }) };
+    });
+    server.setRequestHandler(CallToolRequestSchema, async () => ({
+      content: [{ type: 'text', text: '{"value":123}' }],
+      structuredContent: { value: 123 },
+    }));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const mcpClient = new Client({ name: 'pagination-test', version: '1.0.0' });
+    await mcpClient.connect(clientTransport);
+    t.after(async () => {
+      await mcpClient.close();
+      await server.close();
+    });
+
+    // Hide only the private method; every other member is bound to the real client.
+    const hidden = new Proxy(mcpClient, {
+      get(target, prop) {
+        if (prop === 'cacheToolMetadata') return undefined;
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+
+    const { tools, metadataCached } = await listMcpToolCatalog(hidden, {}, undefined);
+    assert.deepEqual(
+      tools.map(x => x.name),
+      ['get_value', 'other_tool']
+    );
+    assert.equal(metadataCached, false);
+
+    await assert.rejects(
+      () => mcpClient.callTool({ name: 'get_value', arguments: {} }),
+      /structured content|output schema/i,
+      'the page-1 output validator must survive the fallback read'
+    );
   });
 });
 
