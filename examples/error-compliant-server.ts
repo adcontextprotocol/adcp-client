@@ -20,13 +20,14 @@ import {
   legacyDeliveryResponse,
   serve,
   DEFAULT_REPORTING_CAPABILITIES,
-} from '@adcp/sdk';
+} from '@adcp/sdk/server';
 import {
   GetProductsRequestSchema,
   CreateMediaBuyRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
 } from '@adcp/sdk/schemas';
-import type { LegacyProduct, ServerPayload } from '@adcp/sdk';
+import type { LegacyProduct } from '@adcp/sdk';
+import type { ServerPayload } from '@adcp/sdk/server';
 import type { GetAdCPCapabilitiesResponse } from '@adcp/sdk/types';
 
 // CreateMediaBuyRequestSchema requires account/brand per spec, but a lenient

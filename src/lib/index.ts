@@ -1283,247 +1283,489 @@ export type { StandardErrorCode, ErrorRecovery } from './types/error-codes';
 // ====== SERVER-SIDE HELPERS ======
 // Low-level raw response builders are explicit `legacy*` migration APIs.
 // Modern DecisioningPlatform handlers return canonical payloads directly.
+// Deprecated here: every name re-exported from `./server` is on
+// `@adcp/sdk/server`. 18.0 drops these root re-exports so `.` and `./client`
+// stop loading the server modules (#3664).
 export {
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   adcpError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyCapabilitiesResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyProductsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyMediaBuyResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyDeliveryResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyListAccountsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyListCreativeFormatsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyUpdateMediaBuyResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyGetMediaBuysResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyPerformanceFeedbackResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyBuildCreativeResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyBuildCreativeMultiResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyPreviewCreativeResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyCreativeDeliveryResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyListCreativesResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyListPropertyListsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyListCollectionListsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyListContentStandardsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyGetPlanAuditLogsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacySyncCreativesResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyGetSignalsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyActivateSignalResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyCancelMediaBuyResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyAcquireRightsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyAcquireRightsAcquired,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyAcquireRightsPendingApproval,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyAcquireRightsRejected,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacySyncAccountsResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacySyncGovernanceResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   legacyReportUsageResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   validActionsForStatus,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   MEDIA_BUY_TRANSITIONS,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   getMediaBuyTransitions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   CREATIVE_ASSET_TRANSITIONS,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   isLegalMediaBuyTransition,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   isLegalCreativeTransition,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   assertMediaBuyTransition,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   assertCreativeTransition,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   getAccountMode,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   isSandboxOrMockAccount,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   assertSandboxAccount,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   taskToolResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   registerAdcpTaskTool,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   createTaskCapableServer,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   InMemoryTaskStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   isTerminal,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   serve,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   taskScopeFromPrincipal,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   UnknownHostError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   hostname,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   resolveHost,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   verifyIntrospection,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   registerTestController,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   handleTestControllerRequest,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TestControllerError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   toMcpResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TOOL_INPUT_SHAPE,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   CONTROLLER_SCENARIOS,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   DISCOVERY_ARM_SCENARIOS,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   REPORTING_SUBSCRIPTION_PROBE_SCENARIO,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   REPORTING_SUBSCRIPTION_PROBE_OPERATIONS,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RESET_STATE_SCENARIO,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   reportingSubscriptionProbeParamsError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SEED_SCENARIOS,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SESSION_ENTRY_CAP,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   enforceMapCap,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   createSeedFixtureCache,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PostgresTaskStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   cleanupExpiredTasks,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   getMcpTasksMigration,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   MCP_TASKS_MIGRATION,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ADCP_PRE_TRANSPORT,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   checkGovernance,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   governanceDeniedError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   DEFAULT_REPORTING_CAPABILITIES,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   InMemoryStateStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PostgresStateStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   getAdcpStateMigration,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ADCP_STATE_MIGRATION,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   StateError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PatchConflictError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SESSION_KEY_FIELD,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   createSessionedStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   scopedStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   patchWithRetry,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   isPutIfMatchConflict,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   requireSessionKey,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   structuredSerialize,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   structuredDeserialize,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   createIdempotencyStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   memoryBackend,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   pgBackend,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   getIdempotencyMigration,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   IDEMPOTENCY_MIGRATION,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   cleanupExpiredIdempotency,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   redisBackend,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   createLazyBackend,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   hashPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   IdempotencyClaimOwnershipError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   getServeRequestContext,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ADCP_SERVE_REQUEST_CONTEXT,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   createA2AAdapter,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   A2AInvocationError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   MCP_APP_RESOURCE_MIME_TYPE,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY,
 } from './server';
 export type {
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpErrorOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpErrorResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpMutationOutcome,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   McpToolResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ValidAction,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   CancelMediaBuyInput,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpTaskToolConfig,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TaskStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TaskMessageQueue,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   CreateTaskOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ToolTaskHandler,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   CreateTaskRequestHandlerExtra,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TaskRequestHandlerExtra,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   CreateTaskResult,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   GetTaskResult,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   Task,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ServeContext,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ServeOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PgQueryable,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PostgresTaskStoreOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ReportingSubscriptionProbeOperation,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ReportingSubscriptionProbeParams,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ReportingSubscriptionProbeSimulated,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ReportingSubscriptionProbeSetAccountTimezoneResult,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ReportingSubscriptionProbeTimezoneCutover,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TestControllerStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TestControllerStoreFactory,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TestControllerStoreOrFactory,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ControllerScenario,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SeedScenario,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SeedFixtureCache,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SessionContext,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   OnInstructionsError,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   MaybePromise,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyAdcpServerConfig,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyAdcpToolMap,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpServerToolName,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpCapabilitiesConfig,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyAdcpCustomToolConfig,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyAdcpCustomToolHandler,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyAdcpCustomToolHandlerExtra,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   McpAppUiMeta,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   McpAppMeta,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpMcpResourceDefinition,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   McpAppResourceCsp,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   McpAppResourcePermissions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   McpAppResourceUiMeta,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   McpAppResourceMeta,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   McpAppResourceReadContext,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpLogger,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyHandlerContext,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyMediaBuyHandlers,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacySignalsHandlers,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyCreativeHandlers,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyGovernanceHandlers,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyAccountHandlers,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyEventTrackingHandlers,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacySponsoredIntelligenceHandlers,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SignedRequestsConfig,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpPreTransport,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpServer,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpServerTransport,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpTestRequest,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpTestToolsCallRequest,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpTestResponse,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpInvokeOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   StructuredContentFallbackTransport,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   StructuredContentTextFallback,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   StructuredContentTextFallbackContext,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   CheckGovernanceOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   GovernanceCallResult,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   GovernanceApproved,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   GovernanceDenied,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   GovernanceConditions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AdcpStateStore,
+  /** @deprecated Import `ListOptions` from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ListOptions as StateListOptions,
+  /** @deprecated Import `ListResult` from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ListResult as StateListResult,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PostgresStateStoreOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   InMemoryStateStoreOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   VersionedDocument,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PutIfMatchResult,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PatchWithRetryOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   StateErrorCode,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SessionKeyContext,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   IdempotencyStore,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   IdempotencyStoreConfig,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   IdempotencyBackend,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   IdempotencyCacheEntry,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   IdempotencyCheckResult,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   MemoryBackendOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PgBackendOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RedisBackendOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RedisBackendClient,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RedisLikeClient,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LazyBackendFactory,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LazyBackendOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   A2AAdapter,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   A2AAdapterOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   A2AAgentCardOverrides,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   A2AAgentCapabilitiesOverride,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   A2AAgentSkillOverride,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   A2AMountOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ExpressAppLike,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyHttpSecurityScheme,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacySecurityScheme,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   AccountMode,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RequireCacheScopeWhenProducts,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ServerPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   GetProductsPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   CreateMediaBuyPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   UpdateMediaBuyPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   GetMediaBuysPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   GetMediaBuyDeliveryPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ListCreativesPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   GetCreativeDeliveryPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   CanonicalPreviewCreativePayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   PreviewCreativePayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyGetProductsPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyCreateMediaBuyPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyUpdateMediaBuyPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyGetMediaBuysPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyGetMediaBuyDeliveryPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyListCreativesPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyGetCreativeDeliveryPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyListCreativeFormatsPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyListCreativeFormatsResponsePayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyListCreativeFormatsServerPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyBuildCreativePayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyBuildCreativeMultiPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyBuildCreativeVariantPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   LegacyPreviewCreativePayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SyncCreativesPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SyncCreativesSuccessPayload,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SyncCreativesErrorPayload,
 } from './server';
 
@@ -2353,41 +2595,75 @@ export type {
 } from './substitution';
 
 // ====== TEST HELPERS ======
-// Re-export test helpers for convenience (also available via @adcp/sdk/testing)
+// Deprecated here: import test helpers from `@adcp/sdk/testing`. 18.0 drops
+// these root re-exports so `.` and `./client` stop loading the testing
+// modules (#3664).
 export {
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   testAgent,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   testAgentA2A,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   testAgentClient,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   createTestAgent,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TEST_AGENT_TOKEN,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TEST_AGENT_MCP_CONFIG,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TEST_AGENT_A2A_CONFIG,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   testAgentNoAuth,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   testAgentNoAuthA2A,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TEST_AGENT_NO_AUTH_MCP_CONFIG,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TEST_AGENT_NO_AUTH_A2A_CONFIG,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   creativeAgent,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   testBrandRightsFlow,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   hasBrandRightsTools,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   expectControllerError,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   expectControllerSuccess,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RateLimitTripObserver,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RATE_LIMIT_TRIP_CONTRACT,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RATE_LIMIT_TRIP_DEFAULT_REPLAY_MAX_WAIT_SECONDS,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RATE_LIMIT_TRIP_MAX_ATTEMPTS_MAX,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RATE_LIMIT_TRIP_MAX_ATTEMPTS_MIN,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   validateRateLimitTripSpec,
 } from './testing/index';
 export type {
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   ControllerErrorWithDetail,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   TestClient,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RateLimitTripSpec,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RateLimitTripClient,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RateLimitTripFailureCode,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RateLimitTripObservation,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RateLimitTripObserverOptions,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RateLimitTripResponseSnapshot,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RateLimitTripStructuredResult,
+  /** @deprecated Import from `@adcp/sdk/testing`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   RateLimitTripTaskOptions,
 } from './testing/index';
 export * from './client/account-change-cursor';
@@ -2397,10 +2673,16 @@ export * from './notifications/account-change-recorded';
 export type { AccountChangeFeedCapabilities } from './utils/capabilities';
 
 export * from './media-buy/actions';
-export { mediaBuyActionResolver } from './server/media-buy-action-resolver';
+export {
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
+  mediaBuyActionResolver,
+} from './server/media-buy-action-resolver';
 export type {
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SellerActionDecision,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SellerActionResolutionOptions,
+  /** @deprecated Import from `@adcp/sdk/server`; removed from `@adcp/sdk` and `@adcp/sdk/client` in 18.0. */
   SellerActionResolution,
 } from './server/media-buy-action-resolver';
 

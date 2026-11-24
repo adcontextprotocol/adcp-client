@@ -651,7 +651,7 @@ function generateLlmsTxt(
   ln(`## Server framework reference`);
   ln();
   ln('```typescript');
-  ln(`import { serve } from '@adcp/sdk';`);
+  ln(`import { serve } from '@adcp/sdk/server';`);
   ln(`import {`);
   ln(`  createAdcpServerFromPlatform,`);
   ln(`  createIdempotencyStore,`);

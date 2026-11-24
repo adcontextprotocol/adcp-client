@@ -172,7 +172,7 @@ tool argument. The verifier runs before storage is read, on every page.
 
 ```typescript
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import { registerPropertyListTool } from '@adcp/sdk/server';
 
 serve(() => {
