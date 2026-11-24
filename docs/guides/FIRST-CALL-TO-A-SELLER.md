@@ -91,17 +91,21 @@ distinct 3.2 keys may then resolve to the same seller account. Fields set to
 `undefined` are omitted on the wire and do not trigger this guard.
 
 For implicit sellers, the default `accountReferenceMode: 'auto'` selects
-`{ account_id }` after provisioning only when the seller declares
-`account.stable_account_id: true` (normalized as `capabilities.account.stableAccountId`),
-or both the effective wire version and seller contract require IDs under AdCP 4+.
+`{ account_id }` after provisioning whenever the call is negotiated at AdCP 3.3
+or later. AdCP 3.3 makes the seller's `account_id` the account's identity: every
+seller accepts it on every account-scoped task, and buyers must not wait for the
+deprecated `account.stable_account_id` flag before sending it. Below 3.3 the ID
+is selected only when the seller declares `stable_account_id: true` (normalized
+as `capabilities.account.stableAccountId`).
 For these sellers, `resolveAccount()` returns the ID reference, and requests
 using a provisioned natural key are rewritten to the same ID across discovery,
 creative sync, media buys, and other account-scoped tasks. `sync_accounts`
 provisioning and explicit `list_accounts` filters keep their authored references.
-An ID returned by a legacy implicit seller alone does not establish that IDs
-are accepted; those sellers still receive the natural key. Set
-`accountReferenceMode: 'natural-key'` to retain natural-key selection on implicit
-sellers. Explicitly supplied ID references are preserved in either mode.
+An ID returned by a seller negotiated below 3.3 does not establish that IDs are
+accepted; those sellers still receive the natural key, as does a 3.3 seller that
+returned no ID. Set `accountReferenceMode: 'natural-key'` to retain natural-key
+selection on implicit sellers. Explicitly supplied ID references are preserved
+in either mode.
 
 `resolveAccount()` still returns a wire reference by default, so existing code
 can pass the result directly as `account`. To retain the seller's handle even

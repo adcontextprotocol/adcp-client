@@ -98,6 +98,11 @@ import {
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentRegistry } from '../buyer-agent';
 import { suggestBilling } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
+import {
+  findPlatformIdMismatch,
+  projectPlatformIdsForRelease,
+  toolHasPlatformIdRows,
+} from '../../../utils/platform-id';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { CanonicalPreviewCreativeRequest } from '../../../v2/projection/creative-delivery';
@@ -234,6 +239,7 @@ import {
 } from '../../adcp-server';
 import {
   finishDeclaredInputRejection,
+  serveDeclaredToolAtRelease,
   parseDeclaredToolInput,
   validateToolInputAtAdcpLayer,
 } from '../../declared-input-schema';
@@ -283,6 +289,7 @@ import {
 import { legacyFormatRefsForDeclaration } from '../../../v2/projection/legacy-metadata';
 import { canonicalizeAgentUrl } from '../../../discovery/resolve-agent-properties';
 import { ADCP_VERSION } from '../../../version';
+import { acceptsReportDefinition12, reportingOfferingRequiresAdcp33Error } from '../../reporting-definition-release';
 
 function supportsCanonicalCreativeCapability(version: unknown): boolean {
   if (typeof version !== 'string') return false;
@@ -2801,6 +2808,16 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // the platform's exact account type on the public migration seam while
   // keeping that historical internal boundary localized here.
   const runtimeOpts = opts as unknown as CreateAdcpServerFromPlatformOptions<Account>;
+  // The options type omits `capabilities`: the platform declaration is the
+  // only capability source, and the projection below replaces the whole
+  // object. Refuse an untyped or cast `opts.capabilities` instead of silently
+  // advertising something other than what the caller wrote.
+  if ((opts as { capabilities?: unknown }).capabilities !== undefined) {
+    throw new PlatformConfigError(
+      'createAdcpServerFromPlatform: options.capabilities is not supported. Declare capabilities on ' +
+        'platform.capabilities instead (for example platform.capabilities.supported_versions).'
+    );
+  }
   const implicitIdentityPolicy: ImplicitIdentityPolicy = { strict: runtimeOpts.strictAccountReferences === true };
   const runtimeLegacyHandlers = legacyHandlers as unknown as LegacyDecisioningHandlerGroups<Account>;
   validatePlatform(platform, {
@@ -3112,6 +3129,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   }
   if (reportingDelivery && !isAdcpVersionAtLeast(configuredAdcpVersion, '3.2.0-rc.4')) {
     throw new PlatformConfigError('Reliable Reporting Core requires an AdCP 3.2.0-rc.4 or newer schema pin');
+  }
+  // A 1.2 report definition serves AdCP 3.3 callers only, so a server pinned below 3.3 could serve
+  // such an offering to no one (core/reporting-report-definition.json package_dimension).
+  const reportingAdcp33OnlyOfferingIds = Object.keys(platform.reporting?.adcp33OnlyOfferings ?? {});
+  if (reportingAdcp33OnlyOfferingIds.length > 0 && !acceptsReportDefinition12(configuredAdcpVersion)) {
+    throw new PlatformConfigError(
+      `Reporting offerings ${reportingAdcp33OnlyOfferingIds.map(id => JSON.stringify(id)).join(', ')} serve ` +
+        `AdCP 3.3 callers only (a contract_version 1.2 report definition, or undeclared under ` +
+        `withhold_from_pre_3_3), but this server is pinned to ${configuredAdcpVersion}. Serve them from an ` +
+        'AdCP 3.3 server, or publish a 1.0 or 1.1 definition.'
+    );
   }
   // Reliable Reporting renders one frozen protocol contract. A multi-release
   // server may continue serving older releases for its other tools, but it
@@ -3427,6 +3455,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }),
     ...(platform.capabilities.accountRequests !== undefined && {
       accountRequests: structuredClone(platform.capabilities.accountRequests),
+    }),
+    ...(reportingAdcp33OnlyOfferingIds.length > 0 && {
+      reportingAdcp33OnlyOfferingIds: [...reportingAdcp33OnlyOfferingIds],
     }),
     ...(hasOverridesObject && {
       overrides: {
@@ -3801,7 +3832,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         fwLogger,
         runtimeOpts.resolveSessionKey,
         opts.credentialPolicy,
-        implicitIdentityPolicy
+        implicitIdentityPolicy,
+        configuredAdcpVersion
       );
       return {
         ...opts.customTools,
@@ -4108,213 +4140,228 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
           }
 
-          // Probe exempt — capability discovery, no state mutation.
-          if (input.scenario === 'list_scenarios') {
-            return controller.handle(input);
-          }
+          // Answer at the caller's served release (adcp-client#3769). Selected
+          // only once the principal may see the controller, so a hidden
+          // controller still answers MethodNotFound, never VERSION_UNSUPPORTED.
+          return serveDeclaredToolAtRelease(
+            mcp,
+            controller.toolDefinition.name,
+            { context: callerContext, releaseArgs: input },
+            async (): Promise<McpToolResponse> => {
+              // Probe exempt — capability discovery, no state mutation.
+              if (input.scenario === 'list_scenarios') {
+                return controller.handle(input);
+              }
 
-          // Read account ref from top-level (extended shape) or from
-          // `context.account` (canonical AdCP routing). First non-null wins.
-          const refFromTop = input.account as AccountReference | undefined;
-          const refFromContext = (input.context as { account?: AccountReference } | undefined)?.account;
-          const accountRef = refFromTop ?? refFromContext;
+              // Read account ref from top-level (extended shape) or from
+              // `context.account` (canonical AdCP routing). First non-null wins.
+              const refFromTop = input.account as AccountReference | undefined;
+              const refFromContext = (input.context as { account?: AccountReference } | undefined)?.account;
+              const accountRef = refFromTop ?? refFromContext;
 
-          if (accountRef !== undefined && (typeof accountRef !== 'object' || Array.isArray(accountRef))) {
-            return reject(adcpError('INVALID_REQUEST', { message: 'account must be an object' }));
-          }
+              if (accountRef !== undefined && (typeof accountRef !== 'object' || Array.isArray(accountRef))) {
+                return reject(adcpError('INVALID_REQUEST', { message: 'account must be an object' }));
+              }
 
-          // Enforce the same per-mode reference shape as buyer dispatch. The
-          // check runs inside the try so its typed INVALID_REQUEST becomes a
-          // structured AdCP error rather than a raw MCP exception.
-          // The controller's account_id arm also carries a sandbox assertion.
-          // It is not part of the core AccountReference accepted by account
-          // stores; the resolved account mode remains the authority.
-          const requestedAccountId = refAccountId(accountRef);
-          if (
-            requestedAccountId !== undefined &&
-            (typeof requestedAccountId !== 'string' ||
-              requestedAccountId.length === 0 ||
-              (accountRef !== undefined && ('brand' in accountRef || 'operator' in accountRef)))
-          ) {
-            return reject(adcpError('INVALID_REQUEST', { message: 'Invalid account_id reference' }));
-          }
-          const resolverRef = requestedAccountId === undefined ? accountRef : { account_id: requestedAccountId };
-          let resolvedAccount: Account | null = null;
-          const agent = principalAuthority.agent;
-          try {
-            enforceAccountRefShapeForResolution(platform.accounts.resolution, accountRef);
-            resolvedAccount = await platform.accounts.resolve(
-              resolverRef,
-              toResolveCtx(
-                {
-                  ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
-                  ...(extra?.servedAdcpVersion !== undefined && {
-                    servedAdcpVersion: extra.servedAdcpVersion,
-                  }),
-                  ...(agent !== undefined && { agent }),
-                },
-                'comply_test_controller',
-                input
-              )
-            );
-          } catch (err) {
-            if (err instanceof AccountNotFoundError || (err instanceof AdcpError && err.code === 'ACCOUNT_NOT_FOUND')) {
-              resolvedAccount = null;
-            } else if (err instanceof AdcpError) {
-              return reject(adcpError(err.code, err.toStructuredError()));
-            } else {
-              fwLogger.error?.('Account resolution failed during comply controller dispatch', {
-                error_type: err instanceof Error ? err.name : typeof err,
-              });
-              return reject(adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' }));
-            }
-          }
-          resolvedAccount = assertResolvedAccountMatchesRef(
-            platform.accounts.resolution,
-            accountRef,
-            resolvedAccount,
-            fwLogger,
-            implicitIdentityPolicy,
-            extra?.servedAdcpVersion
-          );
+              // Enforce the same per-mode reference shape as buyer dispatch. The
+              // check runs inside the try so its typed INVALID_REQUEST becomes a
+              // structured AdCP error rather than a raw MCP exception.
+              // The controller's account_id arm also carries a sandbox assertion.
+              // It is not part of the core AccountReference accepted by account
+              // stores; the resolved account mode remains the authority.
+              const requestedAccountId = refAccountId(accountRef);
+              if (
+                requestedAccountId !== undefined &&
+                (typeof requestedAccountId !== 'string' ||
+                  requestedAccountId.length === 0 ||
+                  (accountRef !== undefined && ('brand' in accountRef || 'operator' in accountRef)))
+              ) {
+                return reject(adcpError('INVALID_REQUEST', { message: 'Invalid account_id reference' }));
+              }
+              const resolverRef = requestedAccountId === undefined ? accountRef : { account_id: requestedAccountId };
+              let resolvedAccount: Account | null = null;
+              const agent = principalAuthority.agent;
+              try {
+                enforceAccountRefShapeForResolution(platform.accounts.resolution, accountRef);
+                resolvedAccount = await platform.accounts.resolve(
+                  resolverRef,
+                  toResolveCtx(
+                    {
+                      ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+                      ...(extra?.servedAdcpVersion !== undefined && {
+                        servedAdcpVersion: extra.servedAdcpVersion,
+                      }),
+                      ...(agent !== undefined && { agent }),
+                    },
+                    'comply_test_controller',
+                    input
+                  )
+                );
+              } catch (err) {
+                if (
+                  err instanceof AccountNotFoundError ||
+                  (err instanceof AdcpError && err.code === 'ACCOUNT_NOT_FOUND')
+                ) {
+                  resolvedAccount = null;
+                } else if (err instanceof AdcpError) {
+                  return reject(adcpError(err.code, err.toStructuredError()));
+                } else {
+                  fwLogger.error?.('Account resolution failed during comply controller dispatch', {
+                    error_type: err instanceof Error ? err.name : typeof err,
+                  });
+                  return reject(adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' }));
+                }
+              }
+              resolvedAccount = assertResolvedAccountMatchesRef(
+                platform.accounts.resolution,
+                accountRef,
+                resolvedAccount,
+                fwLogger,
+                implicitIdentityPolicy,
+                extra?.servedAdcpVersion
+              );
 
-          // Record the resolved account's explicit mode (if any). Used by the
-          // env-fallback fail-closed guard below.
-          recordResolvedAccountMode(resolvedAccount);
+              // Record the resolved account's explicit mode (if any). Used by the
+              // env-fallback fail-closed guard below.
+              recordResolvedAccountMode(resolvedAccount);
 
-          const accountIsSandbox = resolvedAccount != null && isSandboxOrMockAccount(resolvedAccount);
-          // Spec-defined fallback for the unresolved-account path: read
-          // `sandbox: true` off the wire `AccountReference` (per
-          // `core/account-ref.json`). Only consulted when the resolver
-          // returned `null` — if the resolver names the account, the
-          // resolver wins. The buyer's wire claim never overrides a
-          // resolved live account.
-          //
-          // The fallback uses the original accountRef and is scoped to refs
-          // that name no account. A buyer who named an account and had it
-          // refused by the resolver must not
-          // re-admit themselves by asserting `sandbox: true` alongside it.
-          // Fail-closed resolvers (`createDerivedAccountStore` and any
-          // verified `'derived'` store) make `resolvedAccount == null`
-          // reachable on demand — without this scoping, naming another
-          // tenant's account id plus `sandbox: true` would admit the
-          // controller with no framework account authority attached.
-          const refSandbox =
-            (accountRef as { sandbox?: unknown } | undefined)?.sandbox === true &&
-            refAccountId(accountRef) === undefined;
-          const envSandbox = process.env.ADCP_SANDBOX === '1';
+              const accountIsSandbox = resolvedAccount != null && isSandboxOrMockAccount(resolvedAccount);
+              // Spec-defined fallback for the unresolved-account path: read
+              // `sandbox: true` off the wire `AccountReference` (per
+              // `core/account-ref.json`). Only consulted when the resolver
+              // returned `null` — if the resolver names the account, the
+              // resolver wins. The buyer's wire claim never overrides a
+              // resolved live account.
+              //
+              // The fallback uses the original accountRef and is scoped to refs
+              // that name no account. A buyer who named an account and had it
+              // refused by the resolver must not
+              // re-admit themselves by asserting `sandbox: true` alongside it.
+              // Fail-closed resolvers (`createDerivedAccountStore` and any
+              // verified `'derived'` store) make `resolvedAccount == null`
+              // reachable on demand — without this scoping, naming another
+              // tenant's account id plus `sandbox: true` would admit the
+              // controller with no framework account authority attached.
+              const refSandbox =
+                (accountRef as { sandbox?: unknown } | undefined)?.sandbox === true &&
+                refAccountId(accountRef) === undefined;
+              const envSandbox = process.env.ADCP_SANDBOX === '1';
 
-          const wouldAdmitOnlyViaEnv = envSandbox && !accountIsSandbox && !(resolvedAccount == null && refSandbox);
+              const wouldAdmitOnlyViaEnv = envSandbox && !accountIsSandbox && !(resolvedAccount == null && refSandbox);
 
-          // Fail-closed guard on the env fallback. If the env var is the only
-          // signal that would admit AND this process has ever resolved an
-          // explicit `mode: 'live'` account from the resolver, the env is
-          // misconfigured. Refuse loudly so operators notice, instead of
-          // silently downgrading the gate for live principals.
-          if (wouldAdmitOnlyViaEnv && hasObservedLiveMode()) {
-            throw new Error(
-              'comply_test_controller: ADCP_SANDBOX=1 is set but this process has resolved at least one ' +
-                'live-mode account from platform.accounts.resolve. Remove ADCP_SANDBOX from your prod ' +
-                'environment; gate the controller via mode: "sandbox" on resolved sandbox accounts instead. ' +
-                'See docs/proposals/lifecycle-state-and-sandbox-authority.md.'
-            );
-          }
+              // Fail-closed guard on the env fallback. If the env var is the only
+              // signal that would admit AND this process has ever resolved an
+              // explicit `mode: 'live'` account from the resolver, the env is
+              // misconfigured. Refuse loudly so operators notice, instead of
+              // silently downgrading the gate for live principals.
+              if (wouldAdmitOnlyViaEnv && hasObservedLiveMode()) {
+                throw new Error(
+                  'comply_test_controller: ADCP_SANDBOX=1 is set but this process has resolved at least one ' +
+                    'live-mode account from platform.accounts.resolve. Remove ADCP_SANDBOX from your prod ' +
+                    'environment; gate the controller via mode: "sandbox" on resolved sandbox accounts instead. ' +
+                    'See docs/proposals/lifecycle-state-and-sandbox-authority.md.'
+                );
+              }
 
-          const allowed = accountIsSandbox || (resolvedAccount == null && refSandbox) || envSandbox;
+              const allowed = accountIsSandbox || (resolvedAccount == null && refSandbox) || envSandbox;
 
-          if (!allowed) {
-            // Refuse with the standard AdCP permission code once the
-            // sandbox/mock principal can see the controller but the target
-            // account is live or unresolved. Live principals never reach
-            // this branch: they get MCP method-not-found above.
-            const requestContext = cappedComplyEcho((input as { context?: unknown }).context);
-            const requestExt = cappedComplyEcho((input as { ext?: unknown }).ext);
-            const response = adcpError('PERMISSION_DENIED', {
-              message:
-                'comply_test_controller requires a sandbox or mock target account; ' +
-                'resolved target account is live or unresolved.',
-              recovery: 'terminal',
-              details: {
-                scope: 'sandbox-gate',
-                tool: 'comply_test_controller',
-                reason: 'sandbox-or-mock-required',
-              },
-            });
-            if (requestContext !== undefined || requestExt !== undefined) {
-              const structured = response.structuredContent as Record<string, unknown>;
-              if (requestContext !== undefined) structured['context'] = requestContext;
-              if (requestExt !== undefined) structured['ext'] = requestExt;
-              response.content = [{ type: 'text', text: JSON.stringify(structured) }];
-            }
-            return response;
-          }
+              if (!allowed) {
+                // Refuse with the standard AdCP permission code once the
+                // sandbox/mock principal can see the controller but the target
+                // account is live or unresolved. Live principals never reach
+                // this branch: they get MCP method-not-found above.
+                const requestContext = cappedComplyEcho((input as { context?: unknown }).context);
+                const requestExt = cappedComplyEcho((input as { ext?: unknown }).ext);
+                const response = adcpError('PERMISSION_DENIED', {
+                  message:
+                    'comply_test_controller requires a sandbox or mock target account; ' +
+                    'resolved target account is live or unresolved.',
+                  recovery: 'terminal',
+                  details: {
+                    scope: 'sandbox-gate',
+                    tool: 'comply_test_controller',
+                    reason: 'sandbox-or-mock-required',
+                  },
+                });
+                if (requestContext !== undefined || requestExt !== undefined) {
+                  const structured = response.structuredContent as Record<string, unknown>;
+                  if (requestContext !== undefined) structured['context'] = requestContext;
+                  if (requestExt !== undefined) structured['ext'] = requestExt;
+                  response.content = [{ type: 'text', text: JSON.stringify(structured) }];
+                }
+                // Finished like every other framework rejection: envelope
+                // status and the served release (adcp-client#3769).
+                return reject(response);
+              }
 
-          const controllerParams =
-            input.params !== null && typeof input.params === 'object'
-              ? (input.params as { task_id?: unknown })
-              : undefined;
-          const controllerTaskId = controllerParams?.task_id;
-          const taskLookupParams =
-            input.scenario === 'force_task_completion' &&
-            typeof controllerTaskId === 'string' &&
-            controllerTaskId.length > 0 &&
-            controllerTaskId.length <= 255
-              ? { task_id: controllerTaskId }
-              : undefined;
-          let sessionKey: string | undefined;
-          if (opts.resolveSessionKey !== undefined && resolvedAccount !== null && taskLookupParams !== undefined) {
-            try {
-              sessionKey = await opts.resolveSessionKey(
-                withImmutableServedAdcpVersion(
+              const controllerParams =
+                input.params !== null && typeof input.params === 'object'
+                  ? (input.params as { task_id?: unknown })
+                  : undefined;
+              const controllerTaskId = controllerParams?.task_id;
+              const taskLookupParams =
+                input.scenario === 'force_task_completion' &&
+                typeof controllerTaskId === 'string' &&
+                controllerTaskId.length > 0 &&
+                controllerTaskId.length <= 255
+                  ? { task_id: controllerTaskId }
+                  : undefined;
+              let sessionKey: string | undefined;
+              if (opts.resolveSessionKey !== undefined && resolvedAccount !== null && taskLookupParams !== undefined) {
+                try {
+                  sessionKey = await opts.resolveSessionKey(
+                    withImmutableServedAdcpVersion(
+                      {
+                        // Resolve exactly the scope the framework's tasks/get path
+                        // would authorize for this task-oriented controller action.
+                        toolName: 'tasks_get' as AdcpServerToolName,
+                        params: taskLookupParams,
+                        account: resolvedAccount,
+                        ...(agent !== undefined && { agent }),
+                      },
+                      extra?.servedAdcpVersion
+                    )
+                  );
+                } catch (err) {
+                  fwLogger.warn?.('Session key resolution failed during comply controller dispatch', {
+                    error: redactCredentialPatterns(err instanceof Error ? err.message : String(err)),
+                  });
+                  return reject(
+                    adcpError('SERVICE_UNAVAILABLE', {
+                      message: 'Session key resolution failed',
+                      recovery: 'transient',
+                    })
+                  );
+                }
+              }
+
+              let taskScope: Readonly<TaskRegistryScope> | undefined;
+              if (resolvedAccount !== null) {
+                const ownerCtx: HandlerContext<Account> = withImmutableServedAdcpVersion(
                   {
-                    // Resolve exactly the scope the framework's tasks/get path
-                    // would authorize for this task-oriented controller action.
-                    toolName: 'tasks_get' as AdcpServerToolName,
-                    params: taskLookupParams,
+                    store: {} as HandlerContext<Account>['store'],
                     account: resolvedAccount,
+                    ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
                     ...(agent !== undefined && { agent }),
+                    ...(sessionKey !== undefined && { sessionKey }),
                   },
                   extra?.servedAdcpVersion
-                )
-              );
-            } catch (err) {
-              fwLogger.warn?.('Session key resolution failed during comply controller dispatch', {
-                error: redactCredentialPatterns(err instanceof Error ? err.message : String(err)),
-              });
-              return reject(
-                adcpError('SERVICE_UNAVAILABLE', {
-                  message: 'Session key resolution failed',
-                  recovery: 'transient',
-                })
-              );
-            }
-          }
+                );
+                taskScope = Object.freeze({
+                  accountId: resolvedAccount.id,
+                  ownerScope: taskOwnerScopeFor(ownerCtx, resolvedAccount.id),
+                  ...(taskRegistry.registryId !== undefined && { registryId: taskRegistry.registryId }),
+                });
+              }
 
-          let taskScope: Readonly<TaskRegistryScope> | undefined;
-          if (resolvedAccount !== null) {
-            const ownerCtx: HandlerContext<Account> = withImmutableServedAdcpVersion(
-              {
-                store: {} as HandlerContext<Account>['store'],
-                account: resolvedAccount,
-                ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+              return _handleComplyControllerWithResolvedAuthority(controller, input, {
+                ...(resolvedAccount !== null && { account: resolvedAccount }),
                 ...(agent !== undefined && { agent }),
-                ...(sessionKey !== undefined && { sessionKey }),
-              },
-              extra?.servedAdcpVersion
-            );
-            taskScope = Object.freeze({
-              accountId: resolvedAccount.id,
-              ownerScope: taskOwnerScopeFor(ownerCtx, resolvedAccount.id),
-              ...(taskRegistry.registryId !== undefined && { registryId: taskRegistry.registryId }),
-            });
-          }
-
-          return _handleComplyControllerWithResolvedAuthority(controller, input, {
-            ...(resolvedAccount !== null && { account: resolvedAccount }),
-            ...(agent !== undefined && { agent }),
-            ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
-            ...(taskScope !== undefined && { taskScope }),
-          });
+                ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+                ...(taskScope !== undefined && { taskScope }),
+              });
+            }
+          );
         }) as Parameters<typeof mcp.registerTool>[2]
       );
       validateToolInputAtAdcpLayer(mcp, controller.toolDefinition.name, registeredController);
@@ -4404,7 +4451,8 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   logger: AdcpLogger,
   resolveSessionKey: AdcpServerConfig<Account>['resolveSessionKey'] | undefined,
   credentialPolicy: CredentialPolicy | undefined,
-  implicitIdentityPolicy: ImplicitIdentityPolicy
+  implicitIdentityPolicy: ImplicitIdentityPolicy,
+  serverAdcpVersion: string
 ) {
   const credentialPolicyPatterns =
     credentialPolicy === undefined || typeof credentialPolicy === 'string' ? undefined : credentialPolicy.patterns;
@@ -4767,12 +4815,18 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         (record.status === 'completed' || record.status === 'failed' || record.status === 'rejected') &&
         record.result !== undefined
       ) {
-        const result = _sanitizeStoredTaskResultForWire(record.result, {
+        const sanitized = _sanitizeStoredTaskResultForWire(record.result, {
           taskId: record.taskId,
           accountId: resolvedAccountId,
           ownerScope: expectedOwnerScope,
           ...(taskRegistry.registryId !== undefined && { registryId: taskRegistry.registryId }),
         });
+        // Stored rows carry whichever platform identifier name the seller
+        // wrote. Give them the names the server's release defines; an older
+        // reader's projection converts them again (AdCP 3.3).
+        const result = toolHasPlatformIdRows(record.tool)
+          ? projectPlatformIdsForRelease(sanitized, serverAdcpVersion)
+          : sanitized;
         if (result !== undefined) payload.result = result;
         else logger.warn?.('Omitting unsafe stored task result during tasks_get poll');
       }
@@ -5882,6 +5936,16 @@ async function dispatchHitl<TResult>(
     let taskFnError: unknown;
     try {
       result = await taskFn(taskRef);
+      // AdCP 3.3: a row's platform_id and seller_id must agree. Fail the task
+      // here, through the normal failure path, rather than letting the
+      // registry refuse the write and strand the task in `submitted`.
+      const mismatch = toolHasPlatformIdRows(opts.tool) ? findPlatformIdMismatch(result) : undefined;
+      if (mismatch) {
+        throw new AdcpError('INTERNAL_ERROR', {
+          recovery: 'terminal',
+          message: `${opts.tool} returned a row whose platform_id and seller_id differ (${mismatch.pointer}). The seller must report one platform identifier.`,
+        });
+      }
     } catch (err) {
       taskFnError = err;
     }
@@ -9505,6 +9569,21 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
   const acceptedEntries: SyncAccountsEntry[] = [];
 
   const isUpstreamManagedNamespace = normalizeAccountResolution(platform.accounts.resolution) === 'derived';
+  // A caller pinned below AdCP 3.3 was never served a 1.2 report definition. Naming one fails the
+  // whole request before the handler runs: dropping just that entry would shorten a delete_missing
+  // roster (deleting the account), and an entry keyed by account_id has no row a 3.2 caller accepts.
+  if (!acceptsReportDefinition12(resolveCtx.servedAdcpVersion)) {
+    const unserved = new Map(Object.entries(platform.reporting?.adcp33OnlyOfferings ?? {}));
+    for (const entry of unserved.size > 0 ? entries : []) {
+      const configs = (entry as { reporting_delivery_configs?: unknown }).reporting_delivery_configs;
+      for (const config of Array.isArray(configs) ? configs : []) {
+        const offeringId = (config as { offering_id?: unknown } | null)?.offering_id;
+        const reason = typeof offeringId === 'string' ? unserved.get(offeringId) : undefined;
+        if (reason === undefined) continue;
+        throw reportingOfferingRequiresAdcp33Error(offeringId as string, reason);
+      }
+    }
+  }
 
   entries.forEach((entry, index) => {
     // Account-model gate first: an entry is refused on its key shape

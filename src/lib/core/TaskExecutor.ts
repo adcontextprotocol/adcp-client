@@ -66,7 +66,7 @@ import { MAX_JSON_DEPTH } from '../utils/json-depth';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import { cancelA2ATask } from '../protocols/a2a';
-import { isAbortOrTimeoutError, throwIfAborted } from '../protocols/abort';
+import { isAbortOrTimeoutError, throwIfAborted, withAbortSignal } from '../protocols/abort';
 import type {
   Message,
   InputRequest,
@@ -97,6 +97,7 @@ import {
   attachTaskDeadlineGovernanceRecovery,
   attachTaskDeadlineIdempotencyKey,
   getTaskOperationId,
+  resolveDispatchOperationId,
   withTaskDeadline,
 } from './task-deadline';
 
@@ -994,6 +995,8 @@ export class TaskExecutor {
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
   private compactedTaskIds = new Map<string, true>();
+  /** Settles when the dispatch that registered the operation id has fully unwound. */
+  private executionsInProgress = new Map<string, Promise<void>>();
   private conversationStorage?: Map<string, Message[]>;
   private governanceMiddleware?: GovernanceMiddleware;
   private lastKnownServerVersion?: 'v2' | 'v3';
@@ -1430,16 +1433,6 @@ export class TaskExecutor {
     // flows in on the response and is surfaced via metadata.serverTaskId.
     // `options.contextId` / `options.taskId` ride on the A2A message envelope
     // and are threaded straight to the protocol adapter below.
-    const taskId = getTaskOperationId(options) ?? randomUUID();
-    if (
-      this.activeTasks.has(taskId) ||
-      this.compactedTaskIds.has(taskId) ||
-      this.deferredTerminalPublicationTaskIds.has(taskId) ||
-      this.closedExternalTaskSettlementTaskIds.has(taskId) ||
-      this.externalTaskSettlementHandlers.has(taskId)
-    ) {
-      throw new ConfigurationError('operationId is already in use by this client; track the existing task instead.');
-    }
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
     const wireAdcpVersion = options.wireAdcpVersion ?? this.config.wireAdcpVersion;
@@ -1459,6 +1452,29 @@ export class TaskExecutor {
       params = { ...params, idempotency_key: idempotencyKey };
     }
 
+    // Resolved after the key: a request with one defaults to an operation id
+    // derived from it, so a retry under the same key reproduces the webhook URL
+    // and push_notification_config the seller hashed (adcp-client#3693).
+    const { operationId: taskId, derivedFromIdempotencyKey } = resolveDispatchOperationId(options, {
+      agentId: agent.id,
+      taskName,
+      idempotencyKey,
+    });
+    const releasing = this.releaseFinishedOperationId(taskId, options.signal);
+    if (releasing) await releasing;
+    if (
+      this.activeTasks.has(taskId) ||
+      this.compactedTaskIds.has(taskId) ||
+      this.deferredTerminalPublicationTaskIds.has(taskId) ||
+      this.closedExternalTaskSettlementTaskIds.has(taskId) ||
+      this.externalTaskSettlementHandlers.has(taskId)
+    ) {
+      throw new ConfigurationError(
+        derivedFromIdempotencyKey
+          ? `A call with this idempotency_key is already in progress on this client (operationId ${taskId}); track the existing task instead of resubmitting.`
+          : 'operationId is already in use by this client; track the existing task instead.'
+      );
+    }
     // Register task in active tasks
     const taskState: TaskState = {
       taskId,
@@ -1486,6 +1502,20 @@ export class TaskExecutor {
       idempotencyKey,
     };
     this.activeTasks.set(taskId, taskState);
+
+    // Reserve the id before anything below can re-enter: task-event listeners,
+    // the abort listener and the webhook tools predicate run synchronously,
+    // and one may retry this same key. That retry must wait for this dispatch
+    // to unwind, not reclaim the id while it still runs.
+    let finishExecution!: () => void;
+    const execution = new Promise<void>(resolve => {
+      finishExecution = resolve;
+    });
+    this.executionsInProgress.set(taskId, execution);
+    const releaseExecution = (): void => {
+      if (this.executionsInProgress.get(taskId) === execution) this.executionsInProgress.delete(taskId);
+      finishExecution();
+    };
 
     // Once the final compatibility boundary starts, an abort may race a
     // durable claim that has committed but whose hook has not returned yet.
@@ -1533,7 +1563,23 @@ export class TaskExecutor {
     const debugLogs: any[] = [];
 
     // Generate webhook URL if template is configured
-    const webhookUrl = this.generateWebhookUrl(taskName, taskId, options);
+    let webhookUrl: string | undefined;
+    try {
+      webhookUrl = this.generateWebhookUrl(taskName, taskId, options);
+    } catch (error) {
+      // A throwing webhook tools predicate ends the call before dispatch.
+      // Release what the dispatch below would have released.
+      if (taskAbortListener) options.signal!.removeEventListener('abort', taskAbortListener);
+      try {
+        this.updateTaskStatus(taskId, 'failed', undefined, error instanceof Error ? error.message : String(error));
+      } catch {
+        // A throwing onActivity hook must not replace the predicate's error.
+      } finally {
+        // After publication, so a same-key listener still waits for this unwind.
+        releaseExecution();
+      }
+      throw error;
+    }
 
     // Governance state (scoped outside try so catch can access)
     let governanceCheckId: string | undefined;
@@ -2042,6 +2088,7 @@ export class TaskExecutor {
       return attachMatch(failed);
     } finally {
       if (taskAbortListener) options.signal!.removeEventListener('abort', taskAbortListener);
+      releaseExecution();
     }
   }
 
@@ -3020,6 +3067,33 @@ export class TaskExecutor {
     const timer = setTimeout(expire, Math.min(retentionMs, MAX_TIMER_DELAY_MS));
     timer.unref?.();
     this.externalTaskSettlementTimers.set(taskId, timer);
+  }
+
+  /**
+   * Free an operation id whose task has finished so a retry may reuse it
+   * (adcp-client#3693). A caller deadline marks a task aborted before its
+   * dispatch unwinds, so wait for the unwind: the old run's late updates would
+   * otherwise land on the retry. A task still in flight and a durable
+   * settlement fence are left for the caller's collision check to refuse.
+   */
+  private releaseFinishedOperationId(taskId: string, signal: AbortSignal | undefined): Promise<void> | undefined {
+    const previous = this.activeTasks.get(taskId);
+    const fenced = () =>
+      this.deferredTerminalPublicationTaskIds.has(taskId) ||
+      this.closedExternalTaskSettlementTaskIds.has(taskId) ||
+      this.externalTaskSettlementHandlers.has(taskId);
+    if ((previous && !TERMINAL_TASK_STATUSES.has(previous.status)) || fenced()) return undefined;
+    const release = (): void => {
+      if (previous && this.activeTasks.get(taskId) === previous && !fenced()) {
+        this.cleanupTerminalTaskInspectionState(taskId);
+      }
+    };
+    const unwinding = this.executionsInProgress.get(taskId);
+    if (!unwinding) {
+      release();
+      return undefined;
+    }
+    return withAbortSignal([signal], undefined, () => unwinding).then(release);
   }
 
   /** Release short-lived task inspection state without dropping a live durable push fence. */

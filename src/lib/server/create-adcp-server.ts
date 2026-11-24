@@ -160,6 +160,7 @@ import {
   parseDeclaredToolInput,
   validateToolInputAtAdcpLayer,
   type DeclaredInputRejection,
+  type DeclaredToolReleaseServer,
 } from './declared-input-schema';
 import { ADCP_TASK_MESSAGE_QUEUE, createTaskCapableServer, InMemoryTaskStore } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
@@ -258,6 +259,7 @@ import { isAccountProvisioningTask } from './account-provisioning';
 import { warnAccountReferenceDeprecation } from './account-reference-warnings';
 import { isMutatingTask, requestUsesIdempotency, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import { omitsEnvelopeStatusForRelease } from '../utils/envelope-status-compat';
+import { findPlatformIdMismatch, projectPlatformIdsForRelease, toolHasPlatformIdRows } from '../utils/platform-id';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
 import { validateSyncReportingStatusEnvelope } from '../validation/sync-reporting-status-envelope';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
@@ -1341,9 +1343,9 @@ export interface SponsoredIntelligenceHandlers<TAccount = unknown> {
  * models it as an HTTP webhook (the buyer POSTs to the `approval_webhook`
  * URL returned from `acquire_rights`), not as an MCP/A2A tool. Adopters
  * wire the receiver to `BrandRightsPlatform.reviewCreativeApproval` and
- * use `creativeApproved` / `creativeApprovalRejected` /
- * `creativeApprovalPendingReview` / `creativeApprovalError` from
- * `@adcp/sdk/server` to build the webhook response.
+ * use `legacyCreativeApprovalApproved` / `legacyCreativeApprovalRejected` /
+ * `legacyCreativeApprovalPendingReview` / `legacyCreativeApprovalError`
+ * from `@adcp/sdk/server` to build the webhook response.
  */
 export interface BrandRightsHandlers<TAccount = unknown> {
   getBrandIdentity?: DomainHandler<'get_brand_identity', TAccount>;
@@ -1447,6 +1449,14 @@ export interface AdcpCapabilitiesConfig {
    * `experimental_features`. Requires `accounts.requestAccount`.
    */
   accountRequests?: AccountRequestsCapabilityOptions;
+  /**
+   * `media_buy.reporting_delivery.offerings` ids served to AdCP 3.3 callers only, because their
+   * report definition is at `contract_version` 1.2 (`core/reporting-report-definition.json`
+   * `x-adcp-validation.package_dimension`). They are dropped from `get_adcp_capabilities` for
+   * callers pinned below 3.3, and `reporting_delivery` goes too when none is left.
+   * `createAdcpServerFromPlatform` fills this from the installed reporting service.
+   */
+  reportingAdcp33OnlyOfferingIds?: readonly string[];
 }
 
 /**
@@ -6240,12 +6250,68 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     injectVersionIntoResponse(response, served.wireVersion);
     return response;
   };
+  // The comply_test_controller helpers register after this returns, outside
+  // the spec-tool dispatcher. Serve them at the caller's release all the same:
+  // refuse a pin this server cannot serve before the controller runs, convert
+  // its response down to the served release, and echo that release (DR-0024,
+  // adcp-client#3769).
+  const serveAtSelectedRelease: DeclaredToolReleaseServer = async (toolName, call, run) => {
+    const releaseArgs = isPlainObject(call.releaseArgs) ? call.releaseArgs : {};
+    const selected = selectServedAdcpRelease(releaseArgs, capConfig, adcpVersion, defaultAdcpVersion);
+    if (isMcpToolResponse(selected)) return finishFrameworkRejection(toolName, selected, call, defaultErrorRelease);
+    const produced = await run();
+    const structured = produced.structuredContent;
+    // A framework rejection was already finished at this release.
+    if (!isPlainObject(structured) || 'adcp_error' in structured) return produced;
+    // Copy before stamping per-call fields: a store may return a cached body.
+    const response = cloneFormattedResponse(produced);
+    if (translationSteps(adcpVersion, selected.validationVersion).length > 0) {
+      const downgraded = downgradeResponse(toolName, structured, {
+        fromVersion: adcpVersion,
+        toVersion: selected.validationVersion,
+      });
+      if (downgraded.data !== structured) {
+        const mirrors = contentTextMirrorsStructuredContent(response, structured);
+        response.structuredContent = downgraded.data;
+        syncContentJsonText(response, downgraded.data, mirrors);
+      }
+      if (downgraded.drifts.length > 0) {
+        reportVersionTranslation({
+          tool: toolName,
+          direction: 'response',
+          fromVersion: adcpVersion,
+          toVersion: selected.validationVersion,
+          drifts: downgraded.drifts,
+        });
+      }
+      // A value the served release cannot express (a 3.3-only enum value such
+      // as `forced.arm: 'unable'`) is dropped, which leaves a body that release
+      // rejects. Refuse rather than answer with a malformed success.
+      if (
+        validateResponse(toolName, structured, adcpVersion).valid &&
+        !validateResponse(toolName, response.structuredContent, selected.validationVersion).valid
+      ) {
+        return finishFrameworkRejection(
+          toolName,
+          adcpError('VERSION_UNSUPPORTED', {
+            message: `The ${toolName} result cannot be expressed in AdCP ${selected.validationVersion}; call it at a release that defines it.`,
+            details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
+          }),
+          call,
+          selected
+        );
+      }
+    }
+    injectVersionIntoResponse(response, selected.wireVersion);
+    return response;
+  };
   // Tools that declare a zod input schema (customTools, tasks_get, and the
   // comply_test_controller helpers registered after this returns) validate it
   // at the AdCP layer, and their rejections are finished the same way.
   configureDeclaredInputErrors(server, {
     exposeSchemaPath: exposeErrorDetails,
     finalize: (toolName, response, rejection) => finishFrameworkRejection(toolName, response, rejection),
+    serveAtRelease: serveAtSelectedRelease,
   });
 
   // The v1 SDK server remains the canonical legacy path. The modern adapter
@@ -8043,6 +8109,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // read, but belt-and-suspenders: handler-returned objects
               // can alias pieces of the formatted envelope.
               const cachedFormatted = cloneFormattedResponse(checkResult.response as McpToolResponse);
+              // A response cached before AdCP 3.3 platform identifier dual
+              // emission carries one name; give it the names the request's
+              // release defines, as a fresh response would.
+              if (
+                toolHasPlatformIdRows(toolName) &&
+                !isErrorEnvelope(cachedFormatted) &&
+                cachedFormatted.structuredContent
+              ) {
+                const projected = projectPlatformIdsForRelease(
+                  cachedFormatted.structuredContent,
+                  requestRelease.validationVersion
+                );
+                if (projected !== cachedFormatted.structuredContent) {
+                  const mirrors = contentTextMirrorsStructuredContent(
+                    cachedFormatted,
+                    cachedFormatted.structuredContent
+                  );
+                  cachedFormatted.structuredContent = projected;
+                  syncContentJsonText(cachedFormatted, projected, mirrors);
+                }
+              }
               // Only stamp `replayed: true` on success envelopes — the
               // field is defined for successful replays, and transient
               // error cache entries (VALIDATION_ERROR from strict-mode
@@ -8904,6 +8991,95 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // replay like any other completed task (adcp-client#3743).
           const handlerFailed = isErrorResponse(formatted);
 
+          // Reject a handler's response the framework cannot send. A mutating
+          // handler has already returned, so its side effect may be committed
+          // even though the representation is rejected. Fence that ambiguity
+          // for the full replay window: a short-lived retry-storm entry could
+          // disappear and permit the same mutation to execute again. Read-only
+          // keyed operations retain the short transient-error behavior.
+          const rejectHandlerResponse = async (errEnvelope: McpToolResponse): Promise<McpToolResponse> => {
+            if (idempotencyCheck && idempotency) {
+              try {
+                if (toolIsMutating || requestIsStateChanging) {
+                  // The handler may already have committed; the rejected
+                  // response leaves its outcome ambiguous. Keep the owner
+                  // claim unresolved instead of publishing an expiring
+                  // error record that could later permit re-execution.
+                  await idempotency.renew({
+                    principal: idempotencyCheck.principal,
+                    key: idempotencyCheck.key,
+                    claimToken: idempotencyCheck.claimToken,
+                    extraScope: idempotencyCheck.extraScope,
+                  });
+                } else if (idempotency.saveTransientError) {
+                  await idempotency.saveTransientError({
+                    principal: idempotencyCheck.principal,
+                    key: idempotencyCheck.key,
+                    payloadHash: idempotencyCheck.payloadHash,
+                    claimToken: idempotencyCheck.claimToken,
+                    response: errEnvelope,
+                    extraScope: idempotencyCheck.extraScope,
+                  });
+                } else {
+                  await idempotency.release({
+                    principal: idempotencyCheck.principal,
+                    key: idempotencyCheck.key,
+                    claimToken: idempotencyCheck.claimToken,
+                    extraScope: idempotencyCheck.extraScope,
+                  });
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('Idempotency validation-error publication failed', {
+                  tool: toolName,
+                  error: reason,
+                });
+                return finalize(
+                  adcpError('SERVICE_UNAVAILABLE', {
+                    message:
+                      err instanceof IdempotencyClaimOwnershipError
+                        ? 'The request lost its idempotency claim before its response could be published. Retry safely.'
+                        : 'The response could not be published to the idempotency store. Reconcile by natural key before retrying.',
+                  })
+                );
+              }
+            }
+            return errEnvelope;
+          };
+
+          // AdCP 3.3 renamed the platform identifier on sync_event_sources and
+          // sync_audiences rows to platform_id and kept seller_id as an alias.
+          // Whichever name the handler returned, send both at 3.3 and later and
+          // seller_id alone below 3.3. Two different values are a response the
+          // framework cannot repair.
+          if (!handlerFailed && toolHasPlatformIdRows(toolName) && formatted.structuredContent) {
+            const mismatch = findPlatformIdMismatch(formatted.structuredContent);
+            if (mismatch) {
+              logger.error(`${toolName} handler returned different platform_id and seller_id`, {
+                tool: toolName,
+                pointer: mismatch.pointer,
+              });
+              return rejectHandlerResponse(
+                finalize(
+                  adcpError('INTERNAL_ERROR', {
+                    message: `${toolName} returned a row whose platform_id and seller_id differ (${mismatch.pointer}). The seller must report one platform identifier.`,
+                    recovery: 'terminal',
+                  })
+                )
+              );
+            }
+            const projected = projectPlatformIdsForRelease(
+              formatted.structuredContent,
+              requestRelease.validationVersion
+            );
+            if (projected !== formatted.structuredContent) {
+              const mirrors = contentTextMirrorsStructuredContent(formatted, formatted.structuredContent);
+              formatted = cloneFormattedResponse(formatted);
+              formatted.structuredContent = projected;
+              syncContentJsonText(formatted, projected, mirrors);
+            }
+          }
+
           // Convert the handler's response down to the served release before
           // validating it against that release. Every removed field is logged.
           // Error-classified bodies (an `errors[]` arm, a failed, rejected or
@@ -8970,61 +9146,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   exposeSchemaPath: exposeErrorDetails,
                   rootSchemaId: outcome.schemaId,
                 });
-                const errEnvelope = finalize(adcpError('VALIDATION_ERROR', errPayload));
-                if (idempotencyCheck && idempotency) {
-                  // A mutating handler has already returned, so its side
-                  // effect may be committed even though strict response
-                  // validation rejected the representation. Fence that
-                  // ambiguity for the full replay window: a short-lived
-                  // retry-storm entry could disappear and permit the same
-                  // mutation to execute again. Read-only keyed operations
-                  // retain the short transient-error behavior.
-                  try {
-                    if (toolIsMutating || requestIsStateChanging) {
-                      // The handler may already have committed; response
-                      // drift leaves its outcome ambiguous. Keep the owner
-                      // claim unresolved instead of publishing an expiring
-                      // error record that could later permit re-execution.
-                      await idempotency.renew({
-                        principal: idempotencyCheck.principal,
-                        key: idempotencyCheck.key,
-                        claimToken: idempotencyCheck.claimToken,
-                        extraScope: idempotencyCheck.extraScope,
-                      });
-                    } else if (idempotency.saveTransientError) {
-                      await idempotency.saveTransientError({
-                        principal: idempotencyCheck.principal,
-                        key: idempotencyCheck.key,
-                        payloadHash: idempotencyCheck.payloadHash,
-                        claimToken: idempotencyCheck.claimToken,
-                        response: errEnvelope,
-                        extraScope: idempotencyCheck.extraScope,
-                      });
-                    } else {
-                      await idempotency.release({
-                        principal: idempotencyCheck.principal,
-                        key: idempotencyCheck.key,
-                        claimToken: idempotencyCheck.claimToken,
-                        extraScope: idempotencyCheck.extraScope,
-                      });
-                    }
-                  } catch (err) {
-                    const reason = err instanceof Error ? err.message : String(err);
-                    logger.warn('Idempotency validation-error publication failed', {
-                      tool: toolName,
-                      error: reason,
-                    });
-                    return finalize(
-                      adcpError('SERVICE_UNAVAILABLE', {
-                        message:
-                          err instanceof IdempotencyClaimOwnershipError
-                            ? 'The request lost its idempotency claim before its response could be published. Retry safely.'
-                            : 'The response could not be published to the idempotency store. Reconcile by natural key before retrying.',
-                      })
-                    );
-                  }
-                }
-                return errEnvelope;
+                return rejectHandlerResponse(finalize(adcpError('VALIDATION_ERROR', errPayload)));
               }
             }
           }
@@ -9451,12 +9573,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           (response.status === 'completed' || response.status === 'failed' || response.status === 'rejected') &&
           task.result !== undefined
         ) {
-          const result = _sanitizeStoredTaskResultForWire(task.result, {
+          const sanitized = _sanitizeStoredTaskResultForWire(task.result, {
             taskId: task.taskId,
             accountId,
             ownerScope,
             ...(taskRegistry.registryId !== undefined && { registryId: taskRegistry.registryId }),
           });
+          // Stored rows carry whichever platform identifier name the seller
+          // wrote. Give them the names the server's release defines; an older
+          // reader's projection below converts them again (AdCP 3.3).
+          const result = toolHasPlatformIdRows(task.tool)
+            ? projectPlatformIdsForRelease(sanitized, adcpVersion)
+            : sanitized;
           if (result !== undefined) response.result = result as GetTaskStatusResponse['result'];
           else logger.warn('Omitting unsafe stored task result during get_task_status poll');
         }
@@ -10225,13 +10353,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // AdCP 3.3 reporting registration fields. A seller listing only sync_principal
         // serves reporting registration to 3.3 callers only.
         const reporting = data.media_buy?.reporting_delivery as
-          | (Record<string, unknown> & { configuration_task?: string })
+          | (Record<string, unknown> & { configuration_task?: string; offerings?: Array<{ offering_id?: unknown }> })
           | undefined;
         const features = data.experimental_features as string[] | undefined;
         if (reporting) {
           delete reporting.configuration_tasks;
           delete reporting.subscriptions;
-          if (reporting.configuration_task === undefined) {
+          // A 1.2 report definition serves 3.3 callers only (core/reporting-report-definition.json
+          // package_dimension); with no offering left there is nothing to advertise.
+          const adcp33Only = new Set(capConfig?.reportingAdcp33OnlyOfferingIds ?? []);
+          if (adcp33Only.size > 0 && Array.isArray(reporting.offerings)) {
+            reporting.offerings = reporting.offerings.filter(
+              offering => typeof offering.offering_id !== 'string' || !adcp33Only.has(offering.offering_id)
+            );
+          }
+          if (reporting.configuration_task === undefined || reporting.offerings?.length === 0) {
             delete (data.media_buy as { reporting_delivery?: unknown }).reporting_delivery;
             if (features) {
               data.experimental_features = features.filter(

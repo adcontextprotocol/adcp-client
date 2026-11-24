@@ -223,9 +223,9 @@ describe('memory store records issue events with the write', () => {
     assert.equal(event.eventId, reportingIssueEventIdV1(event.issueId, event.consumerId, 'opened'));
   });
 
-  // Under today's TypeScript projection a real restatement cannot clear a mismatch (adcp-client#3653), so
-  // this seeds an open occurrence for a leaf that does not conflict and pins that commitRevision's settle
-  // branch is wired: it resolves what the projection no longer reports.
+  // Seeds an open occurrence for a leaf that does not conflict (a seller restatement now also settles
+  // a content_mismatch: see 'seller-side resolution' below) and pins that commitRevision's settle branch
+  // resolves what the projection no longer reports.
   test('commitRevision resolves an open occurrence whose leaf no longer conflicts', async () => {
     const w = fixture();
     w.at('2026-09-02T00:30:00.000Z');
@@ -1061,5 +1061,420 @@ describe('createReliableReportingService issueObserver', () => {
     const service = createReliableReportingService(options({ storage: memoryStorage() }));
     const cycle = await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
     assert.equal(cycle.issueEvents, undefined);
+  });
+});
+
+// adcp-client#3653: the seller's record can settle an occurrence, not only the buyer's next statement.
+describe('seller-side resolution of consumer mismatch occurrences', () => {
+  const unreadableMark = (overrides = {}) => ({
+    issueId: 'mark-1',
+    reporting_obligation_id: 'ob-1',
+    reporting_revision_id: 'ob-1-rev-1',
+    code: 'REVISION_UNREADABLE',
+    responsibleParty: 'seller',
+    severity: 'action_required',
+    recommendedAction: 'contact_seller',
+    openedAt: '2026-09-02T02:00:00.000Z',
+    observedAt: '2026-09-02T02:00:00.000Z',
+    ...overrides,
+  });
+
+  test('a restatement resolves a content_mismatch occurrence on the superseded revision', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync(
+      'k1',
+      w.status(sid(1), 'content_mismatch', { reporting_revision_id: 'ob-1-rev-1', mismatch_code: 'coverage_short' })
+    );
+    assert.deepEqual(w.kinds(), ['opened']);
+    const [opened] = w.events();
+
+    w.at('2026-09-02T02:00:00.000Z');
+    await w.commit(2);
+    assert.deepEqual(w.kinds(), ['opened', 'resolved']);
+    const resolved = w.events()[1];
+    assert.equal(resolved.issueId, opened.issueId);
+    assert.equal(resolved.occurredAt, '2026-09-02T02:00:00.000Z');
+    assert.equal(resolved.reportingStatusId, sid(1));
+  });
+
+  test('a content_mismatch on the current revision stays open across an unrelated write', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync(
+      'k1',
+      w.status(sid(1), 'content_mismatch', { reporting_revision_id: 'ob-1-rev-1', mismatch_code: 'coverage_short' })
+    );
+    w.at('2026-09-02T02:00:00.000Z');
+    await w.store.putIssue(unreadableMark({ reporting_revision_id: 'ob-1-rev-1', code: 'REVISION_UNREADABLE' }));
+    assert.deepEqual(w.kinds(), ['opened'], 'an unreadable mark does not answer a content dispute');
+  });
+
+  test('a seller REVISION_UNREADABLE mark resolves an unreadable occurrence; retiring it opens a new occurrence', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync('k1', w.status(sid(1), 'unreadable', { reporting_revision_id: 'ob-1-rev-1' }));
+    assert.deepEqual(w.kinds(), ['opened']);
+    const first = w.events()[0];
+
+    w.at('2026-09-02T02:00:00.000Z');
+    await w.store.putIssue(unreadableMark());
+    assert.deepEqual(w.kinds(), ['opened', 'resolved']);
+    assert.equal(w.events()[1].issueId, first.issueId);
+    assert.equal(w.events()[1].occurredAt, '2026-09-02T02:00:00.000Z');
+
+    w.at('2026-09-02T03:00:00.000Z');
+    await w.store.resolveIssue('mark-1', '2026-09-02T03:00:00.000Z');
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+    const reopened = w.events()[2];
+    assert.notEqual(reopened.issueId, first.issueId, 'a recurrence takes a new issue id');
+    assert.equal(reopened.reportingStatusId, sid(1), 'the same statement');
+    assert.equal(reopened.occurredAt, '2026-09-02T03:00:00.000Z');
+  });
+
+  test('a mark on a different revision does not settle an unreadable occurrence', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync('k1', w.status(sid(1), 'unreadable', { reporting_revision_id: 'ob-1-rev-1' }));
+    w.at('2026-09-02T02:00:00.000Z');
+    await w.store.putIssue(unreadableMark({ reporting_revision_id: 'ob-1-rev-2' }));
+    assert.deepEqual(w.kinds(), ['opened']);
+  });
+
+  test('a mark filed before the statement is recorded leaves it open (no mark yet ended after it)', async () => {
+    const w = fixture();
+    w.at('2026-09-02T00:30:00.000Z');
+    await w.commit(1);
+    w.at('2026-09-02T00:45:00.000Z');
+    await w.store.putIssue(
+      unreadableMark({ openedAt: '2026-09-02T00:40:00.000Z', observedAt: '2026-09-02T00:40:00.000Z' })
+    );
+    w.at('2026-09-02T01:00:00.000Z');
+    await w.sync('k1', w.status(sid(1), 'unreadable', { reporting_revision_id: 'ob-1-rev-1' }));
+    // The mark is open when the statement lands, so the seller already agrees with it.
+    assert.deepEqual(w.kinds(), []);
+  });
+});
+
+describe('unreadable recurrence identity and timing (#3653 round 2)', () => {
+  const T = hhmm => `2026-09-02T${hhmm}`;
+  const mark = (overrides = {}) => ({
+    issueId: 'mark-1',
+    reporting_obligation_id: 'ob-1',
+    reporting_revision_id: 'ob-1-rev-1',
+    code: 'REVISION_UNREADABLE',
+    responsibleParty: 'seller',
+    severity: 'action_required',
+    recommendedAction: 'contact_seller',
+    openedAt: T('02:00:00.000Z'),
+    observedAt: T('02:00:00.000Z'),
+    ...overrides,
+  });
+
+  /** What the read path projects for the one buyer statement from the store's current rows. */
+  async function projected(w, at) {
+    const store = w.store;
+    const [statement] = store.consumerStatements;
+    return ledger.projectReportingConsumerStatusMismatchV1(
+      store.obligations.get('ob-1'),
+      statement,
+      store.revisionMetadata('ob-1'),
+      'healthy',
+      at,
+      undefined,
+      await store.listIssues('ob-1')
+    );
+  }
+
+  async function deliver(w) {
+    const seen = [];
+    const dispatcher = createReportingIssueEventDispatcherV1({
+      store: w.store,
+      observer: event => void seen.push(event),
+    });
+    await dispatcher.runOnce({ accountId: 'acct-1' });
+    return seen;
+  }
+
+  async function unreadableAt1(w) {
+    w.at(T('00:30:00.000Z'));
+    await w.commit(1);
+    w.at(T('01:00:00.000Z'));
+    await w.sync('k1', w.status(sid(1), 'unreadable', { reporting_revision_id: 'ob-1-rev-1' }));
+  }
+
+  test("a mark opened and resolved in the statement's own instant still opens a recurrence with a new id", async () => {
+    const w = fixture();
+    await unreadableAt1(w);
+    const original = w.events()[0].issueId;
+    // The clock never advances: statement, mark and resolution all share 01:00:00.000.
+    await w.store.putIssue(mark({ observedAt: T('01:00:00.000Z'), openedAt: T('01:00:00.000Z') }));
+    await w.store.resolveIssue('mark-1', T('01:00:00.000Z'));
+
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+    const reopened = w.events()[2];
+    assert.notEqual(reopened.issueId, original);
+    const mismatch = await projected(w, T('01:00:00.000Z'));
+    assert.equal(mismatch.issue.issueId, reopened.issueId, 'the read path agrees with the recorded occurrence');
+    assert.notEqual(mismatch.issue.issueId, original);
+  });
+
+  test('adding resolvedAt to an already-resolved mark cannot move the recurrence or orphan its event', async () => {
+    const w = fixture();
+    await unreadableAt1(w);
+    w.at(T('02:00:00.000Z'));
+    await w.store.putIssue(mark());
+    w.at(T('03:00:00.000Z'));
+    await w.store.putIssue(mark({ issueState: 'resolved', observedAt: T('03:00:00.000Z') }));
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+    const x = w.events()[2];
+    const before = await projected(w, T('03:00:00.000Z'));
+    assert.equal(before.issue.issueId, x.issueId);
+    assert.equal(before.issue.openedAt, T('03:00:00.000Z'));
+
+    w.at(T('04:00:00.000Z'));
+    await w.store.resolveIssue('mark-1', T('04:00:00.000Z'));
+    const after = await projected(w, T('04:00:00.000Z'));
+    assert.equal(after.issue.issueId, x.issueId, 'identity unchanged');
+    assert.equal(after.issue.openedAt, T('03:00:00.000Z'), 'openedAt unchanged');
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened'], 'no extra events');
+
+    const seen = await deliver(w);
+    const reopened = seen.filter(event => event.kind === 'opened' && event.issueId === x.issueId);
+    assert.equal(reopened.length, 1);
+    assert.notEqual(reopened[0].issue, null, 'the recurrence still renders');
+    assert.equal(reopened[0].issue.openedAt, T('03:00:00.000Z'));
+    assert.equal(reopened[0].issue.issueId, x.issueId);
+  });
+
+  test('a mark ending after the store clock is clamped to it: the recurrence opens now and survives later writes', async () => {
+    const w = fixture();
+    await unreadableAt1(w);
+    const original = w.events()[0].issueId;
+    w.at(T('02:00:00.000Z'));
+    await w.store.putIssue(mark());
+    assert.deepEqual(w.kinds(), ['opened', 'resolved']);
+
+    w.at(T('03:00:00.000Z'));
+    await w.store.resolveIssue('mark-1', T('03:00:01.000Z'));
+    const [stored] = await w.store.listIssues('ob-1');
+    assert.equal(stored.resolvedAt, T('03:00:00.000Z'), 'the end is clamped to the store clock');
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+    const reopened = w.events()[2];
+    assert.equal(reopened.occurredAt, T('03:00:00.000Z'));
+    assert.notEqual(reopened.issueId, original);
+
+    // An ordinary write at the real clock must not retire the recurrence.
+    w.at(T('03:00:00.500Z'));
+    await w.commit(2);
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened'], 'no extra resolved');
+
+    const mismatch = await projected(w, T('03:00:01.001Z'));
+    assert.equal(mismatch.issue.issueId, reopened.issueId);
+    const seen = await deliver(w);
+    const rendered = seen.find(event => event.kind === 'opened' && event.issueId === reopened.issueId);
+    assert.notEqual(rendered.issue, null);
+    assert.equal(rendered.issue.issueId, reopened.issueId);
+  });
+
+  test('an end recorded in the reverse order (resolvedAt first, terminal issueState later) keeps the recurrence rendering', async () => {
+    const w = fixture();
+    await unreadableAt1(w);
+    w.at(T('02:00:00.000Z'));
+    await w.store.putIssue(mark());
+    w.at(T('03:00:00.000Z'));
+    await w.store.resolveIssue('mark-1', T('03:00:00.000Z'));
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+    const x = w.events()[2];
+
+    w.at(T('04:00:00.000Z'));
+    const [persisted] = await w.store.listIssues('ob-1');
+    assert.equal(persisted.resolvedAt, T('03:00:00.000Z'));
+    await w.store.putIssue({ ...persisted, issueState: 'resolved', observedAt: T('04:00:00.000Z') });
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened'], 'no extra events');
+
+    const mismatch = await projected(w, T('04:00:00.000Z'));
+    assert.equal(mismatch.issue.issueId, x.issueId);
+    assert.equal(mismatch.issue.openedAt, T('03:00:00.000Z'));
+
+    // Rendered directly from the store's rows.
+    const store = w.store;
+    const rendered = renderReportingIssueEventV1(
+      { ...x, attempts: 1, leaseToken: 't', leaseExpiresAt: T('05:00:00.000Z') },
+      {
+        obligation: store.obligations.get('ob-1'),
+        revisions: store.revisionMetadata('ob-1'),
+        issues: await store.listIssues('ob-1'),
+        statement: store.consumerStatements[0],
+      }
+    );
+    assert.notEqual(rendered.issue, null);
+    assert.equal(rendered.issue.issueId, x.issueId);
+    assert.equal(rendered.issue.openedAt, T('03:00:00.000Z'));
+
+    // And through the dispatcher.
+    const seen = await deliver(w);
+    const viaDispatcher = seen.find(event => event.kind === 'opened' && event.issueId === x.issueId);
+    assert.notEqual(viaDispatcher.issue, null);
+    assert.equal(viaDispatcher.issue.openedAt, T('03:00:00.000Z'));
+  });
+
+  describe('marks recorded as fixed facts (#3653 round 4)', () => {
+    async function openedAt2(w) {
+      await unreadableAt1(w);
+      w.at(T('02:00:00.000Z'));
+      await w.store.putIssue(mark());
+    }
+
+    for (const [label, variant] of [
+      ['resolvedAt', { resolvedAt: T('05:00:00.000Z') }],
+      ['terminal issueState', { issueState: 'resolved', observedAt: T('05:00:00.000Z') }],
+    ]) {
+      test(`a retried write (${label}) cannot move the end or orphan the recurrence`, async () => {
+        const w = fixture();
+        await openedAt2(w);
+        const frozen = Object.freeze({ ...mark(), ...variant });
+
+        w.at(T('03:00:00.000Z'));
+        await w.store.putIssue(frozen);
+        assert.equal((await w.store.listIssues('ob-1'))[0].resolvedAt, T('03:00:00.000Z'));
+        assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+        const x = w.events()[2];
+        assert.equal(x.occurredAt, T('03:00:00.000Z'));
+
+        w.at(T('04:00:00.000Z'));
+        await w.store.putIssue(frozen);
+        assert.equal((await w.store.listIssues('ob-1'))[0].resolvedAt, T('03:00:00.000Z'), 'the end stays put');
+        assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened'], 'no extra events');
+
+        const mismatch = await projected(w, T('04:00:00.000Z'));
+        assert.equal(mismatch.issue.issueId, x.issueId);
+        assert.equal(mismatch.issue.openedAt, T('03:00:00.000Z'));
+
+        const seen = await deliver(w);
+        const rendered = seen.find(event => event.kind === 'opened' && event.issueId === x.issueId);
+        assert.notEqual(rendered.issue, null);
+        assert.equal(rendered.issue.openedAt, T('03:00:00.000Z'));
+      });
+    }
+
+    test('a terminal mark whose start and end are ahead of the store clock is recorded at the clock', async () => {
+      const w = fixture();
+      await unreadableAt1(w);
+      const original = w.events()[0].issueId;
+      w.at(T('02:00:00.000Z'));
+      await w.store.putIssue(
+        mark({
+          issueState: 'resolved',
+          openedAt: T('02:00:00.001Z'),
+          observedAt: T('02:00:00.002Z'),
+        })
+      );
+      const [stored] = await w.store.listIssues('ob-1');
+      assert.equal(stored.openedAt, T('02:00:00.000Z'));
+      assert.equal(stored.resolvedAt, T('02:00:00.000Z'));
+      assert.ok(stored.openedAt <= stored.resolvedAt);
+
+      assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+      const reopened = w.events()[2];
+      assert.equal(reopened.occurredAt, T('02:00:00.000Z'));
+      assert.notEqual(reopened.issueId, original);
+      const mismatch = await projected(w, T('02:00:00.003Z'));
+      assert.equal(mismatch.issue.issueId, reopened.issueId);
+
+      const seen = await deliver(w);
+      const rendered = seen.find(event => event.kind === 'opened' && event.issueId === reopened.issueId);
+      assert.notEqual(rendered.issue, null);
+    });
+
+    test('resolveIssue on an already-ended mark is a no-op', async () => {
+      const w = fixture();
+      await openedAt2(w);
+      w.at(T('03:00:00.000Z'));
+      await w.store.resolveIssue('mark-1', T('03:00:00.000Z'));
+      const before = structuredClone(await w.store.listIssues('ob-1'));
+      const kinds = w.kinds();
+      const x = w.events()[2];
+
+      w.at(T('04:00:00.000Z'));
+      await w.store.resolveIssue('mark-1', T('04:00:00.000Z'));
+      assert.deepEqual(await w.store.listIssues('ob-1'), before, 'the stored mark is unchanged');
+      assert.deepEqual(w.kinds(), kinds);
+      const mismatch = await projected(w, T('04:00:00.000Z'));
+      assert.equal(mismatch.issue.issueId, x.issueId);
+      assert.equal(mismatch.issue.openedAt, T('03:00:00.000Z'));
+    });
+
+    test('a backdated end on a retried write leaves the start alone and the recurrence renders', async () => {
+      const w = fixture();
+      await openedAt2(w);
+      const original = w.events()[0];
+
+      w.at(T('03:00:00.000Z'));
+      await w.store.putIssue({ ...mark(), resolvedAt: T('01:30:00.000Z') });
+      const [stored] = await w.store.listIssues('ob-1');
+      assert.equal(stored.openedAt, T('02:00:00.000Z'), 'the recorded start stays');
+      assert.equal(stored.resolvedAt, T('02:00:00.000Z'), 'the end is raised to the start');
+
+      const resolved = w.events().find(event => event.kind === 'resolved');
+      const reopened = w.events().filter(event => event.kind === 'opened')[1];
+      assert.ok(resolved, 'the mark first settled the original');
+      assert.notEqual(reopened.issueId, original.issueId);
+      assert.ok(reopened.occurredAt >= T('02:00:00.000Z'));
+      assert.ok(reopened.occurredAt >= resolved.occurredAt, 'never before the original resolved');
+
+      const mismatch = await projected(w, T('03:00:00.000Z'));
+      assert.equal(mismatch.issue.issueId, reopened.issueId);
+      const seen = await deliver(w);
+      const rendered = seen.find(event => event.kind === 'opened' && event.issueId === reopened.issueId);
+      assert.notEqual(rendered.issue, null);
+      assert.equal(rendered.issue.issueId, reopened.issueId);
+    });
+
+    test('the row shape PostgreSQL stores for a backdated end (start kept, end raised) renders its occurrence', async () => {
+      const w = fixture();
+      await unreadableAt1(w);
+      const store = w.store;
+      const statement = store.consumerStatements[0];
+      const obligation = store.obligations.get('ob-1');
+      const revisions = store.revisionMetadata('ob-1');
+      // openedAt is the first write's, resolvedAt the incoming 01:30 raised to it; observedAt is the retry's.
+      const row = mark({
+        openedAt: T('02:00:00.000Z'),
+        resolvedAt: T('02:00:00.000Z'),
+        observedAt: T('03:00:00.000Z'),
+      });
+      const at = T('03:00:00.000Z');
+      const occurrence = ledger.reportingConsumerMismatchOccurrenceV1(obligation, statement, revisions, [row], at);
+      assert.ok(occurrence, 'the ended mark leaves the statement in conflict');
+      assert.equal(occurrence.openedAt, T('02:00:00.000Z'));
+
+      const lease = {
+        eventId: reportingIssueEventIdV1(occurrence.issueId, occurrence.consumerId, 'opened'),
+        kind: 'opened',
+        issueId: occurrence.issueId,
+        accountId: occurrence.accountId,
+        consumerId: occurrence.consumerId,
+        reportingObligationId: occurrence.reportingObligationId,
+        reportingStatusId: occurrence.reportingStatusId,
+        occurredAt: at,
+        recordedAt: at,
+        attempts: 1,
+        leaseToken: 't',
+        leaseExpiresAt: T('04:00:00.000Z'),
+      };
+      const rendered = renderReportingIssueEventV1(lease, { obligation, revisions, issues: [row], statement });
+      assert.notEqual(rendered.issue, null);
+      assert.equal(rendered.issue.issueId, occurrence.issueId);
+      assert.equal(rendered.issue.openedAt, T('02:00:00.000Z'));
+    });
   });
 });

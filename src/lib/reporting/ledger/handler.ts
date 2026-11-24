@@ -345,7 +345,8 @@ export function createReportingStatusHandler<TContext = unknown>(
                 revisions,
                 persistedHealth,
                 page.snapshot.ledgerAsOf,
-                consumerMismatchEscalation
+                consumerMismatchEscalation,
+                page.snapshot.issues
               );
         // A buyer that owes a status and has not posted one is a counted
         // unknown, never a conflict: it creates no issue, changes no health,

@@ -12,7 +12,7 @@ import {
   TestControllerError,
   DEFAULT_REPORTING_CAPABILITIES,
 } from '@adcp/sdk/server/legacy/v5';
-import type { ServeContext, TestControllerStore } from '@adcp/sdk';
+import type { ServeContext, TestControllerStore } from '@adcp/sdk/server';
 
 // ---------------------------------------------------------------------------
 // Product catalog

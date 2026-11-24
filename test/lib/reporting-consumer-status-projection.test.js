@@ -6,6 +6,7 @@ const {
   assertSupportedReportingAuthoritativeParty,
   reportingConsumerStatusCapabilityV1,
   projectReportingConsumerStatusMismatchV1,
+  normalizeReportingUnreadableMarkWriteV1,
   UnsupportedReportingFeatureError,
 } = require('../../dist/lib/reporting/ledger/index.js');
 const { AdcpError } = require('../../dist/lib/server/decisioning/async-outcome.js');
@@ -509,5 +510,413 @@ describe('rc.3 escalation option validation', () => {
     assert.equal(assertReportingConsumerMismatchEscalation(undefined), undefined);
     const valid = { escalationSeconds: 0, operationsContact: { url: 'https://ops.seller.example/reporting' } };
     assert.equal(assertReportingConsumerMismatchEscalation(valid), valid);
+  });
+});
+
+// adcp-client#3653: a mismatch resolves when the seller's record stops conflicting with the
+// caller's current statement, not only when the caller supersedes it.
+describe('consumer-status mismatch resolution by the seller record (#3653)', () => {
+  const AT = '2026-03-09T04:00:00.000Z';
+  const REV_1 = [revision('rev-1', 1, '2026-03-09T01:00:00.000Z')];
+
+  const project = (status, revisions, issues, at = AT) =>
+    projectReportingConsumerStatusMismatchV1(obligation(), status, revisions, 'healthy', at, undefined, issues);
+  const mark = (overrides = {}) => ({
+    issueId: 'mark-1',
+    reporting_obligation_id: 'ob-1',
+    reporting_revision_id: 'rev-1',
+    code: 'REVISION_UNREADABLE',
+    responsibleParty: 'seller',
+    severity: 'action_required',
+    recommendedAction: 'contact_seller',
+    openedAt: '2026-03-09T01:40:00.000Z',
+    observedAt: '2026-03-09T01:40:00.000Z',
+    ...overrides,
+  });
+  const unreadable = (overrides = {}) =>
+    statement({ consumer_status: 'unreadable', reporting_status_id: 'consumer-status.unreadable.0001', ...overrides });
+  const contentMismatch = (overrides = {}) =>
+    statement({
+      consumer_status: 'content_mismatch',
+      mismatch_code: 'coverage_short',
+      reporting_status_id: 'consumer-status.mismatch.0001',
+      ...overrides,
+    });
+
+  describe('content_mismatch', () => {
+    test('conflicts while the named revision is the current one', () => {
+      assert.equal(project(contentMismatch(), REV_1).issue.code, 'CONSUMER_STATUS_MISMATCH');
+    });
+
+    test('a restatement superseding the named revision resolves it', () => {
+      assert.equal(project(contentMismatch(), RESTATED), undefined);
+    });
+
+    test('no revisions at all means nothing to dispute', () => {
+      assert.equal(project(contentMismatch(), []), undefined);
+    });
+  });
+
+  describe('revision_missing', () => {
+    const missing = () => statement({ consumer_status: 'revision_missing', reporting_revision_id: undefined });
+
+    test('does not conflict while the seller has no revision', () => {
+      assert.equal(project(missing(), []), undefined);
+    });
+
+    test('conflicts once the seller has a current revision', () => {
+      assert.equal(project(missing(), REV_1).issue.code, 'CONSUMER_STATUS_MISMATCH');
+    });
+  });
+
+  describe('obligation_missing', () => {
+    const missing = () =>
+      statement({
+        consumer_status: 'obligation_missing',
+        reporting_obligation_id: undefined,
+        reporting_revision_id: undefined,
+      });
+
+    test('always conflicts, with or without revisions', () => {
+      assert.ok(project(missing(), []));
+      assert.ok(project(missing(), REV_1));
+      assert.ok(project(missing(), RESTATED));
+    });
+  });
+
+  describe('unreadable', () => {
+    test('conflicts when the seller has no mark', () => {
+      assert.equal(project(unreadable(), REV_1, []).issue.code, 'CONSUMER_STATUS_MISMATCH');
+    });
+
+    test('an open seller REVISION_UNREADABLE for the named revision resolves it', () => {
+      assert.equal(project(unreadable(), REV_1, [mark()]), undefined);
+    });
+
+    test('a mark that has since resolved conflicts again under a new issueId, opened when the mark ended', () => {
+      const original = project(unreadable(), REV_1, []).issue;
+      const recurrence = project(unreadable(), REV_1, [mark({ resolvedAt: '2026-03-09T03:00:00.000Z' })]).issue;
+      assert.equal(recurrence.code, 'CONSUMER_STATUS_MISMATCH');
+      assert.notEqual(recurrence.issueId, original.issueId);
+      assert.equal(recurrence.openedAt, '2026-03-09T03:00:00.000Z');
+      assert.equal(recurrence.reporting_status_id, original.reporting_status_id, 'same statement, new condition');
+    });
+
+    test('a mark ended by issueState (resolved or waived) counts, dated by observedAt', () => {
+      for (const issueState of ['resolved', 'waived']) {
+        const recurrence = project(unreadable(), REV_1, [mark({ issueState, observedAt: '2026-03-09T03:00:00.000Z' })]);
+        assert.equal(recurrence.issue.openedAt, '2026-03-09T03:00:00.000Z', issueState);
+      }
+    });
+
+    test('a mark whose resolvedAt is after ledgerAsOf is still open', () => {
+      assert.equal(project(unreadable(), REV_1, [mark({ resolvedAt: '2026-03-09T05:00:00.000Z' })], AT), undefined);
+      assert.ok(
+        project(unreadable(), REV_1, [mark({ resolvedAt: '2026-03-09T05:00:00.000Z' })], '2026-03-09T06:00:00.000Z')
+      );
+    });
+
+    test('marks on another revision or another obligation are ignored', () => {
+      assert.ok(project(unreadable(), REV_1, [mark({ reporting_revision_id: 'rev-2' })]));
+      assert.ok(project(unreadable(), REV_1, [mark({ reporting_obligation_id: 'ob-other' })]));
+      assert.ok(project(unreadable(), REV_1, [mark({ code: 'REVISION_MISSING' })]));
+    });
+
+    test('a mark that ended before the statement was recorded keeps the original issueId', () => {
+      const original = project(unreadable(), REV_1, []).issue;
+      const earlier = project(unreadable(), REV_1, [
+        mark({ observedAt: '2026-03-09T01:00:00.000Z', resolvedAt: '2026-03-09T01:20:00.000Z' }),
+      ]).issue;
+      assert.equal(earlier.issueId, original.issueId);
+      assert.equal(earlier.openedAt, original.openedAt);
+    });
+
+    test('an open mark wins over an older ended one', () => {
+      assert.equal(
+        project(unreadable(), REV_1, [
+          mark({ issueId: 'mark-old', resolvedAt: '2026-03-09T02:00:00.000Z' }),
+          mark({ issueId: 'mark-new', observedAt: '2026-03-09T02:30:00.000Z' }),
+        ]),
+        undefined
+      );
+    });
+
+    test('the latest ended mark names the recurrence', () => {
+      const first = project(unreadable(), REV_1, [
+        mark({ issueId: 'mark-a', resolvedAt: '2026-03-09T02:00:00.000Z' }),
+      ]).issue;
+      const both = project(unreadable(), REV_1, [
+        mark({ issueId: 'mark-a', resolvedAt: '2026-03-09T02:00:00.000Z' }),
+        mark({ issueId: 'mark-b', observedAt: '2026-03-09T02:10:00.000Z', resolvedAt: '2026-03-09T03:00:00.000Z' }),
+      ]).issue;
+      assert.notEqual(both.issueId, first.issueId);
+      assert.equal(both.openedAt, '2026-03-09T03:00:00.000Z');
+    });
+
+    test('omitting issues keeps the old behaviour: it always conflicts', () => {
+      const withUndefined = projectReportingConsumerStatusMismatchV1(obligation(), unreadable(), REV_1, 'healthy', AT);
+      assert.equal(withUndefined.issue.code, 'CONSUMER_STATUS_MISMATCH');
+      assert.equal(withUndefined.issue.issueId, project(unreadable(), REV_1, []).issue.issueId);
+    });
+
+    test('seller-health suppression hides the issue and the same issueId returns on recovery', () => {
+      const recurrenceMarks = [mark({ resolvedAt: '2026-03-09T03:00:00.000Z' })];
+      const shown = project(unreadable(), REV_1, recurrenceMarks).issue;
+      const hidden = projectReportingConsumerStatusMismatchV1(
+        obligation(),
+        unreadable(),
+        REV_1,
+        'action_required',
+        AT,
+        undefined,
+        recurrenceMarks
+      );
+      assert.equal(hidden, undefined);
+      const back = projectReportingConsumerStatusMismatchV1(
+        obligation(),
+        unreadable(),
+        REV_1,
+        'complete',
+        AT,
+        undefined,
+        recurrenceMarks
+      ).issue;
+      assert.equal(back.issueId, shown.issueId);
+    });
+  });
+
+  describe('received', () => {
+    test('naming the current revision still does not conflict', () => {
+      assert.equal(project(statement(), REV_1), undefined);
+    });
+
+    test('naming a superseded revision still conflicts, with the stale-grace window', () => {
+      const projection = project(statement(), RESTATED, undefined, '2026-03-09T02:30:00.000Z');
+      assert.equal(projection.issue.severity, 'delayed');
+      assert.equal(projection.staleReceivedGraceDeadline, GRACE_DEADLINE);
+    });
+
+    test('past the grace deadline it escalates', () => {
+      assert.equal(project(statement(), RESTATED, undefined, GRACE_DEADLINE).issue.severity, 'action_required');
+    });
+
+    test('no revisions is not a conflict', () => {
+      assert.equal(project(statement(), []), undefined);
+    });
+  });
+});
+
+describe('unreadable mark end instants (#3653 round 2)', () => {
+  const AT = '2026-03-09T04:00:00.000Z';
+  const REV_1 = [revision('rev-1', 1, '2026-03-09T01:00:00.000Z')];
+  const project = issues =>
+    projectReportingConsumerStatusMismatchV1(
+      obligation(),
+      statement({ consumer_status: 'unreadable', reporting_status_id: 'consumer-status.unreadable.0001' }),
+      REV_1,
+      'healthy',
+      AT,
+      undefined,
+      issues
+    );
+  const mark = (overrides = {}) => ({
+    issueId: 'mark-1',
+    reporting_obligation_id: 'ob-1',
+    reporting_revision_id: 'rev-1',
+    code: 'REVISION_UNREADABLE',
+    responsibleParty: 'seller',
+    severity: 'action_required',
+    recommendedAction: 'contact_seller',
+    openedAt: '2026-03-09T01:40:00.000Z',
+    observedAt: '2026-03-09T01:40:00.000Z',
+    ...overrides,
+  });
+
+  test('a mark with a terminal issueState and a later resolvedAt ends at the issueState instant', () => {
+    for (const issueState of ['resolved', 'waived']) {
+      const recurrence = project([
+        mark({ issueState, observedAt: '2026-03-09T03:00:00.000Z', resolvedAt: '2026-03-09T03:30:00.000Z' }),
+      ]).issue;
+      assert.equal(recurrence.openedAt, '2026-03-09T03:00:00.000Z', issueState);
+      // Adding resolvedAt to an already-resolved mark moves nothing.
+      assert.equal(
+        recurrence.issueId,
+        project([mark({ issueState, observedAt: '2026-03-09T03:00:00.000Z' })]).issue.issueId,
+        issueState
+      );
+    }
+  });
+
+  test('an earlier resolvedAt still wins over a later terminal issueState', () => {
+    const recurrence = project([
+      mark({ issueState: 'resolved', observedAt: '2026-03-09T03:30:00.000Z', resolvedAt: '2026-03-09T03:00:00.000Z' }),
+    ]).issue;
+    assert.equal(recurrence.openedAt, '2026-03-09T03:00:00.000Z');
+  });
+
+  test('a mark ending exactly when the statement was recorded names a recurrence', () => {
+    const original = project([]).issue;
+    const recurrence = project([
+      mark({ observedAt: '2026-03-09T01:00:00.000Z', resolvedAt: '2026-03-09T01:31:00.000Z' }),
+    ]).issue;
+    assert.notEqual(recurrence.issueId, original.issueId);
+    assert.equal(recurrence.openedAt, '2026-03-09T01:31:00.000Z');
+  });
+
+  test('a mark opened after ledgerAsOf is ignored and the statement still conflicts', () => {
+    const original = project([]).issue;
+    const later = project([
+      mark({ openedAt: '2026-03-09T04:00:00.001Z', observedAt: '2026-03-09T04:00:00.001Z' }),
+    ]).issue;
+    assert.equal(later.issueId, original.issueId, 'not a recurrence either: the mark did not exist yet');
+    assert.equal(later.openedAt, original.openedAt);
+    // An ended mark that had not opened by the instant is likewise ignored.
+    const endedLater = project([
+      mark({
+        openedAt: '2026-03-09T04:00:00.001Z',
+        observedAt: '2026-03-09T01:00:00.000Z',
+        resolvedAt: '2026-03-09T03:00:00.000Z',
+      }),
+    ]).issue;
+    assert.equal(endedLater.issueId, original.issueId);
+  });
+
+  test('a mark ending one instant before the statement still keeps the original issueId', () => {
+    const original = project([]).issue;
+    const earlier = project([
+      mark({ observedAt: '2026-03-09T01:00:00.000Z', resolvedAt: '2026-03-09T01:30:59.999Z' }),
+    ]).issue;
+    assert.equal(earlier.issueId, original.issueId);
+  });
+});
+
+describe('normalizeReportingUnreadableMarkWriteV1 (#3653 round 4)', () => {
+  const NOW = '2026-03-09T03:00:00.000Z';
+  const mark = (overrides = {}) => ({
+    issueId: 'mark-1',
+    reporting_obligation_id: 'ob-1',
+    reporting_revision_id: 'rev-1',
+    code: 'REVISION_UNREADABLE',
+    responsibleParty: 'seller',
+    severity: 'action_required',
+    recommendedAction: 'contact_seller',
+    openedAt: '2026-03-09T02:00:00.000Z',
+    observedAt: '2026-03-09T02:00:00.000Z',
+    ...overrides,
+  });
+  const normalize = (issue, prior) => normalizeReportingUnreadableMarkWriteV1(issue, prior, NOW);
+
+  test('other codes pass through unchanged', () => {
+    const other = mark({
+      code: 'REVISION_MISSING',
+      openedAt: '2026-03-09T09:00:00.000Z',
+      resolvedAt: '2026-03-09T09:00:00.000Z',
+    });
+    assert.equal(normalize(other, mark({ resolvedAt: '2026-03-09T02:30:00.000Z' })), other);
+  });
+
+  test('an open mark with an earlier start is unchanged in substance', () => {
+    const result = normalize(mark());
+    assert.equal(result.openedAt, '2026-03-09T02:00:00.000Z');
+    assert.equal(result.resolvedAt, undefined);
+  });
+
+  test('a future start, resolvedAt or terminal-state observedAt is clamped to now', () => {
+    const future = '2026-03-09T05:00:00.000Z';
+    assert.equal(normalize(mark({ openedAt: future })).openedAt, NOW);
+    assert.equal(normalize(mark({ resolvedAt: future })).resolvedAt, NOW);
+    for (const issueState of ['resolved', 'waived']) {
+      const result = normalize(mark({ issueState, observedAt: future }));
+      assert.equal(result.resolvedAt, NOW, issueState);
+    }
+  });
+
+  test('a non-terminal issueState with a future observedAt does not become an end', () => {
+    const result = normalize(mark({ issueState: 'open', observedAt: '2026-03-09T05:00:00.000Z' }));
+    assert.equal(result.resolvedAt, undefined);
+  });
+
+  test('the first write’s start wins', () => {
+    const prior = mark({ openedAt: '2026-03-09T01:30:00.000Z' });
+    assert.equal(normalize(mark({ openedAt: '2026-03-09T02:30:00.000Z' }), prior).openedAt, '2026-03-09T01:30:00.000Z');
+  });
+
+  test('a prior end is kept against later, earlier and absent incoming ends', () => {
+    const prior = mark({ resolvedAt: '2026-03-09T02:30:00.000Z' });
+    for (const incoming of [
+      mark({ resolvedAt: '2026-03-09T02:45:00.000Z' }),
+      mark({ resolvedAt: '2026-03-09T02:15:00.000Z' }),
+      mark(),
+      mark({ issueState: 'resolved', observedAt: '2026-03-09T02:50:00.000Z' }),
+    ]) {
+      assert.equal(normalize(incoming, prior).resolvedAt, '2026-03-09T02:30:00.000Z');
+    }
+  });
+
+  test('a prior terminal-state end is materialized and kept', () => {
+    const prior = mark({ issueState: 'waived', observedAt: '2026-03-09T02:30:00.000Z' });
+    assert.equal(
+      normalize(mark({ resolvedAt: '2026-03-09T02:45:00.000Z' }), prior).resolvedAt,
+      '2026-03-09T02:30:00.000Z'
+    );
+  });
+
+  test('a terminal observedAt earlier than the end is raised to the end', () => {
+    const result = normalize(
+      mark({ issueState: 'resolved', observedAt: '2026-03-09T02:10:00.000Z' }),
+      mark({ resolvedAt: '2026-03-09T02:30:00.000Z' })
+    );
+    assert.equal(result.resolvedAt, '2026-03-09T02:30:00.000Z');
+    assert.equal(result.observedAt, '2026-03-09T02:30:00.000Z');
+  });
+
+  test('the start is never after the end', () => {
+    const result = normalize(mark({ openedAt: '2026-03-09T02:50:00.000Z', resolvedAt: '2026-03-09T02:20:00.000Z' }));
+    assert.equal(result.resolvedAt, '2026-03-09T02:20:00.000Z');
+    assert.equal(result.openedAt, '2026-03-09T02:20:00.000Z');
+    // Also when both are ahead of now.
+    const ahead = normalize(
+      mark({ openedAt: '2026-03-09T05:00:00.001Z', issueState: 'resolved', observedAt: '2026-03-09T05:00:00.002Z' })
+    );
+    assert.equal(ahead.openedAt, NOW);
+    assert.equal(ahead.resolvedAt, NOW);
+  });
+
+  test('a recorded start stays put and an earlier incoming end is raised to it', () => {
+    const prior = mark({ openedAt: '2026-03-09T02:00:00.000Z' });
+    const result = normalize(
+      mark({ openedAt: '2026-03-09T02:00:00.000Z', resolvedAt: '2026-03-09T01:00:00.000Z' }),
+      prior
+    );
+    assert.equal(result.openedAt, '2026-03-09T02:00:00.000Z');
+    assert.equal(result.resolvedAt, '2026-03-09T02:00:00.000Z');
+    // The incoming start does not matter once one is recorded.
+    const moved = normalize(
+      mark({ openedAt: '2026-03-09T01:00:00.000Z', resolvedAt: '2026-03-09T01:30:00.000Z' }),
+      prior
+    );
+    assert.equal(moved.openedAt, '2026-03-09T02:00:00.000Z');
+    assert.equal(moved.resolvedAt, '2026-03-09T02:00:00.000Z');
+    // A terminal-state end behind the recorded start is raised too.
+    const terminal = normalize(mark({ issueState: 'resolved', observedAt: '2026-03-09T01:00:00.000Z' }), prior);
+    assert.equal(terminal.openedAt, '2026-03-09T02:00:00.000Z');
+    assert.equal(terminal.resolvedAt, '2026-03-09T02:00:00.000Z');
+  });
+
+  test('with no prior the start moves back to a backdated end', () => {
+    const result = normalize(mark({ openedAt: '2026-03-09T02:00:00.000Z', resolvedAt: '2026-03-09T01:00:00.000Z' }));
+    assert.equal(result.openedAt, '2026-03-09T01:00:00.000Z');
+    assert.equal(result.resolvedAt, '2026-03-09T01:00:00.000Z');
+  });
+
+  test('the input and prior are not mutated', () => {
+    const issue = Object.freeze(mark({ openedAt: '2026-03-09T05:00:00.000Z', resolvedAt: '2026-03-09T06:00:00.000Z' }));
+    const prior = Object.freeze(mark({ resolvedAt: '2026-03-09T02:30:00.000Z' }));
+    const issueCopy = structuredClone(issue);
+    const priorCopy = structuredClone(prior);
+    normalize(issue, prior);
+    normalize(issue);
+    assert.deepEqual(issue, issueCopy);
+    assert.deepEqual(prior, priorCopy);
   });
 });

@@ -198,11 +198,11 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
         controlMediaBuy: async () => ({ media_buy_id: 'mb-control', revision: 2 }),
       },
     });
+    platform.capabilities.supported_versions = ['3.0.25', '3.1.18', '3.2.1'];
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-and-legacy',
       version: '1.0.0',
       adcpVersion: '3.2.1',
-      capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.1'] },
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -289,11 +289,11 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
         controlMediaBuy: async () => assert.fail('compact control_media_buy must not run'),
       },
     });
+    platform.capabilities.supported_versions = ['3.1.18', '3.2.1'];
     const server = createAdcpServerFromPlatform(platform, {
       name: 'signed-reverse-compatibility',
       version: '1.0.0',
       adcpVersion: '3.2.1',
-      capabilities: { supported_versions: ['3.1.18', '3.2.1'] },
       validation: { requests: 'off', responses: 'off' },
       legacyCreativeFormatConverter: ({ formatId }) =>
         formatId.id === 'display-300x250'
@@ -1972,50 +1972,48 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
         v1_format_ref: dualDeclared.format_ids,
       },
     ];
-    const server = createAdcpServerFromPlatform(
-      buildPlatform({
-        sales: {
-          ...base.sales,
-          getProducts: async () => ({
-            cache_scope: 'account',
-            products: [
-              ownerA,
-              product('owner-b', 'https://formats-b.example/catalog', 'shared_takeover'),
-              product('known-aao', 'https://creative.adcontextprotocol.org/', 'display_300x250_image'),
-              dualDeclared,
-            ],
-          }),
-        },
-      }),
-      {
-        name: 'async-legacy-format-resolution',
-        version: '1.0.0',
-        adcpVersion: '3.1.18',
-        capabilities: { supported_versions: ['3.0.25', '3.1.18'] },
-        validation: { requests: 'off', responses: 'off' },
-        legacyCreativeFormatResolverConcurrency: 2,
-        legacyCreativeFormatResolver: async context => {
-          calls.push(context);
-          assert.strictEqual(Object.isFrozen(context.formatId), true);
-          assert.strictEqual(context.signal.aborted, false);
-          inFlight += 1;
-          maxInFlight = Math.max(maxInFlight, inFlight);
-          await new Promise(resolve => setImmediate(resolve));
-          inFlight -= 1;
-          const owner = new URL(context.formatId.agent_url).hostname.split('-')[1].split('.')[0];
-          return {
-            format_option_id: `takeover-${owner}`,
-            format_kind: 'custom',
-            format_shape: `takeover_${owner}`,
-            format_schema: {
-              uri: `https://schemas.example/takeover-${owner}.json`,
-              digest: `sha256:${(owner === 'a' ? 'a' : 'b').repeat(64)}`,
-            },
-            params: {},
-          };
-        },
-      }
-    );
+    const resolverPlatform = buildPlatform({
+      sales: {
+        ...base.sales,
+        getProducts: async () => ({
+          cache_scope: 'account',
+          products: [
+            ownerA,
+            product('owner-b', 'https://formats-b.example/catalog', 'shared_takeover'),
+            product('known-aao', 'https://creative.adcontextprotocol.org/', 'display_300x250_image'),
+            dualDeclared,
+          ],
+        }),
+      },
+    });
+    resolverPlatform.capabilities.supported_versions = ['3.0.25', '3.1.18'];
+    const server = createAdcpServerFromPlatform(resolverPlatform, {
+      name: 'async-legacy-format-resolution',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      validation: { requests: 'off', responses: 'off' },
+      legacyCreativeFormatResolverConcurrency: 2,
+      legacyCreativeFormatResolver: async context => {
+        calls.push(context);
+        assert.strictEqual(Object.isFrozen(context.formatId), true);
+        assert.strictEqual(context.signal.aborted, false);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise(resolve => setImmediate(resolve));
+        inFlight -= 1;
+        const owner = new URL(context.formatId.agent_url).hostname.split('-')[1].split('.')[0];
+        return {
+          format_option_id: `takeover-${owner}`,
+          format_kind: 'custom',
+          format_shape: `takeover_${owner}`,
+          format_schema: {
+            uri: `https://schemas.example/takeover-${owner}.json`,
+            digest: `sha256:${(owner === 'a' ? 'a' : 'b').repeat(64)}`,
+          },
+          params: {},
+        };
+      },
+    });
 
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -7275,7 +7273,6 @@ describe('Custom-handler merge seam (incremental migration)', () => {
       name: 'legacy-signals',
       version: '0.0.1',
       adcpVersion: ADCP_VERSION,
-      capabilities: { supported_versions: ['3.1.18', ADCP_VERSION] },
       strictSpecialismValidation: true,
       validation: { requests: 'off', responses: 'off' },
       signals: {
@@ -9328,28 +9325,26 @@ describe('tasks_get wire tool (B9)', () => {
     const taskContexts = [];
     const accountResolverContexts = [];
     const sessionResolverContexts = [];
-    const server = createAdcpServerFromPlatform(
-      buildHitlPlatform(
-        async taskCtx => {
-          taskContexts.push(taskCtx);
-          return { media_buy_id: `mb_${taskContexts.length}` };
-        },
-        ctx => requestContexts.push(ctx),
-        ctx => accountResolverContexts.push(ctx)
-      ),
-      {
-        name: 'versioned-handoff',
-        version: '0.0.1',
-        adcpVersion: '3.2.1',
-        defaultAdcpVersion: '3.1.18',
-        capabilities: { supported_versions: ['3.1.18', '3.2.1'] },
-        resolveSessionKey: async context => {
-          sessionResolverContexts.push(context);
-          return 'session-version-probe';
-        },
-        validation: { requests: 'off', responses: 'off' },
-      }
+    const hitlPlatform = buildHitlPlatform(
+      async taskCtx => {
+        taskContexts.push(taskCtx);
+        return { media_buy_id: `mb_${taskContexts.length}` };
+      },
+      ctx => requestContexts.push(ctx),
+      ctx => accountResolverContexts.push(ctx)
     );
+    hitlPlatform.capabilities.supported_versions = ['3.1.18', '3.2.1'];
+    const server = createAdcpServerFromPlatform(hitlPlatform, {
+      name: 'versioned-handoff',
+      version: '0.0.1',
+      adcpVersion: '3.2.1',
+      defaultAdcpVersion: '3.1.18',
+      resolveSessionKey: async context => {
+        sessionResolverContexts.push(context);
+        return 'session-version-probe';
+      },
+      validation: { requests: 'off', responses: 'off' },
+    });
 
     const defaultTaskId = await createTask(server, 'acc_default');
     const modernTaskId = await createTask(server, 'acc_modern', '3.2.1');
@@ -10902,5 +10897,124 @@ describe('call-time handoff refusal on every handoff dispatch site (#3761)', () 
     assert.strictEqual(probe.ok, false);
     assert.strictEqual(probe.error.code, 'UNSUPPORTED_FEATURE');
     assert.deepStrictEqual(probe.error.details, { feature: 'task_handoff' });
+  });
+});
+
+describe('createAdcpServerFromPlatform refuses options.capabilities', () => {
+  const baseOpts = {
+    name: 'opts-capabilities',
+    version: '1.0.0',
+    validation: { requests: 'off', responses: 'off' },
+  };
+  // The block docs/guides/SIGNING-GUIDE.md declares on the platform.
+  const GUIDE_REQUEST_SIGNING = {
+    supported: true,
+    required_for: ['create_media_buy', 'update_media_buy'],
+    supported_for: ['create_media_buy', 'update_media_buy', 'sync_creatives', 'sync_audiences'],
+    covers_content_digest: 'required',
+  };
+
+  async function dispatchCapabilities(server, args = {}) {
+    return server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: args },
+    });
+  }
+
+  function assertRefused(opts) {
+    assert.throws(
+      () => createAdcpServerFromPlatform(buildPlatform(), opts),
+      err =>
+        err instanceof PlatformConfigError &&
+        /options\.capabilities is not supported/.test(err.message) &&
+        /platform\.capabilities/.test(err.message)
+    );
+  }
+
+  it('throws PlatformConfigError naming platform.capabilities when supported_versions is passed', () => {
+    assertRefused({ ...baseOpts, capabilities: { supported_versions: ['3.2'] } });
+  });
+
+  it('throws for an empty capabilities object', () => {
+    assertRefused({ ...baseOpts, capabilities: {} });
+  });
+
+  it('throws when only non-version keys are set', () => {
+    assertRefused({
+      ...baseOpts,
+      capabilities: { overrides: { request_signing: GUIDE_REQUEST_SIGNING } },
+    });
+  });
+
+  it('still throws with identity33 enabled (schema-scope wrapper recursion)', () => {
+    assertRefused({ ...baseOpts, identity33: true, capabilities: { supported_versions: ['3.2'] } });
+  });
+
+  it('does not throw when options.capabilities is explicitly undefined', () => {
+    assert.doesNotThrow(() => createAdcpServerFromPlatform(buildPlatform(), { ...baseOpts, capabilities: undefined }));
+  });
+
+  it('advertises exactly the platform-declared supported_versions', async () => {
+    const platform = buildPlatform();
+    platform.capabilities.supported_versions = ['3.2', '3.3-rc.3'];
+    const server = createAdcpServerFromPlatform(platform, baseOpts);
+    const result = await dispatchCapabilities(server);
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(result.structuredContent.adcp.supported_versions, ['3.2', '3.3-rc.3']);
+  });
+
+  it('keeps the default supported_versions when the platform declares none', async () => {
+    const platform = buildPlatform();
+    assert.strictEqual(platform.capabilities.supported_versions, undefined);
+    const server = createAdcpServerFromPlatform(platform, baseOpts);
+    const result = await dispatchCapabilities(server);
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    // Observed default: ['3.0', '3.1', '3.2', <release-precision pin>]. Assert its
+    // shape rather than the literal so a pin bump does not break the test.
+    const advertised = result.structuredContent.adcp.supported_versions;
+    assert.ok(Array.isArray(advertised) && advertised.length > 0, JSON.stringify(advertised));
+    assert.strictEqual(advertised[0], '3.0');
+    assert.strictEqual(advertised.at(-1), toReleasePrecisionVersion(ADCP_VERSION));
+  });
+
+  it('omits adcp.supported_versions for a 3.0 caller', async () => {
+    const platform = buildPlatform();
+    platform.capabilities.supported_versions = ['3.0', '3.2'];
+    const server = createAdcpServerFromPlatform(platform, baseOpts);
+    const result = await dispatchCapabilities(server, { adcp_version: '3.0' });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.adcp?.supported_versions, undefined);
+  });
+
+  it('projects platform.capabilities.overrides.request_signing into a schema-valid capabilities response', async () => {
+    const platform = buildPlatform();
+    platform.capabilities.overrides = { request_signing: GUIDE_REQUEST_SIGNING };
+    // Strict response validation checks the advertised block against the
+    // capabilities response schema.
+    const server = createAdcpServerFromPlatform(platform, {
+      ...baseOpts,
+      validation: { requests: 'off', responses: 'strict' },
+    });
+    const result = await dispatchCapabilities(server);
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(result.structuredContent.request_signing, GUIDE_REQUEST_SIGNING);
+  });
+
+  it('rejects an invalid release identifier declared on the platform', () => {
+    const platform = buildPlatform();
+    platform.capabilities.supported_versions = ['not-a-version'];
+    assert.throws(
+      () => createAdcpServerFromPlatform(platform, baseOpts),
+      err => err instanceof PlatformConfigError && /invalid release identifier 'not-a-version'/.test(err.message)
+    );
+  });
+
+  it('rejects a declared release newer than the configured pin', () => {
+    const platform = buildPlatform();
+    platform.capabilities.supported_versions = ['3.0', '3.2'];
+    assert.throws(
+      () => createAdcpServerFromPlatform(platform, { ...baseOpts, adcpVersion: '3.0.12' }),
+      err => err instanceof PlatformConfigError && /newer than the configured server schema 3\.0\.12/.test(err.message)
+    );
   });
 });

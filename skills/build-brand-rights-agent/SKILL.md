@@ -9,8 +9,8 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 
 ## Pick your fork target
 
-| Specialism | Status | Fork this | Storyboard |
-| --- | --- | --- | --- |
+| Specialism     | Status | Fork this                                                                                                           | Storyboard     |
+| -------------- | ------ | ------------------------------------------------------------------------------------------------------------------- | -------------- |
 | `brand-rights` | stable | [`hello_seller_adapter_multi_tenant.ts`](../../examples/hello_seller_adapter_multi_tenant.ts) — `brandRights` block | `brand_rights` |
 
 The multi-tenant adapter is the canonical fork target. Its `brandRights` block implements all five operations (`getBrandIdentity`, `getRights`, `acquireRights`, `updateRights`, `reviewCreativeApproval`) plus the cross-specialism governance check (`enforceGovernance`) called from `acquireRights`.
@@ -59,15 +59,17 @@ The spec models creative approval as an HTTP POST from the buyer to the `approva
 
 The receiver must validate `idempotency_key` itself (the framework's auto-idempotency middleware applies to MCP/A2A tools, not arbitrary HTTP receivers) and replay the cached verdict on resubmission.
 
+Build the response with `legacyCreativeApprovalApproved` / `legacyCreativeApprovalRejected` / `legacyCreativeApprovalPendingReview` / `legacyCreativeApprovalError` from `@adcp/sdk/server`. The three decision builders emit the AdCP 3.1+ shape: the decision in `approval_status`, and `status: 'completed'` as the task status. An AdCP 3.0 buyer reads the decision from `status`, so project the body for the buyer's release with `projectResponseForRelease('creative_approval', body, release)` from `@adcp/sdk/adapters/version`. Take the release from the request's `adcp_version` when it carries one (AdCP 3.1+ buyers may pin it). A 3.0 buyer sends none, so record `ctx.servedAdcpVersion` with the rights grant when `acquire_rights` returns the `approval_webhook` URL, and fall back to that value.
+
 ## Tool surface
 
-| Operation | How to implement |
-| --- | --- |
+| Operation            | How to implement                                                                                |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
 | `get_brand_identity` | `brandRights.getBrandIdentity` handler — locale-keyed brand name, domain, logos, house identity |
-| `get_rights` | `brandRights.getRights` handler — list licensable rights with pricing + use cases |
-| `acquire_rights` | `brandRights.acquireRights` handler (mutating) — returns `approval_webhook` URL |
-| `update_rights` | `brandRights.updateRights` handler (mutating) — for campaign-end revocation, scope changes |
-| `creative_approval` | HTTP receiver at the `approval_webhook` URL; dispatch to `brandRights.reviewCreativeApproval` |
+| `get_rights`         | `brandRights.getRights` handler — list licensable rights with pricing + use cases               |
+| `acquire_rights`     | `brandRights.acquireRights` handler (mutating) — returns `approval_webhook` URL                 |
+| `update_rights`      | `brandRights.updateRights` handler (mutating) — for campaign-end revocation, scope changes      |
+| `creative_approval`  | HTTP receiver at the `approval_webhook` URL; dispatch to `brandRights.reviewCreativeApproval`   |
 
 ## Specialism deltas
 

@@ -46,7 +46,7 @@ A minimal signals agent using `createAdcpServerFromPlatform` + the
 `definePlatform` / `defineSignalsPlatform` identity helpers:
 
 ```typescript
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import {
   createAdcpServerFromPlatform,
   createIdempotencyStore,
@@ -120,7 +120,7 @@ annotations don't need them.
 The declarative path. You declare a typed `DecisioningPlatform` per specialism and the framework handles schema validation, response formatting, account resolution, capabilities generation, idempotency, signing, async tasks, lifecycle state, and error catching.
 
 ```typescript
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import {
   createAdcpServerFromPlatform,
   createIdempotencyStore,
@@ -271,7 +271,7 @@ MCP is the default transport. To additionally expose the same `AdcpServer` over 
 
 ```typescript
 import express from 'express';
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import { createAdcpServerFromPlatform, createA2AAdapter } from '@adcp/sdk/server';
 
 const adcp = createAdcpServerFromPlatform(platform, { name: 'My SSP', version: '1.0.0' });
@@ -538,7 +538,7 @@ accounts: {
 AdCP v3 requires `idempotency_key` on every mutating request and requires sellers to declare a replay window. `@adcp/sdk/server` ships `createIdempotencyStore` which handles validation, JCS canonicalization, replay, and capability declaration:
 
 ```typescript
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import {
   createAdcpServerFromPlatform,
   createIdempotencyStore,
@@ -565,7 +565,7 @@ serve(() =>
 **Production (pgBackend).** `pg.Pool` is lazy — a bad `DATABASE_URL` lets the server boot, advertise `IdempotencySupported`, then silently fail every mutating call. Wire `readinessCheck` so the server never accepts traffic with a broken pool:
 
 ```typescript
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import { createAdcpServerFromPlatform, createIdempotencyStore, pgBackend, getIdempotencyMigration } from '@adcp/sdk/server';
 import { Pool } from 'pg';
 
@@ -676,7 +676,7 @@ The same validator runs on the `AdcpClient` side — storyboards and third-party
 If your agent receives signed requests from buyers, verify them using `requireAuthenticatedOrSigned()` — one call that bundles signature verification with credential fallback and `requiredFor` enforcement:
 
 ```typescript
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import {
   createAdcpServerFromPlatform,
   verifySignatureAsAuthenticator,
@@ -686,25 +686,39 @@ import {
 } from '@adcp/sdk/server';
 import { ResolvedAgentJwksResolver } from '@adcp/sdk/signing/server';
 
+// Advertise request_signing in the platform declaration. The options of
+// createAdcpServerFromPlatform don't accept `capabilities`.
+const platform = {
+  capabilities: {
+    // specialisms, channels, ...
+    overrides: {
+      request_signing: {
+        supported: true,
+        // Every required_for operation must also be in supported_for.
+        required_for: ['create_media_buy', 'update_media_buy'],
+        supported_for: ['create_media_buy', 'update_media_buy'],
+        covers_content_digest: 'required',
+      },
+    },
+  },
+  // accounts, sales, ...
+};
+
 serve(
   () =>
     createAdcpServerFromPlatform(platform, {
       name: 'My Seller',
       version: '1.0.0',
-      capabilities: {
-        overrides: {
-          request_signing: {
-            supported: true,
-            required_for: ['create_media_buy', 'update_media_buy'],
-            covers_content_digest: 'either',
-          },
-        },
-      },
     }),
   {
     authenticate: requireAuthenticatedOrSigned({
       signature: verifySignatureAsAuthenticator({
-        capability: { supported: true, required_for: ['create_media_buy', 'update_media_buy'], covers_content_digest: 'either' },
+        capability: {
+          supported: true,
+          required_for: ['create_media_buy', 'update_media_buy'],
+          supported_for: ['create_media_buy', 'update_media_buy'],
+          covers_content_digest: 'required',
+        },
         jwks: new ResolvedAgentJwksResolver('https://buyer.example/mcp', 'mcp'),
         resolveOperation: adcpOperationResolver,
       }),
@@ -857,7 +871,7 @@ loaded.
 For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServerFromPlatform` calls into this internally.
 
 ```typescript
-import { createTaskCapableServer, taskToolResponse } from '@adcp/sdk';
+import { createTaskCapableServer, taskToolResponse } from '@adcp/sdk/server';
 import { GetSignalsRequestSchema } from '@adcp/sdk/schemas';
 
 function createAgent({ taskStore }) {
@@ -911,7 +925,7 @@ import {
   legacyMediaBuyResponse,
   legacyDeliveryResponse,
   taskToolResponse,
-} from '@adcp/sdk';
+} from '@adcp/sdk/server';
 // For error envelopes, throw a typed error class — `AuthMissingError`,
 // `PermissionDeniedError`, `RateLimitedError`, etc. — from `@adcp/sdk/server`.
 
@@ -935,7 +949,7 @@ With `createAdcpServerFromPlatform`, synchronous handlers return raw data and th
 For async tools that need background processing, use `registerAdcpTaskTool()`:
 
 ```typescript
-import { registerAdcpTaskTool, InMemoryTaskStore } from '@adcp/sdk';
+import { registerAdcpTaskTool, InMemoryTaskStore } from '@adcp/sdk/server';
 import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
 
 const taskStore = new InMemoryTaskStore();
@@ -998,7 +1012,7 @@ Key storyboards for server-side builders:
 The `serve()` helper handles HTTP transport setup. Pass it a factory function that returns a configured `AdcpServer`:
 
 ```typescript
-import { serve } from '@adcp/sdk';
+import { serve } from '@adcp/sdk/server';
 import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 serve(() => createAdcpServerFromPlatform(platform, { name: 'My Agent', version: '1.0.0' }));

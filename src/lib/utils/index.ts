@@ -164,6 +164,7 @@ export {
   type GetProductsCacheScopeValidation,
 } from './get-products-cache-scope';
 export { getAuthoritativeMediaBuyStatus, isMediaBuyStatus } from './media-buy-status';
+export { platformIdOf, type PlatformIdentifiedRow } from './platform-id';
 export {
   resolveTaskState,
   type EffectiveTaskState,

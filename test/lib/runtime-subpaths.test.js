@@ -68,6 +68,7 @@ const REQUIRED_RUNTIME_EXPORTS = {
     'canonicalJsonSha256',
     'isMediaBuyStatus',
     'getAuthoritativeMediaBuyStatus',
+    'platformIdOf',
     'unwrapProtocolResponse',
     'parseCapabilitiesResponse',
     'brandManifestToBrandReference',

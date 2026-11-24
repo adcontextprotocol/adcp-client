@@ -118,6 +118,81 @@
       }
     },
     {
+      "id": "sync_audiences-response-platform-id-to-seller-id",
+      "side": "server",
+      "direction": "response_down",
+      "tool": "sync_audiences",
+      "from_version": "3.3",
+      "to_version": "3.2",
+      "note": "Server: 3.3 rows carry platform_id and the deprecated seller_id alias with identical values; 3.2 defines seller_id only, so the identifier stays there and platform_id goes.",
+      "input": {
+        "audiences": [
+          {
+            "audience_id": "aud_1",
+            "action": "created",
+            "platform_id": "plat_aud_1",
+            "seller_id": "plat_aud_1"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "converted",
+        "output": {
+          "audiences": [
+            {
+              "audience_id": "aud_1",
+              "action": "created",
+              "seller_id": "plat_aud_1"
+            }
+          ]
+        },
+        "dropped": [],
+        "moved": [
+          {
+            "from": "audiences[].platform_id",
+            "to": "audiences[].seller_id"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sync_event_sources-response-platform-id-only-to-seller-id",
+      "side": "server",
+      "direction": "response_down",
+      "tool": "sync_event_sources",
+      "from_version": "3.3",
+      "to_version": "3.2",
+      "note": "Server: a stored 3.3 row that carries platform_id alone still reaches a 3.2 reader under seller_id.",
+      "input": {
+        "event_sources": [
+          {
+            "event_source_id": "es_1",
+            "action": "created",
+            "platform_id": "plat_es_1"
+          }
+        ]
+      },
+      "expect": {
+        "outcome": "converted",
+        "output": {
+          "event_sources": [
+            {
+              "event_source_id": "es_1",
+              "action": "created",
+              "seller_id": "plat_es_1"
+            }
+          ]
+        },
+        "dropped": [],
+        "moved": [
+          {
+            "from": "event_sources[].platform_id",
+            "to": "event_sources[].seller_id"
+          }
+        ]
+      }
+    },
+    {
       "id": "list_products-response-echo-kept",
       "side": "client",
       "direction": "response_up",

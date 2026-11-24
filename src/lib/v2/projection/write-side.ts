@@ -3,13 +3,10 @@
  *
  * New beta.5+ code should use `packageRefsForFormatOptions`. It emits only
  * canonical `format_option_refs`; module-private weak storage lets the SDK
- * downgrade at the wire boundary without exposing legacy identifiers. The old capability-named exports
- * keep the beta.3 `capability_ids` surface for callers pinned to that
- * protocol version.
+ * downgrade at the wire boundary without exposing legacy identifiers.
  */
 
 import type { CanonicalFormatKind, V1FormatId, V2ProductFormatDeclaration } from './types';
-import { warnOnce } from '../../utils/deprecation';
 import { concealLegacyFormatRefs, concealSelectedFormatOptions } from './legacy-metadata';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 import { projectV1ProductToV2, type LegacyFormatConverter } from './v1-to-v2';
@@ -43,26 +40,9 @@ export interface PackageFormatRefs {
   format_ids?: never;
 }
 
-/**
- * Beta.3 compatibility shape emitted by {@link packageRefsForCapabilities}.
- * New beta.5 code should use {@link packageRefsForFormatOptions}; this keeps
- * callers pinned to the beta.3 capability_id/capability_ids protocol surface
- * working. Beta.5+ sellers reject `capability_ids` on PackageRequest.
- */
-export interface PackageCapabilityRefs {
-  capability_ids: string[];
-  format_ids?: V1FormatId[];
-}
-
 export type FormatOptionRefsLookupErrorCode =
   | 'unknown_format_option_id'
   | 'format_option_refs_not_published'
-  | 'empty_input'
-  | 'invalid_product';
-
-export type CapabilityIdsLookupErrorCode =
-  | 'unknown_capability_id'
-  | 'capability_ids_not_published'
   | 'empty_input'
   | 'invalid_product';
 
@@ -416,29 +396,6 @@ export class FormatOptionRefsLookupError extends Error {
   }
 }
 
-export class CapabilityIdsLookupError extends Error {
-  readonly code: CapabilityIdsLookupErrorCode;
-  /** Capability IDs the caller requested. */
-  readonly requested: readonly string[];
-  /** Capability IDs the product actually publishes (sorted). */
-  readonly available: readonly string[];
-  /** Requested entries that were not matched. */
-  readonly missing: readonly string[];
-
-  constructor(
-    code: CapabilityIdsLookupErrorCode,
-    message: string,
-    meta: { requested: readonly string[]; available: readonly string[]; missing: readonly string[] }
-  ) {
-    super(message);
-    this.name = 'CapabilityIdsLookupError';
-    this.code = code;
-    this.requested = meta.requested;
-    this.available = meta.available;
-    this.missing = meta.missing;
-  }
-}
-
 function selectorLabel(selector: FormatOptionSelector): string {
   if (typeof selector === 'string') return selector;
   return selector.publisher_domain
@@ -586,103 +543,6 @@ export function packageRefsForFormatOptions(
 }
 
 /**
- * Resolve beta.3 `capability_id` selectors and emit beta.3
- * `{ capability_ids, format_ids? }` PackageRequest fields.
- *
- * @deprecated Beta.5+ sellers reject `capability_ids` on PackageRequest. Use
- * {@link packageRefsForFormatOptions} for beta.5+ sellers.
- */
-export function packageRefsForCapabilities(
-  product: { format_options?: V2ProductFormatDeclaration[] },
-  capabilityIds: string[]
-): PackageCapabilityRefs {
-  warnOnce(
-    'packageRefsForCapabilities.beta3-only',
-    'packageRefsForCapabilities() emits beta.3-only capability_ids. Beta.5+ sellers reject capability_ids; use packageRefsForFormatOptions() for beta.5+ package requests.'
-  );
-
-  if (product === null || typeof product !== 'object' || Array.isArray(product)) {
-    throw new CapabilityIdsLookupError(
-      'invalid_product',
-      `packageRefsForCapabilities: expected a Product object with a format_options[] field, got ${Array.isArray(product) ? 'an array (did you pass `products` instead of `products[0]`?)' : typeof product}.`,
-      { requested: capabilityIds, available: [], missing: capabilityIds }
-    );
-  }
-  if (capabilityIds.length === 0) {
-    throw new CapabilityIdsLookupError(
-      'empty_input',
-      `packageRefsForCapabilities requires at least one capability_id. ` +
-        `To accept seller defaults, omit capability_ids from the package entirely.`,
-      { requested: capabilityIds, available: [], missing: [] }
-    );
-  }
-
-  const opts = product.format_options ?? [];
-  const known = new Map<string, V2ProductFormatDeclaration>();
-  let entriesWithoutCapabilityId = 0;
-  for (const opt of opts) {
-    const id = capabilityIdForLookup(opt);
-    if (id) {
-      known.set(id, opt);
-    } else {
-      entriesWithoutCapabilityId += 1;
-    }
-  }
-  const available = [...known.keys()].sort();
-  if (known.size === 0) {
-    const detail =
-      opts.length === 0
-        ? `product has no format_options[] (legacy-format-only product shape, or product wasn't passed through getProducts auto-augmentation)`
-        : `${opts.length} declarations on the product, ${entriesWithoutCapabilityId} unaddressable via capability_id (no entry publishes one)`;
-    throw new CapabilityIdsLookupError(
-      'capability_ids_not_published',
-      `packageRefsForCapabilities: product publishes no capability_ids - ${detail}. ` +
-        `The beta.3 path is not authorable against this product. Fall back to legacyFormatIdsFromOptions ` +
-        `or skip the product for capability_id sellers.`,
-      { requested: capabilityIds, available: [], missing: capabilityIds.slice() }
-    );
-  }
-
-  const missing = capabilityIds.filter(id => !known.has(id));
-  if (missing.length > 0) {
-    const trailingNote =
-      entriesWithoutCapabilityId > 0
-        ? ` (${entriesWithoutCapabilityId} format_options[] entries publish no capability_id and aren't addressable via this helper - use legacyFormatIdsFromOptions for those.)`
-        : '';
-    throw new CapabilityIdsLookupError(
-      'unknown_capability_id',
-      `packageRefsForCapabilities: capability_ids ${JSON.stringify(missing)} ` +
-        `not found in product.format_options[]. Available capability_ids: ${JSON.stringify(available)}.${trailingNote}`,
-      { requested: capabilityIds, available, missing }
-    );
-  }
-
-  const seenCapabilities = new Set<string>();
-  const dedupedCapabilityIds: string[] = [];
-  for (const id of capabilityIds) {
-    if (seenCapabilities.has(id)) continue;
-    seenCapabilities.add(id);
-    dedupedCapabilityIds.push(id);
-  }
-
-  const seen = new Set<string>();
-  const format_ids: V1FormatId[] = [];
-  for (const id of dedupedCapabilityIds) {
-    const decl = known.get(id)!;
-    for (const ref of decl.v1_format_ref ?? []) {
-      const key = `${ref.agent_url}::${ref.id}::${ref.width ?? ''}x${ref.height ?? ''}::${ref.duration_ms ?? ''}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      format_ids.push({ ...ref });
-    }
-  }
-
-  return format_ids.length > 0
-    ? { capability_ids: dedupedCapabilityIds, format_ids }
-    : { capability_ids: dedupedCapabilityIds };
-}
-
-/**
  * Extract the legacy `format_ids[]` for a chosen V2 declaration.
  * Throws when the declaration has no v1 form.
  */
@@ -731,33 +591,4 @@ export function legacyFormatIdsForFormatOption(
     );
   }
   return legacyFormatIdsFromOptions(match);
-}
-
-/**
- * Compatibility alias for callers using the beta.3 helper name.
- *
- * @deprecated Emits beta.3-only `capability_ids`. Beta.5+ sellers reject that
- * field. Use {@link packageRefsForFormatOptions} for beta.5+ package requests.
- */
-export function legacyFormatIdsForCapability(
-  product: { format_options?: V2ProductFormatDeclaration[] },
-  capabilityId: string
-): V1FormatId[] {
-  const opts = product.format_options ?? [];
-  const match = opts.find(o => capabilityId === capabilityIdForLookup(o));
-  if (!match) {
-    const declared = opts.map(capabilityIdForLookup).filter((s): s is string => Boolean(s));
-    throw new Error(
-      `capability_id ${JSON.stringify(capabilityId)} not found in product.format_options[] ` +
-        `(declared capability_ids: ${declared.length > 0 ? JSON.stringify(declared) : '<none>'})`
-    );
-  }
-  return legacyFormatIdsFromOptions(match);
-}
-
-function capabilityIdForLookup(decl: V2ProductFormatDeclaration): string | undefined {
-  // Migration alias: beta.3 catalogs used capability_id, beta.5 catalogs use
-  // format_option_id. This beta.3 read path accepts either field so pinned
-  // callers can bridge mixed catalog fixtures while they migrate.
-  return decl.capability_id ?? decl.format_option_id;
 }

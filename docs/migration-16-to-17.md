@@ -79,6 +79,27 @@ total. Sellers that do not declare outcome-target planning reject the field
 with `UNSUPPORTED_FEATURE`. On `list_products` the field is inert: perform schema
 validation but do not reject it merely because the goal is unsupported.
 
+## Platform IDs on event sources and audiences
+
+AdCP 3.3 renames the platform identifier on `sync_event_sources`
+`event_sources[]` and `sync_audiences` `audiences[]` rows from `seller_id` to
+`platform_id`, and keeps `seller_id` as a deprecated alias through 3.x. A 3.3
+response that reports the identifier carries both names with identical values.
+
+**Sellers:** return either name from `syncEventSources` / `syncAudiences`, or
+both with the same value. The server sends both to callers served 3.3 or later
+and `seller_id` alone to callers served 3.2 or earlier. Task results are stored
+as you wrote them; `tasks/get`, `tasks_get`, completion webhooks and push
+settlement give each reader the names its release defines. If a row's two names
+differ, the server answers
+`INTERNAL_ERROR` (a handed-off task fails with it), `TaskRegistry.complete()`
+throws without storing, and push settlement refuses the result. A result you
+send yourself through a webhook sender goes out as you built it.
+
+**Buyers:** read the identifier with `platformIdOf(row)` from `@adcp/sdk` or
+`@adcp/sdk/utils`. It returns `platform_id`, else `seller_id`, so it also reads
+3.2 sellers' rows. Requests still use `event_source_id` and `audience_id`.
+
 ## Public asset and targeting types
 
 Import the shared `AssetVariant` union from `@adcp/sdk`, `@adcp/sdk/types`, or
@@ -109,6 +130,21 @@ A `3.3.0` or `3.3` configuration pin does not select a beta. Use the exact
 `3.3.0-rc.3` bundle (wire alias `3.3-rc.3`); unavailable pins now produce a
 short list of bundled release lines instead of every compatible patch.
 
+## Zod schemas for closed objects may tighten in 17.x
+
+AdCP 3.3 keeps about 115 object locations closed on purpose, such as signed
+commercial terms, metric qualifiers and privacy-boundary error arms. Most of
+the exported Zod schemas for them are still `.passthrough()` in 17.0, so they
+accept unknown keys that the published schema rejects (#3679). The SDK's own
+JSON Schema validation already rejects those keys.
+
+A 17.x **minor** release may make these schemas `.strict()` wherever AdCP 3.3
+keeps the object closed. Their inferred types then lose the `[k: string]:
+unknown` index signature that `.passthrough()` adds. Objects AdCP leaves open
+stay `.passthrough()`. Don't rely on Zod accepting a vendor key in a closed
+object, or on reading one from its inferred type: put extensions in `ext`.
+See [Unknown keys and closed objects](./ZOD-SCHEMAS.md#unknown-keys-and-closed-objects).
+
 ## pnpm peer resolution
 
 The official A2A SDK `1.0.1` already marks its Express peer optional, and the
@@ -135,6 +171,37 @@ make incompatible peer contracts compatible. Run `pnpm install`, `pnpm dedupe`,
 and `pnpm why -r @adcp/sdk` to inspect the resulting graph. See
 [pnpm's dependency-resolution settings](https://github.com/pnpm/pnpm/blob/main/pnpm/docs/settings/dependency-resolution.md)
 and [peer-dependency settings](https://pnpm.io/settings#dedupepeerdependents).
+
+## Server and testing names on the root entry are deprecated
+
+The package root (`@adcp/sdk`) and `@adcp/sdk/client` still re-export the
+server and testing helpers, so importing anything from them loads the SDK's
+server and testing modules too (#3664). In 17.0 those re-exports are marked
+`@deprecated`; SDK 18.0 removes them. Nothing changes at runtime in 17.x: the
+names resolve to the same functions, classes and types as before.
+
+| Name came from | Import it from |
+| --- | --- |
+| Server helpers: `serve`, `createTaskCapableServer`, `adcpError`, the `legacy*Response` builders, idempotency, state and task stores, `ServeContext`, the `*Payload` types, `mediaBuyActionResolver`, … | `@adcp/sdk/server` |
+| Test helpers: `testAgent*`, `createTestAgent`, `creativeAgent`, `expectController*`, `RateLimitTripObserver`, … | `@adcp/sdk/testing` |
+
+Two root names are aliases. Import `ListOptions` and `ListResult` from
+`@adcp/sdk/server` in place of the root's `StateListOptions` and
+`StateListResult`.
+
+Editors show the deprecated imports struck through. To list them, enable
+`@typescript-eslint/no-deprecated` (or `deprecation/deprecation`) on code that
+imports from `@adcp/sdk` or `@adcp/sdk/client`.
+
+Every other root export stays in 18.0. To keep a client-only process from
+loading the server and testing modules today, import from the lean subpaths
+instead of the root: `@adcp/sdk/client/core`, `@adcp/sdk/errors`,
+`@adcp/sdk/version`, `@adcp/sdk/registry`, `@adcp/sdk/utils`,
+`@adcp/sdk/discovery`, `@adcp/sdk/media-buy` and `@adcp/sdk/media-buy/actions`.
+A few root type names, such as `CreateMediaBuyRequest`, `Product` and
+`PackageRequest`, are the canonical aliases from `@adcp/sdk/v2/projection` and
+differ from the same names on `@adcp/sdk/types`, so check the type when you
+move one of those imports.
 
 ## Protocol and discovery
 
@@ -328,6 +395,26 @@ declared default or coercion then selects the release.
 Rejections on these tools echo the caller's `context` even when the schema
 strips it: validation, version, authorization, and errors your handler returns
 or throws.
+
+## Removed beta.3 `capability_ids` helpers
+
+`@adcp/sdk/v2/projection` no longer exports `packageRefsForCapabilities`,
+`legacyFormatIdsForCapability`, `CapabilityIdsLookupError`,
+`CapabilityIdsLookupErrorCode` or `PackageCapabilityRefs` (#1899). They emitted
+the AdCP 3.1.0-beta.3 `capability_ids` package field, which beta.5 and later
+sellers reject, and were deprecated in SDK 8.1.
+
+| Removed | Use instead |
+| --- | --- |
+| `packageRefsForCapabilities(product, ids)` | `packageRefsForFormatOptions(product, selectors)`, spread into the package |
+| `legacyFormatIdsForCapability(product, id)` | `legacyFormatIdsForFormatOption(product, selector)` |
+| `CapabilityIdsLookupError` / `CapabilityIdsLookupErrorCode` | `FormatOptionRefsLookupError` / `FormatOptionRefsLookupErrorCode` |
+| `PackageCapabilityRefs` | `PackageFormatRefs` |
+
+Selectors are `format_option_id` values, or `{ publisher_domain,
+format_option_id }` for publisher-catalog options. A beta.3 catalog that only
+publishes `capability_id` has no beta.5 equivalent; pick its declaration from
+`product.format_options[]` and pass it to `legacyFormatIdsFromOptions`.
 
 ## AdCP 3.3.0-rc.3
 
@@ -754,6 +841,30 @@ you test preview-only features.
   `publisher_properties` and `collections` may be empty arrays, which mean an
   undisclosed roster rather than an empty one.
 
+## `createAdcpServerFromPlatform` refuses `capabilities` in its options
+
+`createAdcpServerFromPlatform(platform, opts)` now throws a
+`PlatformConfigError` when `opts.capabilities` is set. The options type has
+never included `capabilities`, but JavaScript callers and casts could pass it,
+and the server silently ignored it: it advertised the platform's capabilities
+instead, so `opts.capabilities.supported_versions` or
+`opts.capabilities.overrides.request_signing` never reached
+`get_adcp_capabilities`. Move those keys to the platform declaration:
+
+```ts
+const platform = {
+  capabilities: {
+    // specialisms, channels, ...
+    supported_versions: ['3.1.18', '3.2.1'],
+    overrides: { request_signing: { supported: true, covers_content_digest: 'required' } },
+  },
+  // accounts, sales, ...
+};
+createAdcpServerFromPlatform(platform, { name: 'seller', version: '1.0.0' });
+```
+
+`createAdcpServer` still takes `capabilities` in its config.
+
 ## Postgres replay store
 
 `PostgresReplayStore` inserts through a table-specific guarded function
@@ -912,6 +1023,26 @@ Zod schemas now enforce protocol-authored `minItems` bounds throughout, includin
 nonempty creative segments and render-guidance positions. Correct previously
 accepted empty arrays where the protocol requires at least one item; nonempty
 array output types are now `[T, ...T[]]`.
+
+The schema for such a field is `NonemptyArraySchema<T>` (exported as a type from
+`@adcp/sdk/schemas`). It is a `z.ZodArray<T>` whose input and output are the
+`[T, ...T[]]` tuple, so it assigns to `z.ZodType<[T, ...T[]]>` as before and
+is now also assignable wherever a `z.ZodArray<T>` is expected. It keeps
+`.element`, `.unwrap()`, `.min()`, `.max()` and the other array methods.
+Earlier 17.0 betas declared it as a `z.ZodType` of the tuple.
+That made `z.infer` of large response schemas such as
+`GetMediaBuyDeliveryResponseSchema` exceed TypeScript's instantiation depth
+(TS2589) when code sliced or spread their arrays (#3472). `z.infer` and
+`z.input` results are unchanged.
+
+Calling `.meta()`, `.describe()` or another `this`-returning method on one of
+the largest schemas and exporting the result without a type annotation can
+still fail declaration emit with TS7056, because the inferred type is too long
+to serialize. Annotate the export:
+
+```ts
+export const Tagged: typeof GetMediaBuyDeliveryResponseSchema = GetMediaBuyDeliveryResponseSchema.meta({ id: 'x' });
+```
 
 ## Account identity in sync results
 

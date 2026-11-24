@@ -34,7 +34,7 @@
  *     --params '{"creative_id":"cr-1","status":"rejected","rejection_reason":"Brand safety"}'
  */
 
-import { createTaskCapableServer, isLegalCreativeTransition, serve, type ServeContext } from '@adcp/sdk';
+import { createTaskCapableServer, isLegalCreativeTransition, serve, type ServeContext } from '@adcp/sdk/server';
 import { createComplyController, TestControllerError, type CreativeStatus } from '@adcp/sdk/testing';
 
 // ---------------------------------------------------------------------------

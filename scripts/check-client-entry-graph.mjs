@@ -19,7 +19,9 @@
  *   npm run build:lib && npm run check:client-entry-graph
  *
  * The package root (`.`) and `./client` still re-export server and testing
- * helpers; they are measured and printed but not yet enforced.
+ * helpers; they are measured and printed but not yet enforced. Those
+ * re-exports are `@deprecated` in 17.0 and removed in 18.0, when both entry
+ * points move to LEAN_ENTRY_POINTS.
  */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';

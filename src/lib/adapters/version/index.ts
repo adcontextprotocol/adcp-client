@@ -26,6 +26,7 @@ import { isMutatingTask } from '../../utils/idempotency';
 import type { VersionAdapter } from './types';
 import { v30Adapters } from './3.0/index';
 import { v31Adapters } from './3.1/index';
+import { v32Adapters } from './3.2/index';
 import {
   convertRequestFromRelease,
   convertRequestToRelease,
@@ -60,6 +61,7 @@ function register(version: string, adapters: ReadonlyArray<VersionAdapter>): voi
 
 register('3.0', v30Adapters);
 register('3.1', v31Adapters);
+register('3.2', v32Adapters);
 
 /**
  * Look up the version adapter for a given (adapterKey, toolName) pair.
