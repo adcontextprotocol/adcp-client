@@ -1590,6 +1590,68 @@ describe('canonical creative asynchronous boundaries', () => {
       assert.equal(Object.getOwnPropertyDescriptor(errorInstance, 'stack').enumerable, false);
     });
 
+    // The error must be created while the formatter is installed: V8 formats `stack` lazily on first read,
+    // which happens during canonicalization.
+    async function runWithStackFormatter(formatter, makeError) {
+      const original = Error.prepareStackTrace;
+      Error.prepareStackTrace = formatter;
+      try {
+        const error = makeError();
+        const client = makeClient(async () => failedWith(error));
+        return await client.executeTask('create_media_buy', mediaBuyParams);
+      } finally {
+        Error.prepareStackTrace = original;
+      }
+    }
+
+    test('a stack formatter returning a non-string is omitted, not copied', async () => {
+      const leaky = () => {};
+      leaky.format_id = legacyFormat;
+      leaky.toJSON = () => ({ format_id: legacyFormat });
+      const result = await runWithStackFormatter(
+        () => leaky,
+        () => typedErrors.AuthenticationRequiredError(undefined)
+      );
+      const { errorInstance } = result;
+      assert.equal(errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(errorInstance.status, 401);
+      assert.notEqual(errorInstance.stack, leaky);
+      assert.equal(typeof errorInstance.stack === 'function', false);
+      assertCanonical(result);
+      assertCanonical(errorInstance);
+    });
+
+    test('a throwing stack formatter still yields the typed failure without a stack', async () => {
+      const result = await runWithStackFormatter(
+        () => {
+          throw new Error('formatter failed');
+        },
+        () => typedErrors.AuthenticationRequiredError(undefined)
+      );
+      assert.equal(result.success, false);
+      const { errorInstance } = result;
+      assert.equal(errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(errorInstance.status, 401);
+      assert.equal(errorInstance.signatureErrorCode, 'request_signature_key_unknown');
+      assert.equal(errorInstance.responseBody, 'unknown key');
+      assert.equal(Object.hasOwn(errorInstance, 'stack'), false);
+    });
+
+    test('a non-string data-property stack is omitted', async () => {
+      const error = typedErrors.AuthenticationRequiredError(undefined);
+      Object.defineProperty(error, 'stack', {
+        value: { format_id: legacyFormat },
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      });
+      const client = makeClient(async () => failedWith(error));
+      const result = await client.executeTask('create_media_buy', mediaBuyParams);
+      assert.equal(result.errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(Object.hasOwn(result.errorInstance, 'stack'), false);
+      assertCanonical(result.errorInstance);
+    });
+
     test('non-enumerable idempotencyKey survives a sanitizing clone', async () => {
       const conflict = typedErrors.IdempotencyConflictError(legacyMessage);
       const client = makeClient(async () => failedWith(conflict));
