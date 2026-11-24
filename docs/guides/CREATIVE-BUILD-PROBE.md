@@ -144,7 +144,8 @@ The provisioned brief is sent as `build_creative.message` to the agent under tes
 where its model may read it as instructions. Author ordinary creative direction;
 do not include instructions about evaluator behavior or expected test verdicts.
 An explicit runner `test_kit` overrides the storyboard's declared kit as a whole:
-include recipes in that override when also supplying auth. Hosted auth defaults
+include recipes in that override when also supplying auth. To supply only auth
+and keep the declared kit's recipes, pass `test_kit_auth` instead. Hosted auth defaults
 preserve recipes explicitly supplied by the operator; they do not merge missing
 recipes from a separately declared brand kit.
 

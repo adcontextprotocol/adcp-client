@@ -420,12 +420,16 @@ function testClientMatchesVersionOptions(client: TestClient, agentUrl: string, o
 
 function withTestKitAuthDefaults(options: TestOptions): TestOptions {
   if (options.auth) return options;
-  const apiKey = options.test_kit?.auth?.api_key;
+  // Until a storyboard resolves its kit, `test_kit_auth` stands in for a
+  // run-level kit's credential, so comply()'s own discovery authenticates as
+  // it would with `test_kit: { auth }`.
+  const kitAuth = options.test_kit != null ? options.test_kit.auth : options.test_kit_auth;
+  const apiKey = kitAuth?.api_key;
   if (typeof apiKey === 'string' && apiKey.length > 0) {
     return { ...options, auth: { type: 'bearer', token: apiKey } };
   }
 
-  const basic = options.test_kit?.auth?.basic;
+  const basic = kitAuth?.basic;
   if (!basic) return options;
   if (
     typeof basic.username === 'string' &&

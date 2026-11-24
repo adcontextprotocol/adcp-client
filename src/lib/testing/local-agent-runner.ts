@@ -145,10 +145,12 @@ export interface RunAgainstLocalAgentOptions {
    *   - every other `StoryboardRunOptions` field is shallow-merged on top
    *     of the run-level `runStoryboardOptions`. Common uses: per-
    *     storyboard `test_kit`, `brand`, or `contracts` that vary with the
-   *     storyboard under test. `webhook_receiver` is owned by the helper's
-   *     `webhookReceiver` field and is typed out of the override shape —
-   *     the helper re-applies it after the merge so overrides can't stomp
-   *     the loopback mock.
+   *     storyboard under test. A `test_kit` override on a run that sets
+   *     `test_kit_auth` must also set `test_kit_auth: undefined`; the two
+   *     together throw `TestKitValidationError`. `webhook_receiver` is
+   *     owned by the helper's `webhookReceiver` field and is typed out of
+   *     the override shape — the helper re-applies it after the merge so
+   *     overrides can't stomp the loopback mock.
    *
    * Returning a `Promise` is supported so callers can do async work per
    * storyboard (load a test-kit YAML, mint a scoped token, fetch brand

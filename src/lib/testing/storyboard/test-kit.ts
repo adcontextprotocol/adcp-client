@@ -28,7 +28,7 @@
  * only on an explicit `protocol: 'mcp'`.
  */
 
-import type { TestOptions } from '../types';
+import type { TestKitAuth, TestOptions } from '../types';
 import { MCP_SESSION_PROBE_TASK } from './types';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
@@ -145,10 +145,39 @@ export function validateTestKit(testKit: TestOptions['test_kit']): void {
   if (!isPlainMapping(value)) {
     throw new TestKitValidationError('test_kit', 'test_kit must be a YAML mapping.');
   }
-  const auth = value.auth;
-  if (auth === undefined) return;
+  if (value.auth === undefined) return;
+  validateTestKitAuthBlock(value.auth, 'test_kit.auth');
+}
+
+/**
+ * Validate `options.test_kit_auth`, the credential laid over each storyboard's
+ * declared kit (adcontextprotocol/adcp#8929).
+ *
+ * The overlay becomes a kit's whole `auth` block, so it carries the same
+ * invariants: `probe_task` is required and must be allowlisted, and `api_key`
+ * must be printable ASCII. A caller that also passes `test_kit` is refused
+ * rather than having one of the two silently win: `test_kit` replaces every
+ * declared kit while the overlay keeps them, so a silent choice would either
+ * drop the declared fixtures or send a credential the caller did not pick.
+ */
+export function validateTestKitAuthOverlay(options: {
+  test_kit?: TestOptions['test_kit'];
+  test_kit_auth?: TestOptions['test_kit_auth'];
+}): void {
+  if (options.test_kit_auth === undefined) return;
+  if (options.test_kit !== undefined) {
+    throw new TestKitValidationError(
+      'test_kit_auth',
+      'Pass either test_kit or test_kit_auth, not both. test_kit replaces every storyboard-declared kit; ' +
+        'test_kit_auth keeps each declared kit and replaces only its auth block.'
+    );
+  }
+  validateTestKitAuthBlock(options.test_kit_auth, 'test_kit_auth');
+}
+
+function validateTestKitAuthBlock(auth: unknown, field: string): void {
   if (!isPlainMapping(auth)) {
-    throw new TestKitValidationError('test_kit.auth', 'test_kit.auth must be a YAML mapping.');
+    throw new TestKitValidationError(field, `${field} must be a YAML mapping.`);
   }
 
   const apiKey = auth.api_key;
@@ -157,30 +186,30 @@ export function validateTestKit(testKit: TestOptions['test_kit']): void {
     (typeof apiKey !== 'string' || apiKey.trim().length === 0 || /[^\x20-\x7E]/u.test(apiKey))
   ) {
     throw new TestKitValidationError(
-      'test_kit.auth.api_key',
-      'test_kit.auth.api_key must be a non-empty string containing only printable ASCII characters.'
+      `${field}.api_key`,
+      `${field}.api_key must be a non-empty string containing only printable ASCII characters.`
     );
   }
 
   const probeTask = auth.probe_task;
   if (probeTask === undefined) {
     throw new TestKitValidationError(
-      'test_kit.auth.probe_task',
-      `test_kit.auth.probe_task is required when test_kit.auth is declared. ` +
+      `${field}.probe_task`,
+      `${field}.probe_task is required when ${field} is declared. ` +
         `Set it to one of: ${PROBE_TASK_ALLOWLIST.join(', ')}. ` +
         `The runner uses this task for the security_baseline unauth + invalid-key probes.`
     );
   }
   if (typeof probeTask !== 'string' || probeTask.length === 0) {
     throw new TestKitValidationError(
-      'test_kit.auth.probe_task',
-      'test_kit.auth.probe_task must be a non-empty string selected from the allowlist.'
+      `${field}.probe_task`,
+      `${field}.probe_task must be a non-empty string selected from the allowlist.`
     );
   }
   if (!PROBE_TASK_ALLOWLIST.includes(probeTask)) {
     throw new TestKitValidationError(
-      'test_kit.auth.probe_task',
-      `test_kit.auth.probe_task is not in the allowlist. ` +
+      `${field}.probe_task`,
+      `${field}.probe_task is not in the allowlist. ` +
         `Allowed tasks (auth-required, read-only, accept empty body): ` +
         `${PROBE_TASK_ALLOWLIST.join(', ')}. ` +
         `Tasks outside this list can 400 on schema validation before auth is evaluated, ` +
@@ -213,9 +242,8 @@ function safeLabel(value: unknown): string {
  * makes the declaration real:
  *
  *   - No-op when the storyboard declares no kit, or when the caller already
- *     supplied `options.test_kit` (caller/hosted-engine configuration wins;
- *     the hosted engine pre-populates the declared kit itself — see the
- *     server-side half of adcp#6735).
+ *     supplied `options.test_kit` (caller configuration wins for the whole
+ *     run).
  *   - Otherwise loads `<compliance cache>/<declared path>`, validates it
  *     with the same invariants as a caller-supplied kit, and returns amended
  *     options. Loading requires an explicit caller-selected complianceDir or
@@ -225,12 +253,86 @@ function safeLabel(value: unknown): string {
  *   - A genuinely absent kit is tolerated because external bundles may omit
  *     kits that none of their steps use. Other filesystem faults, invalid
  *     YAML, and invalid kit shapes throw instead of degrading silently.
+ *
+ * `options.test_kit_auth` (adcontextprotocol/adcp#8929) is for callers that
+ * grade with their own credential but still need each storyboard's own kit
+ * fixtures. A run-level `test_kit` cannot do both: it replaces every
+ * declared kit for the whole run.
+ *
+ *   - A kit that declares `sandbox: true` keeps every field except `auth`,
+ *     which the overlay replaces whole, so none of the kit's own `api_key`,
+ *     `basic` or `probe_task` sits next to the caller's credential.
+ *   - A kit that carries no credential of its own (no `auth.api_key` or
+ *     `auth.basic`, as in runner-contract kits) gets the overlay as its
+ *     `auth`, whatever its `sandbox` field says, except `sandbox: false`.
+ *   - Any other kit keeps its own `auth` (or none): one that declares
+ *     `sandbox: false`, and one that carries a credential without declaring
+ *     `sandbox: true`. Such a credential may name a live-mode principal the
+ *     storyboard is written around, and sending the caller's credential in
+ *     its place grades a conformant seller FAIL (adcp#6735).
+ *   - A storyboard that declares no kit gets `{ auth: test_kit_auth }` alone.
+ *   - A declared kit that cannot be loaded (no trusted cache root, or no such
+ *     file) gets no overlay: nothing says it is not a live-mode principal, so
+ *     its `from_test_kit` steps fail as configuration errors, exactly as they
+ *     would without `test_kit_auth`.
+ *   - The resulting kit is validated after the overlay. The overlay is always
+ *     consumed: the returned options carry no `test_kit_auth`, so no later
+ *     client (an `auth: none` probe included) can pick it up as a credential.
+ *   - `test_kit` and `test_kit_auth` together throw.
  */
 export function resolveDeclaredTestKit<
-  O extends { test_kit?: TestOptions['test_kit']; adcpVersion?: string; complianceDir?: string },
+  O extends {
+    test_kit?: TestOptions['test_kit'];
+    test_kit_auth?: TestOptions['test_kit_auth'];
+    adcpVersion?: string;
+    complianceDir?: string;
+  },
 >(storyboard: { id?: string; prerequisites?: { test_kit?: string } }, options: O): O {
+  validateTestKitAuthOverlay(options);
+  if (options.test_kit !== undefined) return options;
+  const declaredKit = loadDeclaredTestKit(storyboard, options.complianceDir);
+  const { test_kit_auth: authOverlay, ...withoutOverlay } = options;
+  if (authOverlay === undefined) {
+    if (declaredKit === undefined) return options;
+    validateTestKit(declaredKit);
+    return { ...options, test_kit: declaredKit };
+  }
+  if (storyboard.prerequisites?.test_kit !== undefined && declaredKit === undefined) {
+    return withoutOverlay as O;
+  }
+  const testKit = withAuthOverlay(declaredKit, authOverlay);
+  validateTestKit(testKit);
+  return { ...withoutOverlay, test_kit: testKit } as O;
+}
+
+function withAuthOverlay(kit: TestOptions['test_kit'], auth: TestKitAuth): TestOptions['test_kit'] {
+  if (kit === undefined) return { auth };
+  // A malformed kit stays as it is, so validateTestKit reports it.
+  if (!isPlainMapping(kit)) return kit;
+  // Same polarity as getSandboxEntities: an absent `sandbox` does not mean
+  // sandbox. Only a kit that declares `sandbox: true` gives up its own
+  // credential. Runner-contract kits omit the field by design and carry no
+  // credential, so there is no principal to protect and the overlay simply
+  // supplies one, as a run-level kit did.
+  const replacesOwnCredential = kit.sandbox === true || (kit.sandbox !== false && !carriesCredential(kit.auth));
+  return replacesOwnCredential ? { ...kit, auth } : kit;
+}
+
+function carriesCredential(auth: unknown): boolean {
+  return isPlainMapping(auth) && (auth.api_key !== undefined || auth.basic !== undefined);
+}
+
+/**
+ * Load a storyboard's declared kit from the compliance cache, unvalidated.
+ * `undefined` when the storyboard declares none, no trusted cache root is
+ * selected, or the file is absent.
+ */
+function loadDeclaredTestKit(
+  storyboard: { id?: string; prerequisites?: { test_kit?: string } },
+  complianceDir: string | undefined
+): TestOptions['test_kit'] {
   const declared = storyboard.prerequisites?.test_kit;
-  if (declared === undefined || options.test_kit !== undefined) return options;
+  if (declared === undefined) return undefined;
   if (typeof declared !== 'string' || declared.trim().length === 0) {
     throw new Error(
       `storyboard ${safeLabel(storyboard.id)} declares an invalid prerequisites.test_kit path; expected a non-empty string.`
@@ -239,8 +341,8 @@ export function resolveDeclaredTestKit<
   // Storyboard YAML is data, not authority to read credentials from the SDK's
   // packaged cache (or ADCP_COMPLIANCE_DIR). Only the caller or the trusted
   // compliance loader may select a filesystem root.
-  if (options.complianceDir === undefined) return options;
-  if (typeof options.complianceDir !== 'string' || options.complianceDir.trim().length === 0) {
+  if (complianceDir === undefined) return undefined;
+  if (typeof complianceDir !== 'string' || complianceDir.trim().length === 0) {
     throw new Error(
       `storyboard ${safeLabel(storyboard.id)} received an invalid complianceDir for its declared test kit; expected a non-empty string.`
     );
@@ -248,7 +350,7 @@ export function resolveDeclaredTestKit<
 
   const sbId = safeLabel(storyboard.id);
   const declaredLabel = safeLabel(declared);
-  const cacheDir = resolve(options.complianceDir);
+  const cacheDir = resolve(complianceDir);
   const kitPath = resolve(join(cacheDir, declared));
   // Containment: the declared path comes from cache-shipped YAML; never let
   // it escape the cache root.
@@ -263,7 +365,7 @@ export function resolveDeclaredTestKit<
   try {
     physicalCacheDir = realpathSync(cacheDir);
   } catch (err) {
-    if (filesystemErrorCode(err) === 'ENOENT') return options;
+    if (filesystemErrorCode(err) === 'ENOENT') return undefined;
     throw new Error(
       `storyboard ${sbId} could not resolve the compliance cache for declared test kit ${declaredLabel} ` +
         `(${filesystemErrorCode(err) ?? 'filesystem error'}).`
@@ -277,7 +379,7 @@ export function resolveDeclaredTestKit<
     // A declared kit that genuinely isn't present is tolerated at load time:
     // storyboards may declare a kit whose auth no step uses. Steps that do
     // require it hard-fail individually before any request reaches the agent.
-    if (filesystemErrorCode(err) === 'ENOENT') return options;
+    if (filesystemErrorCode(err) === 'ENOENT') return undefined;
     throw new Error(
       `storyboard ${sbId} could not resolve declared test kit ${declaredLabel} ` +
         `(${filesystemErrorCode(err) ?? 'filesystem error'}).`
@@ -302,14 +404,11 @@ export function resolveDeclaredTestKit<
         `(${filesystemErrorCode(err) ?? 'not a regular file'}).`
     );
   }
-  let kit: TestOptions['test_kit'];
   try {
-    kit = parse(raw) as TestOptions['test_kit'];
+    return parse(raw) as TestOptions['test_kit'];
   } catch {
     throw new Error(
       `storyboard ${sbId} declares prerequisites.test_kit ${declaredLabel}, but the file is not valid YAML.`
     );
   }
-  validateTestKit(kit);
-  return { ...options, test_kit: kit };
 }
