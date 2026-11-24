@@ -1599,6 +1599,39 @@ describe('canonical creative asynchronous boundaries', () => {
       assert.equal(JSON.stringify(errorInstance).includes('key-conflict'), false);
     });
 
+    test('SDK error prototypes only carry vetted members', () => {
+      // Mirrors SDK_ERROR_PROTOTYPES in SingleAgentClient.ts: these classes are trusted on a constructor-free clone.
+      const {
+        NeedsAuthorizationError: NeedsAuthorization,
+      } = require('../../dist/lib/auth/oauth/authorization-required');
+      const trusted = [...Object.values(sdkErrors), NeedsAuthorization].filter(
+        value => typeof value === 'function' && value.prototype instanceof sdkErrors.ADCPError
+      );
+      assert.ok(trusted.length === 37, `expected the 37 known SDK error classes, found ${trusted.length}`);
+
+      const vetted = new Set(['hasOAuth', 'authorizationUrl', 'suggestedScheme']);
+      const unvetted = [];
+      for (const ErrorClass of trusted) {
+        for (
+          let proto = ErrorClass.prototype;
+          proto && proto !== Error.prototype;
+          proto = Object.getPrototypeOf(proto)
+        ) {
+          for (const key of Reflect.ownKeys(proto)) {
+            if (key === 'constructor' || vetted.has(key)) continue;
+            unvetted.push(`${ErrorClass.name} (via ${proto.constructor.name}): ${String(key)}`);
+          }
+        }
+      }
+      assert.deepEqual(
+        unvetted,
+        [],
+        'SDK error prototypes gained members that are not vetted (a toJSON is never allowed). Before adding one to the ' +
+          'allowlist, check that it reads only sanitized own fields and works on a constructor-free clone ' +
+          '(see canonicalCreativeErrorInstance in src/lib/core/SingleAgentClient.ts).'
+      );
+    });
+
     test('adopter subclasses of SDK classes are still flattened and their getters never run', async () => {
       let reads = 0;
       class AdopterAuthError extends sdkErrors.AuthenticationRequiredError {
