@@ -1,16 +1,22 @@
 import * as z from 'zod';
 
-type ArrayBoundMethods = 'min' | 'max' | 'length' | 'nonempty';
+/** `ZodArray` internals whose input and output carry the checked minimum. */
+export interface NonemptyArrayInternals<Element extends z.ZodType> extends z.core.$ZodArrayInternals<Element> {
+  output: [z.output<Element>, ...z.output<Element>[]];
+  input: [z.input<Element>, ...z.input<Element>[]];
+}
 
-/** A normal ZodArray whose checked minimum is reflected in its input/output. */
-export interface NonemptyArraySchema<Element extends z.ZodType>
-  extends
-    Omit<z.ZodArray<Element>, keyof z.ZodType | ArrayBoundMethods>,
-    z.ZodType<[z.output<Element>, ...z.output<Element>[]], [z.input<Element>, ...z.input<Element>[]]> {
-  min(...args: Parameters<z.ZodArray<Element>['min']>): this;
-  max(...args: Parameters<z.ZodArray<Element>['max']>): this;
-  length(...args: Parameters<z.ZodArray<Element>['length']>): this;
-  nonempty(...args: Parameters<z.ZodArray<Element>['nonempty']>): this;
+/**
+ * A normal ZodArray whose checked minimum is reflected in its input/output.
+ *
+ * Only the internals are narrowed, so inferred types stay as shallow as a
+ * plain `z.ZodArray`. Re-declaring the schema as a `z.ZodType` of the tuple
+ * instantiated every ZodType member with the full element output and made
+ * `z.infer` of large response schemas exceed TypeScript's instantiation depth
+ * (TS2589, #3472).
+ */
+export interface NonemptyArraySchema<Element extends z.ZodType> extends z.ZodArray<Element> {
+  _zod: NonemptyArrayInternals<Element>;
 }
 
 /**

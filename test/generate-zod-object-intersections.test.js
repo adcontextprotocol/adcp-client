@@ -883,7 +883,7 @@ export const FutureProductSchema = z.union([V1MarkerSchema, V2MarkerSchema]).and
   assert.doesNotMatch(output, /FutureProductSchema = z\.object\(/);
 });
 
-test('postProcessRepeatedProductIntersections collapses repeated format and placement validators', () => {
+test('postProcessRepeatedProductIntersections collapses repeated format, placement and published-post validators', () => {
   const output = postProcessRepeatedProductIntersections(`
 export const CommonBFormatSchema = z.object({ value: z.string() }).passthrough();
 export const FormatKindsSchema = z.union([z.object({ format_kind: z.literal("image") })]);
@@ -902,6 +902,11 @@ export const PlacementSchema = PlacementBaseSchema
   .and(CommonBFormatSchema)
   .and(PlacementChoiceSchema)
   .and(CommonBFormatSchema);
+export const PublishedPostAssetSchema = z.object({ asset_type: z.literal("published_post") }).passthrough()
+  .and(z.union([z.object({}).passthrough(), z.object({}).passthrough()]))
+  .and(z.object({ asset_type: z.literal("published_post") }).passthrough())
+  .and(z.union([z.object({}).passthrough(), z.object({}).passthrough()]))
+  .and(z.object({ asset_type: z.literal("published_post") }).passthrough());
 `);
 
   assert.match(
@@ -911,6 +916,10 @@ export const PlacementSchema = PlacementBaseSchema
   assert.match(
     output,
     /PlacementSchema = PlacementBaseSchema\.and\(PlacementChoiceSchema\)\.and\(CommonBFormatSchema\);/
+  );
+  assert.match(
+    output,
+    /PublishedPostAssetSchema = z\.object\(\{ asset_type: z\.literal\("published_post"\) \}\)\.passthrough\(\)\.and\(z\.union\(\[z\.object\(\{\}\)\.passthrough\(\), z\.object\(\{\}\)\.passthrough\(\)\]\)\);/
   );
   assert.equal(postProcessRepeatedProductIntersections(output), output);
 });
@@ -937,6 +946,7 @@ test('postProcessRepeatedProductIntersections preserves literal whitespace seman
   const output = postProcessRepeatedProductIntersections(`
 export const ProductFormatDeclarationSchema = z.object({ product_id: z.string() });
 export const PlacementSchema = z.literal("a b").and(z.literal("a  b")).and(z.literal("a b"));
+export const PublishedPostAssetSchema = z.object({ asset_type: z.literal("published_post") });
 `);
 
   assert.match(output, /PlacementSchema = z\.literal\("a b"\)\.and\(z\.literal\("a  b"\)\);/);

@@ -913,6 +913,25 @@ nonempty creative segments and render-guidance positions. Correct previously
 accepted empty arrays where the protocol requires at least one item; nonempty
 array output types are now `[T, ...T[]]`.
 
+The schema for such a field is `NonemptyArraySchema<T>` (exported as a type from
+`@adcp/sdk/schemas`). It is a `z.ZodArray<T>` whose input and output are the
+`[T, ...T[]]` tuple, so it is assignable wherever a `z.ZodArray<T>` is
+expected and keeps `.element`, `.unwrap()`, `.min()`, `.max()` and the other
+array methods. Earlier 17.0 betas declared it as a `z.ZodType` of the tuple.
+That made `z.infer` of large response schemas such as
+`GetMediaBuyDeliveryResponseSchema` exceed TypeScript's instantiation depth
+(TS2589) when code sliced or spread their arrays (#3472). `z.infer` and
+`z.input` results are unchanged.
+
+Calling `.meta()`, `.describe()` or another `this`-returning method on one of
+the largest schemas and exporting the result without a type annotation can
+still fail declaration emit with TS7056, because the inferred type is too long
+to serialize. Annotate the export:
+
+```ts
+export const Tagged: typeof GetMediaBuyDeliveryResponseSchema = GetMediaBuyDeliveryResponseSchema.meta({ id: 'x' });
+```
+
 ## Account identity in sync results
 
 `accounts.upsert` results now preserve `account`, `operator_unit`, `revision`,

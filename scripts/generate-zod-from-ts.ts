@@ -5662,15 +5662,18 @@ function topLevelAndOperands(expression: string): string[] | undefined {
 }
 
 /**
- * Collapse repeated Product format/placement intersection operands introduced
- * when json-schema-to-typescript follows the same dereferenced allOf layers
- * through compatibility aliases. Re-validating an identical pure object or
- * union adds no semantics, but zod-openapi expands every copy recursively.
+ * Collapse repeated Product format/placement and published-post asset
+ * intersection operands introduced when json-schema-to-typescript follows the
+ * same dereferenced allOf layers through compatibility aliases. Re-validating
+ * an identical pure object or union adds no semantics, but zod-openapi expands
+ * every copy recursively, and each copy deepens `z.infer`: the published-post
+ * asset's nine copies made inferring Collection, ListProducts and RegistryFeed
+ * schemas exceed TypeScript's instantiation depth (TS2589, #3472).
  */
 function postProcessRepeatedProductIntersections(content: string): string {
   let result = content;
 
-  for (const schemaName of ['ProductFormatDeclarationSchema', 'PlacementSchema']) {
+  for (const schemaName of ['ProductFormatDeclarationSchema', 'PlacementSchema', 'PublishedPostAssetSchema']) {
     const target = findSchemaExportExpressions(result).find(entry => entry.name === schemaName);
     if (!target) throw new Error(`postProcessRepeatedProductIntersections: ${schemaName} export not found.`);
     const operands = topLevelAndOperands(target.expression);
