@@ -9,5 +9,6 @@ The AdCP 3.x rule that elevates these requests to a signature applies only to se
 Behavior is otherwise unchanged:
 
 - A seller that advertises `request_signing.supported: true` still gets these requests signed, whether or not the operation is in `required_for`.
-- A cold capability cache, or one whose discovery failed, still signs, because the seller's advertisement is unknown. Negative cache entries now carry `discoveryFailed: true` so the two cases can be told apart.
+- A cold or expired capability cache, or one whose discovery failed, still signs, because the seller's advertisement is unknown. Failed discovery now includes an MCP tool error from `get_adcp_capabilities` and any payload without the required `adcp` object; those entries carry `discoveryFailed: true`, and an MCP tool error is cached for the 60-second negative window instead of the full TTL.
+- `buildAgentSigningFetch` accepts an optional `isCapabilityStale`; `createAgentSignedFetch` passes its cache's check.
 - `always_sign`, `required_for`, `warn_for` and `sign_supported` decide signing exactly as before.

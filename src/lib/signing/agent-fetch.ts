@@ -29,6 +29,8 @@ export { requestSigningEncodingForVersion } from './content-digest';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 const MAX_WEBHOOK_AUTH_INSPECTION_BYTES = 1_048_576;
+/** Matches `CapabilityCache`'s default TTL; used when no staleness check is passed. */
+const DEFAULT_CAPABILITY_TTL_SECONDS = 300;
 
 /**
  * Resolve `globalThis.fetch` at the moment of each outbound request — not at
@@ -257,6 +259,12 @@ export interface BuildAgentSigningFetchOptions {
   signing: AgentRequestSigningConfig;
   /** Lazy accessor for the current cached capability — re-read on every call. */
   getCapability: () => CachedCapability | undefined;
+  /**
+   * Staleness check for the entry `getCapability` returns. Pass the cache's
+   * `isStale` when the cache uses a custom TTL. Without it, an entry is stale
+   * at its `staleAt`, or 300 seconds after `fetchedAt`.
+   */
+  isCapabilityStale?: (entry: CachedCapability) => boolean;
   /** Trusted SDK/endpoint version pin; never inferred from the request body. */
   adcpVersion?: string;
 }
@@ -273,6 +281,10 @@ export interface BuildAgentSigningFetchOptions {
  */
 export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): FetchLike {
   const { signing, getCapability } = options;
+  const isCapabilityStale =
+    options.isCapabilityStale ??
+    ((entry: CachedCapability) =>
+      Math.floor(Date.now() / 1000) >= (entry.staleAt ?? entry.fetchedAt + DEFAULT_CAPABILITY_TTL_SECONDS));
   assertSigningPolicy(signing);
   // Resolve `globalThis.fetch` per-call when no explicit upstream was passed
   // so a polyfill installed between factory creation and first request still
@@ -288,10 +300,12 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
     const policyMethods = hasProtocolSigningPolicy(capability, signing)
       ? jsonRpcMethodsForSigning(init?.body)
       : undefined;
-    // Fetched capabilities without request signing: the seller can't verify a
-    // signature, so webhook credentials alone don't trigger one (adcp#9204).
-    // A cold cache or failed discovery is unknown, and still signs.
-    const sellerCannotVerify = entry !== undefined && !entry.discoveryFailed && capability?.supported !== true;
+    // Fresh, fetched capabilities without request signing: the seller can't
+    // verify a signature, so webhook credentials alone don't trigger one
+    // (adcp#9204). A cold, expired or failed-discovery entry is unknown, and
+    // still signs.
+    const sellerCannotVerify =
+      entry !== undefined && !entry.discoveryFailed && !isCapabilityStale(entry) && capability?.supported !== true;
     if (!sellerCannotVerify && carriesWebhookAuthentication(init?.body)) {
       if (signing.profile === 'web-bot-auth' && !signingListIncludes(capability?.profiles, 'web-bot-auth'))
         throw new TypeError('Seller did not advertise the Web Bot Auth request signing profile');
@@ -466,6 +480,7 @@ export function createAgentSignedFetch(options: CreateAgentSignedFetchOptions): 
     signing: options.signing,
     upstream: options.upstream,
     getCapability: () => cache.get(cacheKey),
+    isCapabilityStale: entry => cache.isStale(entry),
     adcpVersion,
   });
 }

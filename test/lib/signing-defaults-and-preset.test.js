@@ -734,6 +734,57 @@ describe('createAgentSignedFetch preset', () => {
       });
       assert.ok(headers.get('signature-input'), 'buyer always_sign is unchanged by this rule');
     });
+
+    it('still signs when the fetched no-signing entry has expired', async () => {
+      const headers = await send({
+        entry: { requestSigning: undefined, adcpVersion: 3, fetchedAt: fetchedAt() - 3600 },
+      });
+      assert.ok(headers.get('signature-input'), 'an expired advertisement is unknown, so the request is signed');
+    });
+
+    describe('discovery results that are not an advertisement', () => {
+      const { ensureCapabilityLoaded } = require('../../dist/lib/signing/capability-priming.js');
+      const { buildCapabilityCacheKey } = require('../../dist/lib/signing/index.js');
+
+      async function primeThenSend(raw) {
+        const cache = new CapabilityCache();
+        const capabilityCacheKey = buildCapabilityCacheKey(sellerAgentUri, undefined, undefined, ADCP_VERSION);
+        const entry = await ensureCapabilityLoaded({}, { cache, capabilityCacheKey }, async () => raw);
+        const { captured, upstream } = makeCapturingUpstream();
+        const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+        await signedFetch('https://seller.example.com/mcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: webhookAuthBody,
+        });
+        return { entry, headers: new Headers(captured.init?.headers) };
+      }
+
+      it('treats an MCP tool error from get_adcp_capabilities as failed discovery', async () => {
+        const { entry, headers } = await primeThenSend({
+          isError: true,
+          content: [{ type: 'text', text: 'temporarily unavailable' }],
+        });
+        assert.strictEqual(entry.discoveryFailed, true);
+        assert.ok(headers.get('signature-input'), 'failed discovery keeps signing webhook credentials');
+      });
+
+      it('treats a payload without adcp as failed discovery', async () => {
+        const { entry, headers } = await primeThenSend({
+          structuredContent: { errors: [{ code: 'SERVICE_UNAVAILABLE', message: 'try later' }] },
+        });
+        assert.strictEqual(entry.discoveryFailed, true);
+        assert.ok(headers.get('signature-input'), 'an error payload is not an advertisement');
+      });
+
+      it('treats a capabilities document without request_signing as an advertisement', async () => {
+        const { entry, headers } = await primeThenSend({
+          structuredContent: { adcp: { major_versions: [3] }, supported_protocols: ['media_buy'] },
+        });
+        assert.strictEqual(entry.discoveryFailed, undefined);
+        assert.strictEqual(headers.get('signature-input'), null, 'a real advertisement without signing is honored');
+      });
+    });
   });
 
   it('defaults to defaultCapabilityCache when no cache is passed', () => {
