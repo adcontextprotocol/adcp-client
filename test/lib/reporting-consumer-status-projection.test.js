@@ -704,3 +704,69 @@ describe('consumer-status mismatch resolution by the seller record (#3653)', () 
     });
   });
 });
+
+describe('unreadable mark end instants (#3653 round 2)', () => {
+  const AT = '2026-03-09T04:00:00.000Z';
+  const REV_1 = [revision('rev-1', 1, '2026-03-09T01:00:00.000Z')];
+  const project = issues =>
+    projectReportingConsumerStatusMismatchV1(
+      obligation(),
+      statement({ consumer_status: 'unreadable', reporting_status_id: 'consumer-status.unreadable.0001' }),
+      REV_1,
+      'healthy',
+      AT,
+      undefined,
+      issues
+    );
+  const mark = (overrides = {}) => ({
+    issueId: 'mark-1',
+    reporting_obligation_id: 'ob-1',
+    reporting_revision_id: 'rev-1',
+    code: 'REVISION_UNREADABLE',
+    responsibleParty: 'seller',
+    severity: 'action_required',
+    recommendedAction: 'contact_seller',
+    openedAt: '2026-03-09T01:40:00.000Z',
+    observedAt: '2026-03-09T01:40:00.000Z',
+    ...overrides,
+  });
+
+  test('a mark with a terminal issueState and a later resolvedAt ends at the issueState instant', () => {
+    for (const issueState of ['resolved', 'waived']) {
+      const recurrence = project([
+        mark({ issueState, observedAt: '2026-03-09T03:00:00.000Z', resolvedAt: '2026-03-09T03:30:00.000Z' }),
+      ]).issue;
+      assert.equal(recurrence.openedAt, '2026-03-09T03:00:00.000Z', issueState);
+      // Adding resolvedAt to an already-resolved mark moves nothing.
+      assert.equal(
+        recurrence.issueId,
+        project([mark({ issueState, observedAt: '2026-03-09T03:00:00.000Z' })]).issue.issueId,
+        issueState
+      );
+    }
+  });
+
+  test('an earlier resolvedAt still wins over a later terminal issueState', () => {
+    const recurrence = project([
+      mark({ issueState: 'resolved', observedAt: '2026-03-09T03:30:00.000Z', resolvedAt: '2026-03-09T03:00:00.000Z' }),
+    ]).issue;
+    assert.equal(recurrence.openedAt, '2026-03-09T03:00:00.000Z');
+  });
+
+  test('a mark ending exactly when the statement was recorded names a recurrence', () => {
+    const original = project([]).issue;
+    const recurrence = project([
+      mark({ observedAt: '2026-03-09T01:00:00.000Z', resolvedAt: '2026-03-09T01:31:00.000Z' }),
+    ]).issue;
+    assert.notEqual(recurrence.issueId, original.issueId);
+    assert.equal(recurrence.openedAt, '2026-03-09T01:31:00.000Z');
+  });
+
+  test('a mark ending one instant before the statement still keeps the original issueId', () => {
+    const original = project([]).issue;
+    const earlier = project([
+      mark({ observedAt: '2026-03-09T01:00:00.000Z', resolvedAt: '2026-03-09T01:30:59.999Z' }),
+    ]).issue;
+    assert.equal(earlier.issueId, original.issueId);
+  });
+});
