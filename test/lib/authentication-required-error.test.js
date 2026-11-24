@@ -111,7 +111,95 @@ describe('AuthenticationRequiredError', () => {
     test('contains challenge when provided', () => {
       const challenge = { scheme: 'basic', realm: 'API', params: { realm: 'API' } };
       const error = new AuthenticationRequiredError('https://agent.example.com/mcp', undefined, undefined, challenge);
-      assert.deepStrictEqual(error.details.challenge, challenge);
+      // Undeclared fields such as `params` are dropped.
+      assert.deepStrictEqual(error.details.challenge, { scheme: 'basic', realm: 'API' });
+    });
+  });
+
+  describe('seller-supplied field allowlist', () => {
+    const leak = 'SELLER-EXTRA-VALUE';
+    const challenge = {
+      scheme: 'bearer',
+      realm: 'api',
+      scope: 'adcp',
+      error: 'invalid_token',
+      error_description: 'expired',
+      params: { realm: 'api', extra: leak },
+      resource_metadata: `https://agent.example.com/${leak}`,
+      extra: leak,
+    };
+    const metadata = {
+      authorization_endpoint: 'https://auth.example.com/authorize',
+      token_endpoint: 'https://auth.example.com/token',
+      registration_endpoint: 'https://auth.example.com/register',
+      issuer: 'https://auth.example.com',
+      code_challenge_methods_supported: [leak],
+      'x-extension': leak,
+    };
+
+    test('keeps only declared string fields on the error, details and JSON', () => {
+      const error = new AuthenticationRequiredError('https://agent.example.com/mcp', metadata, undefined, challenge);
+      assert.deepStrictEqual(error.challenge, {
+        scheme: 'bearer',
+        realm: 'api',
+        scope: 'adcp',
+        error: 'invalid_token',
+        error_description: 'expired',
+      });
+      assert.deepStrictEqual(error.oauthMetadata, {
+        authorization_endpoint: 'https://auth.example.com/authorize',
+        token_endpoint: 'https://auth.example.com/token',
+        registration_endpoint: 'https://auth.example.com/register',
+        issuer: 'https://auth.example.com',
+      });
+      assert.deepStrictEqual(error.details.challenge, error.challenge);
+      assert.deepStrictEqual(error.details.oauthMetadata, error.oauthMetadata);
+      assert.doesNotMatch(JSON.stringify(error), new RegExp(leak));
+    });
+
+    test('drops non-string declared metadata fields', () => {
+      const error = new AuthenticationRequiredError('https://agent.example.com/mcp', {
+        authorization_endpoint: 'https://auth.example.com/authorize',
+        issuer: { evil: true },
+      });
+      assert.deepStrictEqual(error.oauthMetadata, { authorization_endpoint: 'https://auth.example.com/authorize' });
+    });
+
+    test('strips userinfo, query and fragment from agentUrl everywhere, including the message', () => {
+      const error = new AuthenticationRequiredError('https://user:pw@agent.example.com/mcp?token=SECRET#frag');
+      assert.strictEqual(error.agentUrl, 'https://agent.example.com/mcp');
+      assert.strictEqual(error.details.agentUrl, 'https://agent.example.com/mcp');
+      assert.doesNotMatch(error.message, /user|pw|SECRET|frag/);
+      assert.doesNotMatch(JSON.stringify(error), /user:pw|SECRET|frag/);
+    });
+
+    test('returns a clean agentUrl exactly as given', () => {
+      for (const url of [
+        'https://agent.example.com',
+        'https://agent.example.com/mcp',
+        'https://agent.example.com:8443/a/b/',
+      ]) {
+        assert.strictEqual(new AuthenticationRequiredError(url).agentUrl, url);
+      }
+    });
+
+    test('signed-rejection path keeps its code, status and details shape', () => {
+      const error = new AuthenticationRequiredError(
+        'https://agent.example.com/mcp',
+        undefined,
+        undefined,
+        { scheme: 'signature', params: { error: 'request_signature_replayed' }, error: 'request_signature_replayed' },
+        { status: 401 }
+      );
+      assert.strictEqual(error.requestSigned, true);
+      assert.strictEqual(error.status, 401);
+      assert.strictEqual(error.signatureErrorCode, 'request_signature_replayed');
+      assert.deepStrictEqual(error.details, {
+        agentUrl: 'https://agent.example.com/mcp',
+        challenge: { scheme: 'signature', error: 'request_signature_replayed' },
+        requestSigned: true,
+        status: 401,
+      });
     });
   });
 

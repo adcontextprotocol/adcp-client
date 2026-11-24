@@ -926,6 +926,21 @@ function trustedDeferredServerTaskId(state: DeferredTaskState): string | undefin
   );
 }
 
+/**
+ * Restore a checkpointed terminal result. Checkpoints do not store typed errors
+ * (older ones hold a plain-object copy, which is dropped), so a failed result
+ * gets its typed instance back from the stored `adcpError` and the request's
+ * idempotency key.
+ */
+function restoreDeferredCheckpoint<T>(stored: unknown, state: DeferredTaskState): TaskResult<T> {
+  const { errorInstance: _stored, ...result } = structuredClone(stored) as TaskResult<T> & { errorInstance?: unknown };
+  void _stored;
+  if (result.success !== false || !result.adcpError) return result as TaskResult<T>;
+  const idempotencyKey = typeof state.params?.idempotency_key === 'string' ? state.params.idempotency_key : undefined;
+  const errorInstance = adcpErrorToTypedError(result.adcpError, idempotencyKey);
+  return (errorInstance ? { ...result, errorInstance } : result) as TaskResult<T>;
+}
+
 function attachDeferredServerVersion<T>(result: TaskResult<T>, state: DeferredTaskState): TaskResult<T> {
   result.metadata = {
     ...result.metadata,
@@ -4617,7 +4632,7 @@ export class TaskExecutor {
     // or settlement recovery.
     if (requiresSettlement && state.settlementFinalizedResult !== undefined) {
       const normalizedFinalized = normalizeDeferredTerminalServerTaskId(
-        structuredClone(state.settlementFinalizedResult) as TaskResult<T>,
+        restoreDeferredCheckpoint<T>(state.settlementFinalizedResult, state),
         trustedDeferredServerTaskId(state)
       );
       if (normalizedFinalized.serverTaskId === undefined) {
@@ -4778,7 +4793,7 @@ export class TaskExecutor {
       const finalizationLease = await this.acquireDeferredFinalizationLease(token, state);
       try {
         const normalizedCheckpoint = normalizeDeferredTerminalServerTaskId(
-          structuredClone(state.settlementTerminalResult) as TaskResult<T>,
+          restoreDeferredCheckpoint<T>(state.settlementTerminalResult, state),
           trustedDeferredServerTaskId(state)
         );
         if (normalizedCheckpoint.serverTaskId === undefined) {
@@ -5152,10 +5167,13 @@ export class TaskExecutor {
           settledResult = attachMatch(normalizedTerminal.result);
           const terminalSettlementServerTaskId = normalizedTerminal.serverTaskId;
           settledServerTaskId = terminalSettlementServerTaskId;
+          // A typed error is not a portable durable-store value; replay
+          // rebuilds it from the stored `adcpError`.
           const {
             match: _match,
             submitted: _submitted,
             deferred: _deferred,
+            errorInstance: _errorInstance,
             ...serializableResult
           } = normalizedTerminal.result as any;
           const checkpointCreatedAt = Date.now();
@@ -5584,11 +5602,13 @@ export class TaskExecutor {
       match: _match,
       submitted: _submitted,
       deferred: _deferred,
+      errorInstance: _errorInstance,
       ...serializableResult
     } = normalizedTerminal.result as any;
     void _match;
     void _submitted;
     void _deferred;
+    void _errorInstance;
     const {
       settlementPendingTaskId: _pending,
       settlementResumeDispatchLease: _dispatchLease,
@@ -6008,11 +6028,13 @@ export class TaskExecutor {
       match: _match,
       submitted: _submitted,
       deferred: _deferred,
+      errorInstance: _errorInstance,
       ...serializableResult
     } = normalizedFinalized.result as any;
     void _match;
     void _submitted;
     void _deferred;
+    void _errorInstance;
     const acknowledgedAt = Date.now();
     const ttlSeconds = this.deferredSafetyRetentionSeconds();
     const { settlementFinalizationLease: _lease, ...finalizedCheckpoint } = current;

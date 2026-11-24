@@ -11,7 +11,7 @@
  * bespoke `OAuthFlowHandler`) so library behavior is predictable.
  */
 import { ssrfSafeFetch, decodeBodyAsJsonOrText } from '../../net';
-import { AuthenticationRequiredError, type OAuthMetadataInfo } from '../../errors';
+import { AuthenticationRequiredError, sanitizeAgentUrlForError, type OAuthMetadataInfo } from '../../errors';
 import { throwIfAborted } from '../../protocols/abort';
 import { parseWWWAuthenticate, type WWWAuthenticateChallenge } from './diagnostics';
 import { buildProtectedResourceMetadataUrl, normalizeOAuthResourceForComparison } from './resource-url';
@@ -153,6 +153,9 @@ export class NeedsAuthorizationError extends AuthenticationRequiredError {
   readonly requirements: AuthorizationRequirements;
 
   constructor(requirements: AuthorizationRequirements, message?: string) {
+    // Like the base `agentUrl`, the record the error carries (and its message)
+    // holds the URL without userinfo, query or fragment.
+    requirements = { ...requirements, agentUrl: sanitizeAgentUrlForError(requirements.agentUrl) };
     super(requirements.agentUrl, synthesizeOAuthMetadata(requirements), message ?? defaultMessage(requirements));
     this.name = 'NeedsAuthorizationError';
     this.requirements = requirements;
