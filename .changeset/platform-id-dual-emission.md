@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
 Emit AdCP 3.3 platform identifiers under both names on `sync_event_sources` and `sync_audiences` rows. AdCP 3.3 renames the row's `seller_id` to `platform_id` and keeps `seller_id` as a deprecated alias; a 3.3 response that reports the identifier MUST carry both with identical values.
