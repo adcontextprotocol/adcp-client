@@ -310,3 +310,107 @@ test('a same-key call issued while the first is in flight is rejected with Confi
   const again = await sync(h.agent, key);
   assert.equal(again.success, true, again.error);
 });
+
+test('a listener that aborts the call and retries the same key synchronously keeps the retry fenced', async t => {
+  const { ProtocolClient, TaskExecutor } = require('../../dist/lib/index.js');
+  const originalCallTool = ProtocolClient.callTool;
+  t.after(() => {
+    ProtocolClient.callTool = originalCallTool;
+  });
+
+  const agent = { id: 'reentrant-agent', name: 'Reentrant', agent_uri: 'https://agent.example/mcp/', protocol: 'mcp' };
+  const key = 'reentrant-key-00000-0009';
+  const reached = deferred();
+  const release = deferred();
+  let sellerCalls = 0;
+  ProtocolClient.callTool = async () => {
+    sellerCalls++;
+    reached.resolve();
+    await release.promise;
+    return { status: 'completed', accounts: [] };
+  };
+
+  const executor = new TaskExecutor({
+    agentId: agent.id,
+    webhookUrlTemplate: 'https://buyer.example/webhook/{task_type}/{agent_id}/{operation_id}',
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const run = options =>
+    executor.executeTask(agent, 'sync_accounts', { idempotency_key: key, accounts: [] }, undefined, options);
+
+  const controller = new AbortController();
+  let retry;
+  const unsubscribe = executor.onTaskUpdate(agent.id, task => {
+    if (task.status !== 'submitted' || retry) return;
+    controller.abort();
+    retry = run({});
+  });
+  t.after(unsubscribe);
+
+  const original = run({ signal: controller.signal });
+  await assert.rejects(original, error => error?.name === 'AbortError' || /\bAbortError\b/.test(String(error)));
+  assert.ok(retry, 'the listener started the retry');
+
+  await reached.promise; // the retry is now parked in its seller call
+  assert.equal(sellerCalls, 1);
+
+  await assert.rejects(run({}), error => {
+    assert.ok(error instanceof ConfigurationError, `unexpected error: ${error}`);
+    assert.match(error.message, /idempotency_key/);
+    return true;
+  });
+  assert.equal(sellerCalls, 1, 'the refused third call never reached the seller');
+
+  release.resolve();
+  const settled = await retry;
+  assert.equal(settled.success, true, settled.error);
+  assert.equal(settled.metadata.taskId, idempotentOperationId(agent.id, 'sync_accounts', key));
+  assert.equal(sellerCalls, 1);
+});
+
+test('a child dispatch does not re-point a caller-supplied parent operationId on timeout', async t => {
+  const { ProtocolClient, SingleAgentClient } = require('../../dist/lib/index.js');
+  const originalCallTool = ProtocolClient.callTool;
+  t.after(() => {
+    ProtocolClient.callTool = originalCallTool;
+  });
+
+  const agent = { id: 'implicit-agent', name: 'Implicit', agent_uri: 'https://agent.example/mcp/', protocol: 'mcp' };
+  const client = new SingleAgentClient(agent, { validation: { requests: 'off', responses: 'off' } });
+  client.ensureEndpointDiscovered = async () => agent;
+  client.getCapabilities = async () => ({
+    version: 'v3',
+    majorVersions: [3],
+    supportedVersions: [client.getAdcpVersion()],
+    protocols: ['media_buy'],
+    features: {},
+    extensions: [],
+    _synthetic: false,
+    account: { requiredForProducts: false, supportedBilling: ['operator'] },
+  });
+
+  ProtocolClient.callTool = async (_agent, _task, _params, options) => {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, 2000);
+      options?.signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(options.signal.reason);
+      });
+    });
+    return { status: 'completed', accounts: [] };
+  };
+
+  const error = await client
+    .resolveAccount(
+      { brand: { domain: 'brand.example' }, operator: 'agency.example' },
+      { operationId: 'explicit-parent-operation', timeout: 40 }
+    )
+    .then(
+      () => assert.fail('expected a timeout'),
+      err => err
+    );
+  assert.equal(error.name, 'TaskTimeoutError');
+  assert.equal(error.taskId, 'explicit-parent-operation');
+  assert.match(error.message, /explicit-parent-operation/);
+  assert.doesNotMatch(error.message, /idem-/);
+});
