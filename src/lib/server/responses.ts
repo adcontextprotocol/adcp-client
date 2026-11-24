@@ -934,13 +934,14 @@ export function updateRightsSuccess(data: ServerPayload<UpdateRightsSuccess>, su
  * webhooks have no `content` envelope. Adopters serialize this to JSON and
  * write to the HTTP response body.
  *
- * Payloads are in the AdCP 3.1+ shape: the decision is `approval_status` and
- * top-level `status` is the task status. An AdCP 3.0 buyer reads the decision
- * from `status`, so project for it with
- * `projectResponseForRelease('creative_approval', body, servedAdcpVersion)`
- * from `@adcp/sdk/adapters/version`. The request carries no `adcp_version`;
- * keep `ctx.servedAdcpVersion` with the rights grant at `acquire_rights`, which
- * returned the `approval_webhook` URL, and project with it.
+ * The decision builders emit the AdCP 3.1+ shape: the decision is
+ * `approval_status` and top-level `status` is the task status. An AdCP 3.0
+ * buyer reads the decision from `status`, so project the body for the buyer's
+ * release with `projectResponseForRelease('creative_approval', body, release)`
+ * from `@adcp/sdk/adapters/version`. A 3.1+ buyer may pin that release with
+ * the request's `adcp_version`; a 3.0 buyer sends none, so fall back to
+ * `ctx.servedAdcpVersion` stored with the rights grant at `acquire_rights`,
+ * the call that returned the `approval_webhook` URL.
  */
 export function creativeApprovalResponse(data: CreativeApprovalResponse): CreativeApprovalResponse {
   return data;

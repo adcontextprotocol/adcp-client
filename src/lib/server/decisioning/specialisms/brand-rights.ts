@@ -190,10 +190,11 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    *
    * The response is in the AdCP 3.1+ shape (decision in `approval_status`).
    * An AdCP 3.0 buyer reads the decision from `status`: project the body with
-   * `projectResponseForRelease('creative_approval', body, servedAdcpVersion)`
-   * from `@adcp/sdk/adapters/version`. The request carries no
-   * `adcp_version`, so store `ctx.servedAdcpVersion` with the rights grant
-   * in {@link acquireRightsLegacy} and project with that value.
+   * `projectResponseForRelease('creative_approval', body, release)` from
+   * `@adcp/sdk/adapters/version`. Use the release the request pins with
+   * `adcp_version` (AdCP 3.1+ buyers may send it). A 3.0 buyer sends none,
+   * so fall back to `ctx.servedAdcpVersion` stored with the rights grant in
+   * {@link acquireRightsLegacy}.
    *
    * Three success arms (the framework's typed signature surfaces the
    * three; the multi-error arm is reachable via thrown `AdcpError` once
