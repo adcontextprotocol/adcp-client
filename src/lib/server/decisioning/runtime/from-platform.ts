@@ -9520,10 +9520,26 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
   const acceptedEntries: SyncAccountsEntry[] = [];
 
   const isUpstreamManagedNamespace = normalizeAccountResolution(platform.accounts.resolution) === 'derived';
-  // Offerings a caller pinned below AdCP 3.3 was never served (a 1.2 report definition).
-  const unservedReportingOfferings = acceptsReportDefinition12(resolveCtx.servedAdcpVersion)
-    ? undefined
-    : new Map(Object.entries(platform.reporting?.adcp33OnlyOfferings ?? {}));
+  // A caller pinned below AdCP 3.3 was never served a 1.2 report definition. Naming one fails the
+  // whole request before the handler runs: dropping just that entry would shorten a delete_missing
+  // roster (deleting the account), and an entry keyed by account_id has no row a 3.2 caller accepts.
+  if (!acceptsReportDefinition12(resolveCtx.servedAdcpVersion)) {
+    const unserved = new Map(Object.entries(platform.reporting?.adcp33OnlyOfferings ?? {}));
+    for (const entry of unserved.size > 0 ? entries : []) {
+      const configs = (entry as { reporting_delivery_configs?: unknown }).reporting_delivery_configs;
+      for (const config of Array.isArray(configs) ? configs : []) {
+        const offeringId = (config as { offering_id?: unknown } | null)?.offering_id;
+        const reason = typeof offeringId === 'string' ? unserved.get(offeringId) : undefined;
+        if (reason === undefined) continue;
+        const deliveryConfigId = (config as { delivery_config_id?: unknown }).delivery_config_id;
+        throw reportingOfferingRequiresAdcp33Error(
+          offeringId as string,
+          reason,
+          typeof deliveryConfigId === 'string' ? deliveryConfigId : undefined
+        );
+      }
+    }
+  }
 
   entries.forEach((entry, index) => {
     // Account-model gate first: an entry is refused on its key shape
@@ -9579,22 +9595,6 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
         recovery: 'correctable',
         field: `accounts[${index}].payment_terms`,
       }).toStructuredError();
-    }
-
-    if (failure === undefined && unservedReportingOfferings?.size) {
-      const configs = (entry as { reporting_delivery_configs?: unknown }).reporting_delivery_configs;
-      const unserved = (Array.isArray(configs) ? configs : []).find(
-        (config): config is { offering_id: string; delivery_config_id?: unknown } =>
-          typeof (config as { offering_id?: unknown } | null)?.offering_id === 'string' &&
-          unservedReportingOfferings.has((config as { offering_id: string }).offering_id)
-      );
-      if (unserved !== undefined) {
-        failure = reportingOfferingRequiresAdcp33Error(
-          unserved.offering_id,
-          unservedReportingOfferings.get(unserved.offering_id)!,
-          typeof unserved.delivery_config_id === 'string' ? unserved.delivery_config_id : undefined
-        ).toStructuredError();
-      }
     }
 
     if (failure !== undefined) {

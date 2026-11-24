@@ -152,11 +152,13 @@ const reporting = createReliableReportingService({
 
 - drops the 1.2 offerings from `get_adcp_capabilities` for callers pinned below
   3.3, and drops `media_buy.reporting_delivery` when none is left;
-- refuses those callers' `sync_accounts` `reporting_delivery_configs` naming a
-  1.2 offering, per account entry, with `UNSUPPORTED_FEATURE`
+- fails a `sync_accounts` request from those callers whose
+  `reporting_delivery_configs` name a 1.2 offering, as a whole and before
+  `accounts.upsert` runs, with `UNSUPPORTED_FEATURE`
   (`field: "reporting_delivery_configs"`, `recovery: "correctable"`, `details`
-  carrying `offering_id` and `delivery_config_id`), before `accounts.upsert`
-  runs;
+  carrying the first offending config's `offering_id` and
+  `delivery_config_id`). No entry is applied, so a `delete_missing` roster is
+  never shortened;
 - refuses to start a server pinned below 3.3 that has a 1.2 offering, which it
   could serve to no one.
 
