@@ -1444,16 +1444,6 @@ export class TaskExecutor {
           : 'operationId is already in use by this client; track the existing task instead.'
       );
     }
-    // Reserve the id before anything below can re-enter: task-event listeners,
-    // the abort listener and the webhook tools predicate run synchronously,
-    // and one may retry this same key. That retry must wait for this dispatch
-    // to unwind, not reclaim the id while it still runs.
-    let finishExecution!: () => void;
-    const execution = new Promise<void>(resolve => {
-      finishExecution = resolve;
-    });
-    this.executionsInProgress.set(taskId, execution);
-
     // Register task in active tasks
     const taskState: TaskState = {
       taskId,
@@ -1481,6 +1471,20 @@ export class TaskExecutor {
       idempotencyKey,
     };
     this.activeTasks.set(taskId, taskState);
+
+    // Reserve the id before anything below can re-enter: task-event listeners,
+    // the abort listener and the webhook tools predicate run synchronously,
+    // and one may retry this same key. That retry must wait for this dispatch
+    // to unwind, not reclaim the id while it still runs.
+    let finishExecution!: () => void;
+    const execution = new Promise<void>(resolve => {
+      finishExecution = resolve;
+    });
+    this.executionsInProgress.set(taskId, execution);
+    const releaseExecution = (): void => {
+      if (this.executionsInProgress.get(taskId) === execution) this.executionsInProgress.delete(taskId);
+      finishExecution();
+    };
 
     // Once the final compatibility boundary starts, an abort may race a
     // durable claim that has committed but whose hook has not returned yet.
@@ -1528,7 +1532,17 @@ export class TaskExecutor {
     const debugLogs: any[] = [];
 
     // Generate webhook URL if template is configured
-    const webhookUrl = this.generateWebhookUrl(taskName, taskId, options);
+    let webhookUrl: string | undefined;
+    try {
+      webhookUrl = this.generateWebhookUrl(taskName, taskId, options);
+    } catch (error) {
+      // A throwing webhook tools predicate ends the call before dispatch.
+      // Release what the dispatch below would have released.
+      if (taskAbortListener) options.signal!.removeEventListener('abort', taskAbortListener);
+      this.updateTaskStatus(taskId, 'failed', undefined, error instanceof Error ? error.message : String(error));
+      releaseExecution();
+      throw error;
+    }
 
     // Governance state (scoped outside try so catch can access)
     let governanceCheckId: string | undefined;
@@ -2037,8 +2051,7 @@ export class TaskExecutor {
       return attachMatch(failed);
     } finally {
       if (taskAbortListener) options.signal!.removeEventListener('abort', taskAbortListener);
-      if (this.executionsInProgress.get(taskId) === execution) this.executionsInProgress.delete(taskId);
-      finishExecution();
+      releaseExecution();
     }
   }
 
