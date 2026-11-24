@@ -1154,7 +1154,9 @@ describe('seller-side resolution of consumer mismatch occurrences', () => {
     w.at('2026-09-02T00:30:00.000Z');
     await w.commit(1);
     w.at('2026-09-02T00:45:00.000Z');
-    await w.store.putIssue(unreadableMark({ observedAt: '2026-09-02T00:40:00.000Z' }));
+    await w.store.putIssue(
+      unreadableMark({ openedAt: '2026-09-02T00:40:00.000Z', observedAt: '2026-09-02T00:40:00.000Z' })
+    );
     w.at('2026-09-02T01:00:00.000Z');
     await w.sync('k1', w.status(sid(1), 'unreadable', { reporting_revision_id: 'ob-1-rev-1' }));
     // The mark is open when the statement lands, so the seller already agrees with it.
@@ -1253,7 +1255,7 @@ describe('unreadable recurrence identity and timing (#3653 round 2)', () => {
     assert.equal(reopened[0].issue.issueId, x.issueId);
   });
 
-  test("a mark ending after the store clock still records the recurrence, at the mark's end", async () => {
+  test('a mark ending after the store clock is clamped to it: the recurrence opens now and survives later writes', async () => {
     const w = fixture();
     await unreadableAt1(w);
     const original = w.events()[0].issueId;
@@ -1262,10 +1264,66 @@ describe('unreadable recurrence identity and timing (#3653 round 2)', () => {
     assert.deepEqual(w.kinds(), ['opened', 'resolved']);
 
     w.at(T('03:00:00.000Z'));
-    await w.store.resolveIssue('mark-1', T('03:00:00.001Z'));
+    await w.store.resolveIssue('mark-1', T('03:00:01.000Z'));
+    const [stored] = await w.store.listIssues('ob-1');
+    assert.equal(stored.resolvedAt, T('03:00:00.000Z'), 'the end is clamped to the store clock');
     assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
     const reopened = w.events()[2];
-    assert.equal(reopened.occurredAt, T('03:00:00.001Z'));
+    assert.equal(reopened.occurredAt, T('03:00:00.000Z'));
     assert.notEqual(reopened.issueId, original);
+
+    // An ordinary write at the real clock must not retire the recurrence.
+    w.at(T('03:00:00.500Z'));
+    await w.commit(2);
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened'], 'no extra resolved');
+
+    const mismatch = await projected(w, T('03:00:01.001Z'));
+    assert.equal(mismatch.issue.issueId, reopened.issueId);
+    const seen = await deliver(w);
+    const rendered = seen.find(event => event.kind === 'opened' && event.issueId === reopened.issueId);
+    assert.notEqual(rendered.issue, null);
+    assert.equal(rendered.issue.issueId, reopened.issueId);
+  });
+
+  test('an end recorded in the reverse order (resolvedAt first, terminal issueState later) keeps the recurrence rendering', async () => {
+    const w = fixture();
+    await unreadableAt1(w);
+    w.at(T('02:00:00.000Z'));
+    await w.store.putIssue(mark());
+    w.at(T('03:00:00.000Z'));
+    await w.store.resolveIssue('mark-1', T('03:00:00.000Z'));
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened']);
+    const x = w.events()[2];
+
+    w.at(T('04:00:00.000Z'));
+    const [persisted] = await w.store.listIssues('ob-1');
+    assert.equal(persisted.resolvedAt, T('03:00:00.000Z'));
+    await w.store.putIssue({ ...persisted, issueState: 'resolved', observedAt: T('04:00:00.000Z') });
+    assert.deepEqual(w.kinds(), ['opened', 'resolved', 'opened'], 'no extra events');
+
+    const mismatch = await projected(w, T('04:00:00.000Z'));
+    assert.equal(mismatch.issue.issueId, x.issueId);
+    assert.equal(mismatch.issue.openedAt, T('03:00:00.000Z'));
+
+    // Rendered directly from the store's rows.
+    const store = w.store;
+    const rendered = renderReportingIssueEventV1(
+      { ...x, attempts: 1, leaseToken: 't', leaseExpiresAt: T('05:00:00.000Z') },
+      {
+        obligation: store.obligations.get('ob-1'),
+        revisions: store.revisionMetadata('ob-1'),
+        issues: await store.listIssues('ob-1'),
+        statement: store.consumerStatements[0],
+      }
+    );
+    assert.notEqual(rendered.issue, null);
+    assert.equal(rendered.issue.issueId, x.issueId);
+    assert.equal(rendered.issue.openedAt, T('03:00:00.000Z'));
+
+    // And through the dispatcher.
+    const seen = await deliver(w);
+    const viaDispatcher = seen.find(event => event.kind === 'opened' && event.issueId === x.issueId);
+    assert.notEqual(viaDispatcher.issue, null);
+    assert.equal(viaDispatcher.issue.openedAt, T('03:00:00.000Z'));
   });
 });

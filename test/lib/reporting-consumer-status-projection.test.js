@@ -762,6 +762,24 @@ describe('unreadable mark end instants (#3653 round 2)', () => {
     assert.equal(recurrence.openedAt, '2026-03-09T01:31:00.000Z');
   });
 
+  test('a mark opened after ledgerAsOf is ignored and the statement still conflicts', () => {
+    const original = project([]).issue;
+    const later = project([
+      mark({ openedAt: '2026-03-09T04:00:00.001Z', observedAt: '2026-03-09T04:00:00.001Z' }),
+    ]).issue;
+    assert.equal(later.issueId, original.issueId, 'not a recurrence either: the mark did not exist yet');
+    assert.equal(later.openedAt, original.openedAt);
+    // An ended mark that had not opened by the instant is likewise ignored.
+    const endedLater = project([
+      mark({
+        openedAt: '2026-03-09T04:00:00.001Z',
+        observedAt: '2026-03-09T01:00:00.000Z',
+        resolvedAt: '2026-03-09T03:00:00.000Z',
+      }),
+    ]).issue;
+    assert.equal(endedLater.issueId, original.issueId);
+  });
+
   test('a mark ending one instant before the statement still keeps the original issueId', () => {
     const original = project([]).issue;
     const earlier = project([
