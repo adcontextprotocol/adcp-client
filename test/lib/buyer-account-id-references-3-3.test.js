@@ -326,3 +326,81 @@ test('learned format routes survive the account swap: no SDK-minted format_optio
     assert.equal(params.packages[0].format_option_ref, undefined);
   }
 });
+
+test("a caller's brand_manifest, not the account's brand, supplies brand on the wire", async t => {
+  const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+  const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+  const { z } = require('zod');
+  const accountKey = { brand: { domain: 'account-brand.example' }, operator: 'agency.example' };
+  const manifest = 'https://campaign-brand.example/brand.json';
+
+  async function run(config) {
+    const sent = [];
+    const seller = new McpServer({ name: 'Seller', version: '1.0.0' });
+    const tool = (name, handler) =>
+      seller.registerTool(name, { inputSchema: z.object({}).passthrough() }, async params => {
+        sent.push({ name, params });
+        const data = handler(params);
+        return { structuredContent: data, content: [{ type: 'text', text: JSON.stringify(data) }] };
+      });
+    tool('get_adcp_capabilities', () => ({
+      adcp: {
+        major_versions: [3],
+        supported_versions: ['3.3-rc.3'],
+        idempotency: { supported: true, replay_ttl_seconds: 86400 },
+      },
+      supported_protocols: ['media_buy'],
+      account: { require_operator_auth: false, supported_billing: ['operator'] },
+      media_buy: { buying_modes: ['brief'] },
+    }));
+    tool('sync_accounts', params => ({
+      accounts: params.accounts.map(ref => ({ ...ref, account_id: 'seller-id', status: 'active', action: 'created' })),
+    }));
+    tool('get_products', () => ({ products: [] }));
+    tool('create_media_buy', () => ({ media_buy_id: 'buy-id', packages: [] }));
+    const [buyerTransport, sellerTransport] = InMemoryTransport.createLinkedPair();
+    await seller.connect(sellerTransport);
+    const mcp = new Client({ name: 'Buyer', version: '1.0.0' });
+    await mcp.connect(buyerTransport);
+    t.after(async () => {
+      await mcp.close();
+      await seller.close();
+    });
+    const buyer = AgentClient.fromMCPClient(mcp, {
+      accountPolicy: 'auto',
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+      ...config,
+    });
+    await buyer.accounts.provision(accountKey);
+    assert.equal(
+      (await buyer.getProducts({ account: accountKey, brief: 'Display', brand_manifest: manifest })).success,
+      true
+    );
+    assert.equal(
+      (
+        await buyer.createMediaBuyLegacy({
+          account: accountKey,
+          brand_manifest: manifest,
+          packages: [],
+          start_time: 'asap',
+          end_time: '2027-01-01T00:00:00Z',
+        })
+      ).success,
+      true
+    );
+    return Object.fromEntries(
+      ['get_products', 'create_media_buy'].map(name => [name, sent.find(call => call.name === name).params])
+    );
+  }
+
+  const byId = await run({});
+  const byKey = await run({ accountReferenceMode: 'natural-key' });
+  for (const task of ['get_products', 'create_media_buy']) {
+    assert.deepEqual(byId[task].account, ID_REF, task);
+    assert.deepEqual(byKey[task].account, accountKey, task);
+    assert.equal(byId[task].brand?.domain, 'campaign-brand.example', task);
+    assert.equal(byKey[task].brand?.domain, 'campaign-brand.example', task);
+  }
+});
