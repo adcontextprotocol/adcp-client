@@ -77,6 +77,9 @@ const SWEEP_TSCONFIG = {
   include: ['adopter-sweep.ts'],
 };
 
+// Fewer schemas than this means the sweep stopped reading the package (#3472).
+const DEPTH_SWEEP_MIN_SCHEMAS = 500;
+
 const DECLARATION_SOURCE = `
 import {
   ProductSchema,
@@ -1135,6 +1138,15 @@ function generateDepthSweepSource(adopterDir: string): string {
     );
   }
   console.log(`[adopter-types] depth sweep covers ${count} schemas with array fields`);
+  // The sweep reads Zod internals (`_zod.def`). If a Zod upgrade changes them,
+  // every schema is skipped and tsc finds nothing to overflow. Fail instead of
+  // passing on an empty sweep. 17.0 covers 663 schemas.
+  if (count < DEPTH_SWEEP_MIN_SCHEMAS) {
+    throw new Error(
+      `z.infer depth sweep covered only ${count} schemas (expected at least ${DEPTH_SWEEP_MIN_SCHEMAS}); ` +
+        'check that generateDepthSweepSource() still understands the Zod schema internals.'
+    );
+  }
   return lines.join('\n') + '\n';
 }
 
