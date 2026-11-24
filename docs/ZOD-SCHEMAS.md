@@ -263,6 +263,19 @@ type MediaBuyInferred = z.infer<typeof MediaBuySchema>;
 // MediaBuyInferred is compatible with MediaBuy type!
 ```
 
+Array fields whose protocol schema sets `minItems: 1` infer as `[T, ...T[]]`.
+Their schema type is `NonemptyArraySchema<T>`, a `z.ZodArray<T>` with that tuple
+as its input and output.
+
+The largest schemas have very long inferred types. If you export the result of
+`.meta()`, `.describe()` or another method that returns the schema's own type,
+annotate it, or declaration emit fails with TS7056:
+
+```typescript
+export const TaggedDelivery: typeof GetMediaBuyDeliveryResponseSchema =
+  GetMediaBuyDeliveryResponseSchema.meta({ id: 'delivery' });
+```
+
 ## Platform Implementation
 
 If you're building a platform that **receives** AdCP tool calls (a seller/publisher), import request types for handler signatures from `@adcp/sdk` and schemas for runtime validation from `@adcp/sdk/schemas`.

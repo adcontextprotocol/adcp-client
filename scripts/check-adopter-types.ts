@@ -14,6 +14,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -60,10 +61,30 @@ const DECLARATION_TSCONFIG = {
   include: ['adopter-declaration.ts'],
 };
 
+// Depth sweep (#3472): see generateDepthSweepSource(). Lib files were already
+// checked by the main pass, so skip them here to keep the extra pass cheap.
+const SWEEP_TSCONFIG = {
+  compilerOptions: {
+    target: 'ES2022',
+    module: 'ESNext',
+    moduleResolution: 'bundler',
+    strict: true,
+    skipLibCheck: true,
+    noEmit: true,
+    types: ['node'],
+    ignoreDeprecations: '6.0',
+  },
+  include: ['adopter-sweep.ts'],
+};
+
+// Fewer schemas than this means the sweep stopped reading the package (#3472).
+const DEPTH_SWEEP_MIN_SCHEMAS = 500;
+
 const DECLARATION_SOURCE = `
 import {
   ProductSchema,
   GetProductsRequestSchema,
+  GetMediaBuyDeliveryResponseSchema,
   SyncCreativesResponseStrictSchema as NodeSyncCreativesResponseStrictSchema,
 } from '@adcp/sdk/schemas';
 import * as BrowserSchemas from '@adcp/sdk/schemas/browser';
@@ -94,6 +115,16 @@ export const LocalSyncCreativesResponseSchema = BrowserSchemas.SyncCreativesResp
 export const LocalAccountSchema = BrowserSchemas.SyncCreativesItemSchema.shape.account;
 
 export const LocalNodeSyncCreativesResponseSchema = NodeSyncCreativesResponseStrictSchema;
+
+// #3472: re-declaring a large response schema with an explicit annotation is
+// the documented workaround for TS7056 on declaration emit, and a function
+// over z.infer of the same schema must emit its (exported) return type.
+export const Tagged: typeof GetMediaBuyDeliveryResponseSchema = GetMediaBuyDeliveryResponseSchema.meta({ id: 'x' });
+
+type DeliverySource = z.infer<typeof GetMediaBuyDeliveryResponseSchema>;
+export function firstPackageSlices(source: DeliverySource) {
+  return source.media_buy_deliveries.slice(0, 1).map(buy => ({ ...buy, by_package: buy.by_package.slice(0, 1) }));
+}
 `;
 
 const ADOPTER_SOURCE = `
@@ -1010,10 +1041,145 @@ customToolFor('verify_brand_claim', 'x', TOOL_INPUT_SHAPES.verify_brand_claim, a
 
 // @ts-expect-error unknown fields should not type-check
 void TOOL_INPUT_SHAPES.creative_approval.not_a_real_field;
+
+// #3472: z.infer of large exported schemas must stay within TypeScript's
+// instantiation-depth limit (TS2589 / TS7056). These overflowed when
+// NonemptyArraySchema was re-declared as a ZodType of the tuple.
+type DeliverySource = z.infer<typeof publicSchemas.GetMediaBuyDeliveryResponseSchema>;
+export function sliceDelivery(source: DeliverySource) {
+  return source.media_buy_deliveries.slice(0, 1).map(buy => ({ ...buy, by_package: buy.by_package.slice(0, 1) }));
+}
+export type DepthInstallmentMetrics = z.infer<typeof publicSchemas.InstallmentDeliveryMetricsSchema>;
+export type DepthCollection = z.infer<typeof publicSchemas.CollectionSchema>;
+export type DepthListProducts = z.infer<typeof publicSchemas.ListProductsResponseSchema>;
+export type DepthRegistryFeed = z.infer<typeof publicSchemas.RegistryFeedResponseSchema>;
+
+// Contract: a non-empty field still infers as a non-empty tuple type.
+type DepthEquals<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+const nonemptyInfersTuple: DepthEquals<
+  NonNullable<z.infer<typeof publicSchemas.BrandKeySchema>['countries']>,
+  [string, ...string[]]
+> = true;
+void nonemptyInfersTuple;
+
+// Contract: NonemptyArraySchema is a ZodArray subtype (element/unwrap work).
+declare const nonemptyStrings: publicSchemas.NonemptyArraySchema<z.ZodString>;
+const asZodArray: z.ZodArray<z.ZodString> = nonemptyStrings;
+// ...and still a ZodType of the non-empty tuple, through \`_output\`/\`_input\` too.
+const asTupleZodType: z.ZodType<[string, ...string[]], [string, ...string[]]> = nonemptyStrings;
+const nonemptyElement: z.ZodString = nonemptyStrings.element;
+const nonemptyUnwrapped: z.ZodString = nonemptyStrings.unwrap();
+void asZodArray;
+void asTupleZodType;
+void nonemptyElement;
+void nonemptyUnwrapped;
 `;
+
+/**
+ * Generates a scaffold that, for every exported object schema with array
+ * fields, slices/maps/spreads each array field two levels deep over
+ * `z.infer<typeof S.X>`. Schemas are discovered by introspecting the packed
+ * package at runtime, so new schemas are covered without editing this script.
+ */
+function generateDepthSweepSource(adopterDir: string): string {
+  const req = createRequire(join(adopterDir, 'package.json'));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const schemas: Record<string, any> = req('@adcp/sdk/schemas');
+  const WRAPPERS = ['optional', 'nullable', 'default', 'readonly', 'nonoptional', 'catch', 'prefault'];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const unwrap = (t: any): any => {
+    while (t?._zod && WRAPPERS.includes(t._zod.def.type)) t = t._zod.def.innerType;
+    return t;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const shapeOf = (t: any): Record<string, any> | undefined => {
+    t = unwrap(t);
+    if (!t?._zod) return undefined;
+    const def = t._zod.def;
+    if (def.type === 'object') return def.shape;
+    if (def.type === 'intersection') return { ...(shapeOf(def.left) ?? {}), ...(shapeOf(def.right) ?? {}) };
+    if (def.type === 'pipe') return shapeOf(def.in);
+    return undefined;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const asArray = (t: any) => {
+    t = unwrap(t);
+    return t?._zod?.def.type === 'array' ? t : undefined;
+  };
+  const access = (k: string) => (/^[A-Za-z_$][\w$]*$/.test(k) ? `.${k}` : `[${JSON.stringify(k)}]`);
+
+  const lines = ["import * as S from '@adcp/sdk/schemas';", "import type { z } from 'zod';"];
+  let count = 0;
+  for (const name of Object.keys(schemas)
+    .filter(k => k.endsWith('Schema') && schemas[k]?._zod)
+    .sort()) {
+    const shape = shapeOf(schemas[name]);
+    if (!shape) continue;
+    const body: string[] = [];
+    for (const [key, value] of Object.entries(shape)) {
+      const arr = asArray(value);
+      if (!arr) continue;
+      const inner = shapeOf(arr._zod.def.element);
+      if (!inner) {
+        body.push(`  out.push(v${access(key)}?.slice(0, 1).map(e => e));`);
+        continue;
+      }
+      const nested = Object.entries(inner)
+        .filter(([, v]) => asArray(v))
+        .map(([k2]) => `${k2.replace(/\W/g, '_')}: e${access(k2)}?.slice(0, 1).map(x => x)`);
+      body.push(
+        `  out.push(v${access(key)}?.slice(0, 1).map(e => ({ ...e${nested.length ? ', ' + nested.join(', ') : ''} })));`
+      );
+    }
+    if (!body.length) continue;
+    count++;
+    lines.push(
+      `export function f_${name}(v: z.infer<typeof S.${name}>) {\n  const out: unknown[] = [];\n${body.join('\n')}\n  return out;\n}`
+    );
+  }
+  console.log(`[adopter-types] depth sweep covers ${count} schemas with array fields`);
+  // The sweep reads Zod internals (`_zod.def`). If a Zod upgrade changes them,
+  // every schema is skipped and tsc finds nothing to overflow. Fail instead of
+  // passing on an empty sweep. 17.0 covers 663 schemas.
+  if (count < DEPTH_SWEEP_MIN_SCHEMAS) {
+    throw new Error(
+      `z.infer depth sweep covered only ${count} schemas (expected at least ${DEPTH_SWEEP_MIN_SCHEMAS}); ` +
+        'check that generateDepthSweepSource() still understands the Zod schema internals.'
+    );
+  }
+  return lines.join('\n') + '\n';
+}
 
 function run(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): void {
   execFileSync(cmd, args, { cwd, stdio: 'inherit', env: env ?? process.env });
+}
+
+/**
+ * Fails only on TS2589 ("excessively deep"). The generated scaffold is
+ * deliberately naive, so it also produces unrelated diagnostics (TS18046 on
+ * schemas whose output is `unknown`, TS7006 cascades from that, a TS2339 on a
+ * union); those say nothing about instantiation depth and are ignored.
+ */
+function runDepthSweep(cwd: string, env: NodeJS.ProcessEnv): void {
+  let output = '';
+  try {
+    output = execFileSync('npx', ['--no-install', 'tsc', '-p', 'tsconfig.sweep.json'], {
+      cwd,
+      env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string };
+    output = `${e.stdout ?? ''}${e.stderr ?? ''}`;
+    // A crash (OOM, missing tsc) prints no diagnostics; don't read that as a pass.
+    if (!output.includes('error TS')) throw new Error(`depth sweep tsc crashed:\n${output}`);
+  }
+  const deep = output.split('\n').filter(line => line.includes('TS2589'));
+  if (deep.length > 0) {
+    console.error(deep.join('\n'));
+    throw new Error(`z.infer depth sweep hit TS2589 on ${deep.length} exported schema(s).`);
+  }
 }
 
 function main(): void {
@@ -1034,6 +1200,7 @@ function main(): void {
   writeFileSync(join(adopterDir, 'tsconfig.declaration.json'), JSON.stringify(DECLARATION_TSCONFIG, null, 2));
   writeFileSync(join(adopterDir, 'adopter.ts'), ADOPTER_SOURCE);
   writeFileSync(join(adopterDir, 'adopter-declaration.ts'), DECLARATION_SOURCE);
+  writeFileSync(join(adopterDir, 'tsconfig.sweep.json'), JSON.stringify(SWEEP_TSCONFIG, null, 2));
 
   // @types/express, @opentelemetry/api, and redis cover transitive type
   // references from the server bundle — adopters who import
@@ -1091,6 +1258,11 @@ function main(): void {
       throw new Error('Composed public schema declarations were not emitted.');
     }
     console.log('[adopter-types] PASS — composed schema declarations are portable.');
+
+    console.log('[adopter-types] sweeping z.infer depth over every exported schema (#3472)...');
+    writeFileSync(join(adopterDir, 'adopter-sweep.ts'), generateDepthSweepSource(adopterDir));
+    runDepthSweep(adopterDir, tscEnv);
+    console.log('[adopter-types] PASS — no exported schema exceeds the z.infer instantiation depth.');
   } catch {
     console.error('[adopter-types] FAIL — published .d.ts files do not type-check on a clean adopter project.');
     console.error(`  Scaffold preserved at: ${adopterDir}`);
