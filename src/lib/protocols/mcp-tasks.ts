@@ -23,7 +23,7 @@ import { withPageResponseSizeLimit, withResponseSizeLimit } from './responseSize
 import { withTransportDiagnostics, type TransportActivityHandler } from './transportDiagnostics';
 import { isAbortOrTimeoutError, resolveClientRequestTimeoutMs } from './abort';
 import { tryCallModernMCPTool } from './mcp-modern';
-import { forEachMcpToolsPage, listAllMcpTools } from './mcp-tools-list';
+import { forEachMcpToolsPage, listMcpToolCatalog } from './mcp-tools-list';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -69,7 +69,7 @@ const toolsListedClients = new WeakSet<MCPClient>();
 
 /**
  * Ensure tool metadata is cached in the SDK so isToolTask() works. Reads
- * every `tools/list` page (adcp-client#3717); `listAllMcpTools` leaves the
+ * every `tools/list` page (adcp-client#3717); `listMcpToolCatalog` leaves the
  * whole catalog cached, as capability discovery on a shared client does too.
  * Each page gets its own response-size allowance rather than sharing the
  * tool call's.
@@ -85,18 +85,18 @@ async function ensureToolsListed(
     ...(signal && { signal }),
     ...(requestTimeoutMs !== undefined && { timeout: requestTimeoutMs }),
   };
-  const listPage = (cursor: string | undefined) =>
-    withPageResponseSizeLimit(undefined, () =>
-      client.listTools(cursor === undefined ? undefined : { cursor }, options)
-    );
-  const { metadataCached } = await listAllMcpTools(listPage, client);
+  const pageAllowance = <T>(fetch: () => Promise<T>) => withPageResponseSizeLimit(undefined, fetch);
+  const { metadataCached } = await listMcpToolCatalog(client, undefined, options, pageAllowance);
   if (metadataCached) {
     toolsListedClients.add(client);
     return;
   }
   // The SDK could not take the whole catalog. Re-read up to the page holding
   // this tool so its metadata is the page cached, and list again next call.
-  await forEachMcpToolsPage(listPage, tools => tools.some(tool => tool.name === toolName));
+  await forEachMcpToolsPage(
+    cursor => pageAllowance(() => client.listTools(cursor === undefined ? undefined : { cursor }, options)),
+    tools => tools.some(tool => tool.name === toolName)
+  );
 }
 
 /**
