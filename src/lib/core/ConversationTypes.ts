@@ -757,8 +757,8 @@ export interface TaskResultFailure<T> extends TaskResultBase<T> {
    * - in a multi-agent collection result, the `ADCPError` the agent's call threw.
    *
    * A `NeedsAuthorizationError` is kept only when its MCP OAuth requirements
-   * were validated, so it is safe to start an interactive authorization flow
-   * from. Absent otherwise. Seller-supplied fields on these errors (such as
+   * were validated, for identifying when interactive authorization is
+   * required. Absent otherwise. Seller-supplied fields on these errors (such as
    * `challenge`, `oauthMetadata` and `responseBody`) are untrusted text.
    */
   errorInstance?: import('../errors').ADCPError;
