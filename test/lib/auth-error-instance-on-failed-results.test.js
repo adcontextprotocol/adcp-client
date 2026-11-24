@@ -301,4 +301,39 @@ describe('AgentCollection keeps a thrown ADCPError on errorInstance', () => {
     assert.equal(result.success, false);
     assert.equal(result.errorInstance, validated);
   });
+
+  test('the gate matches each agent: a shared rejection is kept only for the agent it validates', async () => {
+    const collection = new AgentCollection([configs[0], configs[1]]);
+    const [a, b] = collection.getAllAgents();
+    const shared = needsAuthorization(configs[0].agent_uri, configs[0].agent_uri);
+    a.getProducts = b.getProducts = async () => {
+      throw shared;
+    };
+
+    const [resultA, resultB] = await collection.getProducts({ brief: 'x' });
+
+    assert.equal(resultA.errorInstance, shared);
+    assert.equal(resultB.success, false);
+    assert.equal(resultB.error, shared.message);
+    assert.ok(!('errorInstance' in resultB));
+  });
+
+  test('a NeedsAuthorizationError with a matching resource but no authorization servers is not kept', async () => {
+    const collection = new AgentCollection([configs[0]]);
+    const [a] = collection.getAllAgents();
+    const partial = new NeedsAuthorizationError({
+      agentUrl: configs[0].agent_uri,
+      resource: configs[0].agent_uri,
+      authorizationServers: [],
+      challenge: { scheme: 'bearer', params: {} },
+    });
+    a.getProducts = async () => {
+      throw partial;
+    };
+
+    const [result] = await collection.getProducts({ brief: 'x' });
+
+    assert.equal(result.success, false);
+    assert.ok(!('errorInstance' in result));
+  });
 });
