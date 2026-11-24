@@ -1486,4 +1486,176 @@ describe('canonical creative asynchronous boundaries', () => {
       assert.equal(Object.isFrozen(association.routingSnapshot.packages[0].format_option_refs[0]), true);
     }
   });
+
+  describe('SDK error classes on creative-task failures', () => {
+    const sdkErrors = require('../../dist/lib/errors');
+    const { NeedsAuthorizationError } = require('../../dist/lib/index.js');
+    const mediaBuyParams = {
+      account: { account_id: 'acct' },
+      brand: { domain: 'acme.example' },
+      start_time: 'asap',
+      end_time: '2027-01-01T00:00:00Z',
+      packages: [],
+      idempotency_key: 'create-media-buy-0123456789',
+    };
+    const legacyMessage = `Rejected format_id ${legacyId} from agent_url ${legacyUrl}`;
+
+    // Each factory takes the message to use (when the class accepts one).
+    const typedErrors = {
+      AuthenticationRequiredError: message =>
+        new sdkErrors.AuthenticationRequiredError(
+          'https://seller.example/mcp',
+          undefined,
+          message,
+          { scheme: 'signature', error: 'request_signature_key_unknown' },
+          { status: 401, responseBody: 'unknown key' }
+        ),
+      AuthenticationCredentialsRejectedError: () =>
+        new sdkErrors.AuthenticationCredentialsRejectedError('https://seller.example/mcp', new Error('401')),
+      NeedsAuthorizationError: message =>
+        new NeedsAuthorizationError(
+          { agentUrl: 'https://seller.example/mcp', challenge: { scheme: 'bearer' } },
+          message
+        ),
+      IdempotencyConflictError: message => new sdkErrors.IdempotencyConflictError('key-conflict-0123456789', message),
+      IdempotencyExpiredError: message => new sdkErrors.IdempotencyExpiredError('key-expired-0123456789', message),
+      AccountNotFoundError: message => new sdkErrors.AccountNotFoundError(message),
+      AccountSetupRequiredError: message => new sdkErrors.AccountSetupRequiredError(message),
+      AccountPaymentRequiredError: message => new sdkErrors.AccountPaymentRequiredError(message),
+      ActionNotAllowedError: message =>
+        new sdkErrors.ActionNotAllowedError({ attempted_action: 'cancel', reason: 'wrong_status' }, message),
+    };
+
+    function failedWith(errorInstance, taskName = 'create_media_buy') {
+      return {
+        success: false,
+        status: 'failed',
+        error: errorInstance.message,
+        metadata: { ...metadata('failed'), taskName },
+        errorInstance,
+      };
+    }
+
+    for (const [name, make] of Object.entries(typedErrors)) {
+      test(`${name} survives create_media_buy canonicalization`, async () => {
+        const unchanged = make(undefined);
+        const client = makeClient(async () => failedWith(unchanged));
+        const result = await client.executeTask('create_media_buy', mediaBuyParams);
+        assert.equal(result.status, 'failed');
+        const { errorInstance } = result;
+        assert.equal(Object.getPrototypeOf(errorInstance), Object.getPrototypeOf(unchanged));
+        assert.equal(errorInstance instanceof sdkErrors.ADCPError, true);
+        assert.equal(errorInstance.name, unchanged.name);
+        assert.equal(errorInstance.message, unchanged.message);
+        assert.equal(typeof errorInstance.stack, 'string');
+        assert.ok(errorInstance.stack.length > 0);
+        for (const key of Reflect.ownKeys(unchanged)) {
+          if (key === 'stack') continue;
+          const expected = Object.getOwnPropertyDescriptor(unchanged, key);
+          const actual = Object.getOwnPropertyDescriptor(errorInstance, key);
+          assert.ok(actual, `own property ${String(key)} kept`);
+          assert.equal(actual.enumerable, expected.enumerable, `${String(key)} enumerability kept`);
+          if (key === 'cause') assert.equal(actual.value.message, expected.value.message);
+          else assert.deepEqual(actual.value, expected.value, `${String(key)} value kept`);
+        }
+
+        if (name === 'AuthenticationCredentialsRejectedError') return; // fixed message, nothing to sanitize
+        const legacy = make(legacyMessage);
+        const sanitizedClient = makeClient(async () => failedWith(legacy));
+        const sanitized = (await sanitizedClient.executeTask('create_media_buy', mediaBuyParams)).errorInstance;
+        assert.notEqual(sanitized, legacy);
+        assert.equal(Object.getPrototypeOf(sanitized), Object.getPrototypeOf(legacy));
+        assert.equal(sanitized instanceof sdkErrors.ADCPError, true);
+        assert.equal(sanitized.name, legacy.name);
+        assertCanonical(sanitized.message);
+        assert.notEqual(sanitized.message, legacy.message);
+        if (name === 'IdempotencyConflictError' || name === 'IdempotencyExpiredError') {
+          const descriptor = Object.getOwnPropertyDescriptor(sanitized, 'idempotencyKey');
+          assert.equal(descriptor.value, legacy.idempotencyKey);
+          assert.equal(descriptor.enumerable, false);
+        }
+      });
+    }
+
+    test('SDK error stack is sanitized like message and stays non-enumerable', async () => {
+      // Expected to fail until the fast path is removed and `stack` is sanitized (pending change).
+      const error = typedErrors.AuthenticationRequiredError(undefined);
+      error.stack = `AuthenticationRequiredError: x\n format_id ${legacyId} ${legacyUrl}`;
+      const client = makeClient(async () => failedWith(error));
+      const { errorInstance } = await client.executeTask('create_media_buy', mediaBuyParams);
+      assert.equal(errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(typeof errorInstance.stack, 'string');
+      assert.ok(errorInstance.stack.length > 0);
+      assert.doesNotMatch(errorInstance.stack, new RegExp(`${legacyId}|formats\\.publisher\\.example`));
+      assert.equal(Object.getOwnPropertyDescriptor(errorInstance, 'stack').enumerable, false);
+    });
+
+    test('non-enumerable idempotencyKey survives a sanitizing clone', async () => {
+      const conflict = typedErrors.IdempotencyConflictError(legacyMessage);
+      const client = makeClient(async () => failedWith(conflict));
+      const { errorInstance } = await client.executeTask('create_media_buy', mediaBuyParams);
+      assert.equal(errorInstance instanceof sdkErrors.IdempotencyConflictError, true);
+      assert.equal(errorInstance.idempotencyKey, 'key-conflict-0123456789');
+      assert.equal(JSON.stringify(errorInstance).includes('key-conflict'), false);
+    });
+
+    test('adopter subclasses of SDK classes are still flattened and their getters never run', async () => {
+      let reads = 0;
+      class AdopterAuthError extends sdkErrors.AuthenticationRequiredError {
+        get format_id() {
+          reads += 1;
+          return legacyFormat;
+        }
+      }
+      class AdopterIdempotencyError extends sdkErrors.IdempotencyConflictError {
+        get details() {
+          reads += 1;
+          return { format_id: legacyFormat };
+        }
+      }
+      for (const adopter of [
+        new AdopterAuthError('https://seller.example/mcp'),
+        new AdopterIdempotencyError('adopter-key-0123456789'),
+      ]) {
+        const client = makeClient(async () => failedWith(adopter));
+        const { errorInstance } = await client.executeTask('create_media_buy', mediaBuyParams);
+        assert.equal(Object.getPrototypeOf(errorInstance), Error.prototype);
+        assert.equal(errorInstance instanceof sdkErrors.ADCPError, false);
+        assert.equal(errorInstance.name, adopter.name);
+      }
+      assert.equal(reads, 0);
+    });
+
+    test('submitted waitForCompletion and deferred resume keep the SDK error class', async () => {
+      const refused = () => typedErrors.AuthenticationRequiredError(undefined);
+      const waited = refused();
+      const resumed = refused();
+      const submitted = {
+        success: true,
+        status: 'submitted',
+        metadata: { ...metadata('submitted'), taskName: 'create_media_buy' },
+        submitted: {
+          taskId: 'seller-task',
+          track: async () => ({}),
+          waitForCompletion: async () => failedWith(waited),
+        },
+      };
+      const submittedResult = await makeClient(async () => submitted).executeTask('create_media_buy', mediaBuyParams);
+      const afterWait = await submittedResult.submitted.waitForCompletion(1);
+      assert.equal(afterWait.success, false);
+      assert.equal(afterWait.errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(afterWait.errorInstance.status, 401);
+
+      const deferred = {
+        success: true,
+        status: 'deferred',
+        metadata: { ...metadata('deferred'), taskName: 'create_media_buy' },
+        deferred: { token: 'human-token', question: 'Approve?', resume: async () => failedWith(resumed) },
+      };
+      const deferredResult = await makeClient(async () => deferred).executeTask('create_media_buy', mediaBuyParams);
+      const afterResume = await deferredResult.deferred.resume({ approved: true });
+      assert.equal(afterResume.errorInstance.status, 401);
+      assert.equal(afterResume.errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+    });
+  });
 });
