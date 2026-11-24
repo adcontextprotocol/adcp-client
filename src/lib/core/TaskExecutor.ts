@@ -1539,8 +1539,14 @@ export class TaskExecutor {
       // A throwing webhook tools predicate ends the call before dispatch.
       // Release what the dispatch below would have released.
       if (taskAbortListener) options.signal!.removeEventListener('abort', taskAbortListener);
-      this.updateTaskStatus(taskId, 'failed', undefined, error instanceof Error ? error.message : String(error));
-      releaseExecution();
+      try {
+        this.updateTaskStatus(taskId, 'failed', undefined, error instanceof Error ? error.message : String(error));
+      } catch {
+        // A throwing onActivity hook must not replace the predicate's error.
+      } finally {
+        // After publication, so a same-key listener still waits for this unwind.
+        releaseExecution();
+      }
       throw error;
     }
 
