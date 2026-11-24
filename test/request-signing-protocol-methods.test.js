@@ -626,3 +626,51 @@ it('preserves form-encoded OAuth token posts sharing a method-signing fetch', as
   assert.equal(new Headers(requests[0].headers).has('signature'), false);
   assert.equal(requests[0].body, 'grant_type=client_credentials&client_id=task-client');
 });
+
+it("forwards the signing context's cache staleness so an expired no-signing entry still signs webhook credentials (adcp#9204)", async () => {
+  const { buildAgentSigningContext, CapabilityCache } = require('../dist/lib/signing/client.js');
+  let now = 1_000_000;
+  const cache = new CapabilityCache({ ttlSeconds: 1, now: () => now });
+  const context = buildAgentSigningContext(
+    { id: 'ttl', name: 'TTL', protocol: 'mcp', agent_uri: TARGET_URL, request_signing: signing },
+    { cache }
+  );
+  // A genuine advertisement without request_signing, fetched "now" by the wall clock.
+  cache.set(context.capabilityCacheKey, {
+    requestSigning: undefined,
+    adcpVersion: 3,
+    fetchedAt: Math.floor(Date.now() / 1000),
+  });
+  const requests = [];
+  const fetch = buildAgentSigningFetch({
+    signing: context.signing,
+    adcpVersion: '3.2.6',
+    getCapability: context.getCapability,
+    isCapabilityStale: context.isCapabilityStale,
+    upstream: async (url, init) => {
+      requests.push(Object.fromEntries(new Headers(init.headers)));
+      return new Response('{}', { status: 200 });
+    },
+  });
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: {
+      name: 'create_media_buy',
+      arguments: {
+        push_notification_config: {
+          url: 'https://buyer.example/webhook',
+          authentication: { schemes: ['HMAC-SHA256'], credentials: 'placeholder_secret_min_32_characters_required' },
+        },
+      },
+    },
+  });
+  const entry = context.getCapability();
+  now = entry.fetchedAt; // fresh by the cache's own clock
+  await fetch(TARGET_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+  assert.equal(requests[0]['signature-input'], undefined, 'fresh no-signing advertisement is honored');
+  now = entry.fetchedAt + 2; // past the cache's 1s TTL, though the wall clock says fresh
+  await fetch(TARGET_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+  assert.ok(requests[1]['signature-input'], "expired by the context cache's clock, so signed");
+});
