@@ -1417,11 +1417,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       if (!context?.account?.id) throw new TypeError('Reporting configuration requires a framework-resolved account');
       const adcp33OnlyReason = adcp33OnlyOfferings.get(configuration.offeringId);
       if (adcp33OnlyReason !== undefined && !acceptsReportDefinition12(context.servedAdcpVersion)) {
-        throw reportingOfferingRequiresAdcp33Error(
-          configuration.offeringId,
-          adcp33OnlyReason,
-          configuration.delivery_config_id
-        );
+        throw reportingOfferingRequiresAdcp33Error(configuration.offeringId, adcp33OnlyReason);
       }
       const { input } = await prepareGeneration(configuration, context.account, 'account');
       return producer.installConfiguration(input, {

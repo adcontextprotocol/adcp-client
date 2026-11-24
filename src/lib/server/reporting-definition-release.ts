@@ -37,12 +37,12 @@ export function acceptsReportDefinition12(servedAdcpVersion: string | undefined)
 /**
  * The refusal for a caller pinned below AdCP 3.3 whose reporting delivery configuration names an
  * offering this seller serves to 3.3 callers only. The offering was never advertised to that
- * caller, so the request is outside what it was offered.
+ * caller, so the request is outside what it was offered. `offeringId` is the seller's own id
+ * (callers pass it only after an exact match); `details` carry nothing else from the request.
  */
 export function reportingOfferingRequiresAdcp33Error(
   offeringId: string,
-  reason: ReportingAdcp33OnlyReasonV1,
-  deliveryConfigId?: string
+  reason: ReportingAdcp33OnlyReasonV1
 ): AdcpError {
   return new AdcpError('UNSUPPORTED_FEATURE', {
     recovery: 'correctable',
@@ -53,9 +53,6 @@ export function reportingOfferingRequiresAdcp33Error(
         ? 'its report definition is at contract_version 1.2. '
         : "its report definition's contract_version is undeclared. ") +
       'Choose an offering from get_adcp_capabilities.',
-    details: {
-      offering_id: offeringId,
-      ...(deliveryConfigId !== undefined ? { delivery_config_id: deliveryConfigId } : {}),
-    },
+    details: { offering_id: offeringId },
   });
 }

@@ -9531,12 +9531,7 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
         const offeringId = (config as { offering_id?: unknown } | null)?.offering_id;
         const reason = typeof offeringId === 'string' ? unserved.get(offeringId) : undefined;
         if (reason === undefined) continue;
-        const deliveryConfigId = (config as { delivery_config_id?: unknown }).delivery_config_id;
-        throw reportingOfferingRequiresAdcp33Error(
-          offeringId as string,
-          reason,
-          typeof deliveryConfigId === 'string' ? deliveryConfigId : undefined
-        );
+        throw reportingOfferingRequiresAdcp33Error(offeringId as string, reason);
       }
     }
   }

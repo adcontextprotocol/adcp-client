@@ -156,8 +156,8 @@ const reporting = createReliableReportingService({
   `reporting_delivery_configs` name a 1.2 offering, as a whole and before
   `accounts.upsert` runs, with `UNSUPPORTED_FEATURE`
   (`field: "reporting_delivery_configs"`, `recovery: "correctable"`, `details`
-  carrying the first offending config's `offering_id` and
-  `delivery_config_id`). No entry is applied, so a `delete_missing` roster is
+  carrying only the first offending config's `offering_id`, the seller's own
+  id; no request text is echoed). No entry is applied, so a `delete_missing` roster is
   never shortened;
 - refuses to start a server pinned below 3.3 that has a 1.2 offering, which it
   could serve to no one.

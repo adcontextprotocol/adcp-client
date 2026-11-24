@@ -328,7 +328,7 @@ describe('installConfiguration servedAdcpVersion gate', () => {
           assert.equal(error.recovery, 'correctable');
           assert.equal(error.field, 'reporting_delivery_configs');
           assert.equal(error.message, MESSAGE_12);
-          assert.deepEqual(error.details, { offering_id: ID_12, delivery_config_id: 'delivery-config' });
+          assert.deepEqual(error.details, { offering_id: ID_12 });
           return true;
         }
       );
@@ -343,7 +343,7 @@ describe('installConfiguration servedAdcpVersion gate', () => {
         assert.ok(error instanceof AdcpError);
         assert.equal(error.code, 'UNSUPPORTED_FEATURE');
         assert.equal(error.message, messageUndeclared(ID_11));
-        assert.deepEqual(error.details, { offering_id: ID_11, delivery_config_id: 'delivery-config' });
+        assert.deepEqual(error.details, { offering_id: ID_11 });
         return true;
       }
     );
@@ -546,7 +546,10 @@ describe('sync_accounts reporting_delivery_configs', () => {
     assert.equal(error.recovery, 'correctable');
     assert.equal(error.field, 'reporting_delivery_configs');
     assert.equal(error.message, message);
-    assert.deepEqual(error.details, { offering_id: offeringId, delivery_config_id: deliveryConfigId });
+    assert.deepEqual(error.details, { offering_id: offeringId });
+    // The buyer's delivery_config_id is request text: it is never echoed into the error.
+    assert.ok(deliveryConfigId);
+    assert.ok(!JSON.stringify(error).includes(deliveryConfigId), JSON.stringify(error));
   }
 
   test('a 3.2 caller: naming a 1.2 offering fails the whole request, upsert never runs', async () => {
