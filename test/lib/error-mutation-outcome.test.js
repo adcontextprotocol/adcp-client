@@ -378,3 +378,146 @@ describe('ADCPMultiAgentClient fan-out — rejected operations keep the seller b
     assert.deepStrictEqual(result.data, body);
   });
 });
+
+describe('malformed errors[] does not sink the fan-out (#3689)', () => {
+  test('extractAdcpErrorInfo ignores non-object errors[] entries without throwing', () => {
+    assert.strictEqual(extractAdcpErrorInfo({ errors: [null] }), undefined);
+    assert.strictEqual(extractAdcpErrorInfo({ errors: ['x'] }), undefined);
+  });
+
+  test('one agent rejecting with errors:[null] leaves the healthy agent result intact', async () => {
+    const agents = [
+      { id: 'bad', name: 'Bad', agent_uri: 'https://bad.test/mcp', protocol: 'mcp' },
+      { id: 'good', name: 'Good', agent_uri: 'https://good.test/mcp', protocol: 'mcp' },
+    ];
+    const original = AgentClient.prototype.getProducts;
+    const healthy = { success: true, status: 'completed', data: { products: [] }, metadata: {} };
+    AgentClient.prototype.getProducts = async function () {
+      if (this.getAgentId() === 'bad') {
+        const err = new Error('seller refused');
+        err.data = { errors: [null] };
+        throw err;
+      }
+      return healthy;
+    };
+    try {
+      const results = await new ADCPMultiAgentClient(agents).allAgents().getProducts({ brief: 'x' });
+      assert.strictEqual(results.length, 2);
+      const failed = results.find(r => r.success === false);
+      assert.ok(failed);
+      assert.strictEqual(failed.status, 'failed');
+      assert.strictEqual(failed.error, 'seller refused');
+      assert.strictEqual(
+        results.find(r => r.success === true),
+        healthy
+      );
+    } finally {
+      AgentClient.prototype.getProducts = original;
+    }
+  });
+});
+
+describe('is401Error ignores message text when a structured AdCP body is present (#3689)', () => {
+  const { is401Error } = require('../../dist/lib/index.js');
+  const body = { adcp_error: { code: 'ADAPTER_ERROR', message: 'x', mutation_outcome: 'applied' } };
+  const message = 'A2A agent returned error: Unauthorized upstream after commit';
+
+  test('Unauthorized in the message + structured body is not a 401', () => {
+    assert.strictEqual(is401Error(Object.assign(new Error(message), { data: body })), false);
+  });
+
+  test('the same message without data is still a 401', () => {
+    assert.strictEqual(is401Error(new Error(message)), true);
+  });
+
+  test('a real status 401 with data is still a 401', () => {
+    assert.strictEqual(is401Error({ status: 401, data: body }), true);
+  });
+
+  test('through the A2A harness: HTTP 200 JSON-RPC error saying Unauthorized keeps the outcome and body', async () => {
+    const a2aShim = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
+    const original = a2aShim.fromCardUrl;
+    closeA2AConnections();
+    const stubClient = {
+      getAgentCard: async () => ({ skills: [{ id: 'get_adcp_capabilities', name: 'get_adcp_capabilities' }] }),
+      sendMessage: async payload => {
+        if (payload.message.parts.some(part => part.content?.value?.skill === 'get_adcp_capabilities')) {
+          return {
+            jsonrpc: '2.0',
+            id: 'caps',
+            result: {
+              kind: 'task',
+              id: 'caps-task',
+              contextId: 'caps-ctx',
+              status: { state: 'completed', timestamp: new Date().toISOString() },
+              artifacts: [
+                {
+                  artifactId: 'caps-art',
+                  parts: [
+                    {
+                      kind: 'data',
+                      data: {
+                        status: 'completed',
+                        adcp_version: '3.2',
+                        adcp: { major_versions: [3], idempotency: { supported: false } },
+                        supported_protocols: ['media_buy'],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        }
+        return {
+          jsonrpc: '2.0',
+          id: 'rpc-1',
+          error: { code: -32000, message: 'Unauthorized upstream after commit', data: body },
+        };
+      },
+    };
+    a2aShim.fromCardUrl = async () => stubClient;
+    try {
+      const executor = new TaskExecutor({ strictSchemaValidation: false });
+      const result = await executor.executeTask(
+        { id: 'seller-a2a', name: 'Seller', agent_uri: 'https://seller.test/a2a', protocol: 'a2a' },
+        'update_media_buy',
+        { media_buy_id: 'mb_1', idempotency_key: 'idem-1234567890123456' }
+      );
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.adcpError?.mutation_outcome, 'applied');
+      assert.deepStrictEqual(result.data, body);
+      assert.notStrictEqual(result.errorInstance?.constructor?.name, 'AuthenticationRequiredError');
+      assert.notStrictEqual(result.status, 'auth_required');
+    } finally {
+      a2aShim.fromCardUrl = original;
+      closeA2AConnections();
+    }
+  });
+});
+
+describe('exported extractor parity on errors[0].mutation_outcome (#3689)', () => {
+  const { extractAdcpErrorFromTransport } = require('../../dist/lib/index.js');
+  const body = {
+    adcp_error: { code: 'VALIDATION_ERROR', message: 'targeting rejected' },
+    errors: [{ code: 'VALIDATION_ERROR', message: 'targeting rejected', mutation_outcome: 'unknown' }],
+  };
+
+  test('extractAdcpErrorFromMcp via structuredContent', () => {
+    const extracted = extractAdcpErrorFromMcp({ isError: true, structuredContent: body, content: [] });
+    assert.strictEqual(extracted?.mutation_outcome, 'unknown');
+  });
+
+  test('extractAdcpErrorFromMcp via text JSON', () => {
+    const extracted = extractAdcpErrorFromMcp({
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify(body) }],
+    });
+    assert.strictEqual(extracted?.mutation_outcome, 'unknown');
+  });
+
+  test('extractAdcpErrorFromTransport', () => {
+    const extracted = extractAdcpErrorFromTransport({ data: body });
+    assert.strictEqual(extracted?.mutation_outcome, 'unknown');
+  });
+});
