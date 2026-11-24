@@ -218,6 +218,7 @@ import {
   VersionUnsupportedError,
   is401Error,
 } from '../errors';
+import * as sdkErrors from '../errors';
 import { createAgentTransportFetch, isLikelyPrivateUrl } from '../net';
 import {
   discoverAuthorizationRequirements,
@@ -1139,6 +1140,20 @@ function canonicalCreativeTransportActivity(
   };
 }
 
+/**
+ * SDK error classes (`ADCPError` subclasses) keep their prototype across the
+ * canonical creative boundary, so `errorInstance instanceof IdempotencyConflictError`
+ * holds on creative-bearing tasks too. Their accessors read only own fields,
+ * which the boundary sanitizes. Any other prototype, including an adopter
+ * subclass of an SDK class, is still replaced with `Error.prototype`.
+ */
+const SDK_ERROR_PROTOTYPES: ReadonlySet<unknown> = new Set(
+  [...Object.values(sdkErrors), NeedsAuthorizationError]
+    .map(value => (typeof value === 'function' ? (value as { prototype?: unknown }).prototype : undefined))
+    .filter(prototype => prototype instanceof sdkErrors.ADCPError)
+);
+const NATIVE_ERROR_STACK_GETTER = Object.getOwnPropertyDescriptor(new Error(), 'stack')?.get;
+
 /** Clone a typed error without retaining legacy identity in reflective own fields. */
 function canonicalCreativeErrorInstance<T extends Error>(error: T, legacySource?: unknown): T {
   const own: Record<string, unknown> = {};
@@ -1154,7 +1169,23 @@ function canonicalCreativeErrorInstance<T extends Error>(error: T, legacySource?
   };
   void _dropLegacySource;
 
-  const clone = Object.create(Object.getPrototypeOf(error)) as T;
+  const prototype = Object.getPrototypeOf(error) as object | null;
+  const sdkOwned = SDK_ERROR_PROTOTYPES.has(prototype);
+  if (
+    sdkOwned &&
+    safeOwn === own &&
+    Object.getOwnPropertySymbols(error).length === 0 &&
+    Object.entries(descriptors).every(
+      ([key, descriptor]) =>
+        'value' in descriptor ||
+        (key === 'stack' && NATIVE_ERROR_STACK_GETTER !== undefined && descriptor.get === NATIVE_ERROR_STACK_GETTER)
+    )
+  ) {
+    // Nothing to sanitize: return the instance the SDK raised, stack included.
+    return error;
+  }
+
+  const clone = Object.create(prototype) as T;
   for (const [key, value] of Object.entries(safeOwn)) {
     const descriptor = descriptors[key];
     if (!descriptor || !('value' in descriptor)) continue;
@@ -1170,7 +1201,7 @@ function canonicalCreativeErrorInstance<T extends Error>(error: T, legacySource?
     };
     Object.defineProperty(clone, symbol, { ...descriptor, value: safe.value });
   }
-  return stripLegacyCreativeIdentity(clone) as T;
+  return sdkOwned ? clone : (stripLegacyCreativeIdentity(clone) as T);
 }
 
 export type CreativeDeliveryTaskOptions = TaskOptions & {
