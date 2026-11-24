@@ -933,24 +933,39 @@ export function updateRightsSuccess(data: ServerPayload<UpdateRightsSuccess>, su
  * Returns the raw JSON-serializable payload, NOT an `McpToolResponse` —
  * webhooks have no `content` envelope. Adopters serialize this to JSON and
  * write to the HTTP response body.
+ *
+ * Payloads are in the AdCP 3.1+ shape: the decision is `approval_status` and
+ * top-level `status` is the task status. An AdCP 3.0 buyer reads the decision
+ * from `status`, so project for it with
+ * `projectResponseForRelease('creative_approval', body, servedAdcpVersion)`
+ * from `@adcp/sdk/adapters/version`. The request carries no `adcp_version`;
+ * keep `ctx.servedAdcpVersion` with the rights grant at `acquire_rights`, which
+ * returned the `approval_webhook` URL, and project with it.
  */
 export function creativeApprovalResponse(data: CreativeApprovalResponse): CreativeApprovalResponse {
   return data;
 }
 
+/** Per-variant builder input: the decision is set by the builder, so it may be omitted. */
+type CreativeApprovalVariantInput<T extends { approval_status: string }> = Omit<T, 'approval_status'> & {
+  approval_status?: T['approval_status'];
+};
+
 /** Per-variant constructor for the `approved` branch — webhook payload. */
-export function creativeApprovalApproved(data: Omit<CreativeApproved, 'status'>): CreativeApproved {
-  return { ...data, status: 'approved' } as CreativeApproved;
+export function creativeApprovalApproved(data: CreativeApprovalVariantInput<CreativeApproved>): CreativeApproved {
+  return { ...data, approval_status: 'approved', status: 'completed' } as CreativeApproved;
 }
 
 /** Per-variant constructor for the `rejected` branch — webhook payload. */
-export function creativeApprovalRejected(data: Omit<CreativeRejected, 'status'>): CreativeRejected {
-  return { ...data, status: 'rejected' } as CreativeRejected;
+export function creativeApprovalRejected(data: CreativeApprovalVariantInput<CreativeRejected>): CreativeRejected {
+  return { ...data, approval_status: 'rejected', status: 'completed' } as CreativeRejected;
 }
 
 /** Per-variant constructor for the `pending_review` branch — webhook payload. */
-export function creativeApprovalPendingReview(data: Omit<CreativePendingReview, 'status'>): CreativePendingReview {
-  return { ...data, status: 'pending_review' } as CreativePendingReview;
+export function creativeApprovalPendingReview(
+  data: CreativeApprovalVariantInput<CreativePendingReview>
+): CreativePendingReview {
+  return { ...data, approval_status: 'pending_review', status: 'completed' } as CreativePendingReview;
 }
 
 /** Per-variant constructor for the multi-error arm — webhook payload. */

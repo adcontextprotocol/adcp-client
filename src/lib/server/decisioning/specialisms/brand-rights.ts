@@ -22,9 +22,11 @@
  * (not in `AdcpToolMap`). Adopters wire {@link reviewCreativeApproval}
  * to their HTTP server's `approval_webhook` route — the URL they
  * returned to the buyer in `acquire_rights`. Use the
- * `creativeApproved` / `creativeApprovalRejected` /
- * `creativeApprovalPendingReview` / `creativeApprovalError` builders
- * from `@adcp/sdk/server` to construct the webhook response.
+ * `legacyCreativeApprovalApproved` / `legacyCreativeApprovalRejected` /
+ * `legacyCreativeApprovalPendingReview` / `legacyCreativeApprovalError`
+ * builders from `@adcp/sdk/server` to construct the webhook response, and
+ * `projectResponseForRelease('creative_approval', …)` from
+ * `@adcp/sdk/adapters/version` to answer an AdCP 3.0 buyer.
  *
  * Status: Preview / 6.0.
  *
@@ -182,9 +184,16 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * an MCP/A2A tool — adopters mount their own HTTP route at the URL they
    * advertised, parse the request body against
    * `CreativeApprovalRequestSchema`, dispatch to this method, and use
-   * `creativeApproved` / `creativeApprovalRejected` /
-   * `creativeApprovalPendingReview` / `creativeApprovalError` from
-   * `@adcp/sdk/server` to construct the JSON response.
+   * `legacyCreativeApprovalApproved` / `legacyCreativeApprovalRejected` /
+   * `legacyCreativeApprovalPendingReview` / `legacyCreativeApprovalError`
+   * from `@adcp/sdk/server` to construct the JSON response.
+   *
+   * The response is in the AdCP 3.1+ shape (decision in `approval_status`).
+   * An AdCP 3.0 buyer reads the decision from `status`: project the body with
+   * `projectResponseForRelease('creative_approval', body, servedAdcpVersion)`
+   * from `@adcp/sdk/adapters/version`. The request carries no
+   * `adcp_version`, so store `ctx.servedAdcpVersion` with the rights grant
+   * in {@link acquireRightsLegacy} and project with that value.
    *
    * Three success arms (the framework's typed signature surfaces the
    * three; the multi-error arm is reachable via thrown `AdcpError` once

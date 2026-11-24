@@ -92,6 +92,14 @@ export const acquireRightsAdapter: VersionAdapter = {
   downgradeResponse: downgradeDecision('rights_status'),
 };
 
+// `creative_approval` is the webhook a brand-rights agent answers itself, so no
+// framework dispatch projects it; adopters call `projectResponseForRelease`
+// (adcp-client#3777).
+export const creativeApprovalAdapter: VersionAdapter = {
+  toolName: 'creative_approval',
+  downgradeResponse: downgradeDecision('approval_status'),
+};
+
 export const getPlanAuditLogsAdapter: VersionAdapter = {
   toolName: 'get_plan_audit_logs',
   downgradeResponse: downgradeAuditEntryVerdicts,
