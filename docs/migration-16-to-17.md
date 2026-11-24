@@ -79,6 +79,27 @@ total. Sellers that do not declare outcome-target planning reject the field
 with `UNSUPPORTED_FEATURE`. On `list_products` the field is inert: perform schema
 validation but do not reject it merely because the goal is unsupported.
 
+## Platform IDs on event sources and audiences
+
+AdCP 3.3 renames the platform identifier on `sync_event_sources`
+`event_sources[]` and `sync_audiences` `audiences[]` rows from `seller_id` to
+`platform_id`, and keeps `seller_id` as a deprecated alias through 3.x. A 3.3
+response that reports the identifier carries both names with identical values.
+
+**Sellers:** return either name from `syncEventSources` / `syncAudiences`, or
+both with the same value. The server sends both to callers served 3.3 or later
+and `seller_id` alone to callers served 3.2 or earlier. Task results are stored
+as you wrote them; `tasks/get`, `tasks_get`, completion webhooks and push
+settlement give each reader the names its release defines. If a row's two names
+differ, the server answers
+`INTERNAL_ERROR` (a handed-off task fails with it), `TaskRegistry.complete()`
+throws without storing, and push settlement refuses the result. A result you
+send yourself through a webhook sender goes out as you built it.
+
+**Buyers:** read the identifier with `platformIdOf(row)` from `@adcp/sdk` or
+`@adcp/sdk/utils`. It returns `platform_id`, else `seller_id`, so it also reads
+3.2 sellers' rows. Requests still use `event_source_id` and `audience_id`.
+
 ## Public asset and targeting types
 
 Import the shared `AssetVariant` union from `@adcp/sdk`, `@adcp/sdk/types`, or

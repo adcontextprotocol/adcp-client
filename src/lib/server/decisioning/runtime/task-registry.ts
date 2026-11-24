@@ -24,6 +24,7 @@ import { randomUUID } from 'node:crypto';
 import type { AdcpStructuredError, TaskHandoffProgress } from '../async-outcome';
 import { stripCtxMetadata, stripImplementationConfig } from '../../ctx-metadata';
 import { sanitizeStructuredAdcpError } from '../../errors';
+import { assertPlatformIdsAgree, toolHasPlatformIdRows } from '../../../utils/platform-id';
 
 /**
  * AdCP-spec task lifecycle states. Mirrors `enums/task-status.json` —
@@ -410,6 +411,10 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       const existing = tasks.get(taskStorageKey(taskId, scope));
       if (!existing) return { outcome: 'not_found_in_scope' };
       if (isTerminalTaskStatus(existing.status)) return { outcome: 'already_terminal', status: existing.status };
+      // AdCP 3.3: a row's platform_id and seller_id must agree. Refuse two
+      // different values before anything is stored; readers get the names
+      // their release defines when the result is served.
+      if (toolHasPlatformIdRows(existing.tool)) assertPlatformIdsAgree(result);
       existing.status = 'completed';
       existing.result = result;
       existing.updatedAt = new Date().toISOString();

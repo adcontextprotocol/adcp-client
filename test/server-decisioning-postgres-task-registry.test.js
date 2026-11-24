@@ -429,6 +429,66 @@ describe('decisioning task registry schema management', () => {
     assert.match(upgrade.verifySql, /null_scope_rows/);
   });
 
+  describe('Postgres complete() and AdCP 3.3 platform identifiers (mocked pool)', () => {
+    function mockRegistry(tool) {
+      const { createPostgresTaskRegistry } = require('../dist/lib/server/decisioning');
+      const queries = [];
+      const pool = {
+        async query(text, values) {
+          queries.push({ text, values });
+          if (text.includes("SET status = 'completed'")) {
+            return { rowCount: 1, rows: [{ outcome: 'applied', status: 'submitted' }] };
+          }
+          if (text.startsWith('SELECT tool')) return { rowCount: 1, rows: [{ tool }] };
+          return { rowCount: 1, rows: [{ status: 'submitted' }] };
+        },
+      };
+      return { registry: createPostgresTaskRegistry({ pool, namespace: NAMESPACE }), queries };
+    }
+    const mismatched = { audiences: [{ platform_id: 'a', seller_id: 'b' }] };
+    const completions = queries => queries.filter(q => q.text.includes("SET status = 'completed'"));
+
+    for (const tool of ['sync_audiences', 'sync_event_sources']) {
+      test(`${tool} with a mismatch is rejected and nothing is completed`, async () => {
+        const { registry, queries } = mockRegistry(tool);
+        const result =
+          tool === 'sync_audiences' ? mismatched : { event_sources: [{ platform_id: 'a', seller_id: 'b' }] };
+        await assert.rejects(registry.complete('task_m', ACC_1_SCOPE, result), /identical/);
+        assert.strictEqual(completions(queries).length, 0);
+        assert.ok(
+          queries.some(q => q.text.startsWith('SELECT tool')),
+          'the tool is looked up when a row disagrees'
+        );
+      });
+    }
+
+    for (const tool of ['create_media_buy', 'custom_tool']) {
+      test(`${tool} with a disagreeing audiences[] row completes and stores the result unchanged`, async () => {
+        const { registry, queries } = mockRegistry(tool);
+        assert.deepStrictEqual(await registry.complete('task_o', ACC_1_SCOPE, mismatched), { outcome: 'applied' });
+        const [write] = completions(queries);
+        assert.deepStrictEqual(JSON.parse(write.values[4]), mismatched);
+      });
+    }
+
+    test('single-name and agreeing results are stored as written with no tool lookup', async () => {
+      const { registry, queries } = mockRegistry('sync_audiences');
+      const results = [
+        { audiences: [{ audience_id: 'a', seller_id: 's' }] },
+        { event_sources: [{ platform_id: 'p' }] },
+        { audiences: [{ platform_id: 'p', seller_id: 'p' }] },
+      ];
+      for (const result of results) {
+        assert.deepStrictEqual(await registry.complete('task_s', ACC_1_SCOPE, result), { outcome: 'applied' });
+      }
+      assert.deepStrictEqual(
+        completions(queries).map(q => JSON.parse(q.values[4])),
+        results
+      );
+      assert.ok(!queries.some(q => q.text.startsWith('SELECT tool')), 'no taskTool query without a mismatch');
+    });
+  });
+
   test('registry persists owner_scope and lists with account + owner predicates', async () => {
     const { createPostgresTaskRegistry } = require('../dist/lib/server/decisioning');
     const queries = [];
@@ -822,6 +882,57 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
       }),
       /serializable JSON/
     );
+  });
+
+  test('application-managed push settlement projects platform identifiers for the served release (AdCP 3.3)', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({ pool, namespace: NAMESPACE, storageId: 'store:push-platform-id' });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller-platform-id',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const row = { audience_id: 'a', action: 'created', platform_id: 'p' };
+    const settle = async (operationId, servedAdcpVersion, tool = 'sync_audiences') => {
+      const ref = await registry.create({ tool, accountId: 'acc_1', hasWebhook: true });
+      await completeScopedPushTask(
+        coordinator,
+        ref,
+        {
+          url: 'https://buyer.example/webhooks/task',
+          operationId,
+          ...(servedAdcpVersion !== undefined && { servedAdcpVersion }),
+        },
+        { audiences: [row] }
+      );
+      const outbox = await pool.query(
+        `SELECT snapshot->'payload'->'result' AS result FROM ${SETTLEMENT_OUTBOX}
+         WHERE snapshot->'payload'->>'operation_id' = $1`,
+        [operationId]
+      );
+      assert.strictEqual(outbox.rows.length, 1);
+      return outbox.rows[0].result;
+    };
+
+    // Served at 3.2: the webhook carries seller_id only.
+    assert.deepStrictEqual((await settle('pid-op-32', '3.2.1')).audiences[0], {
+      audience_id: 'a',
+      action: 'created',
+      seller_id: 'p',
+    });
+    // Served at 3.3: both names.
+    const at33 = (await settle('pid-op-33', '3.3.0-rc.3')).audiences[0];
+    assert.strictEqual(at33.platform_id, 'p');
+    assert.strictEqual(at33.seller_id, 'p');
+    // No served release: the payload is in this SDK's release, so both names.
+    const unversioned = (await settle('pid-op-unversioned', undefined)).audiences[0];
+    assert.strictEqual(unversioned.platform_id, 'p');
+    assert.strictEqual(unversioned.seller_id, 'p');
+    // Another tool's result is delivered as written.
+    assert.deepStrictEqual((await settle('pid-op-other', '3.2.1', 'create_media_buy')).audiences[0], row);
   });
 
   test('push settlement snapshots every caller-owned input before its first await', async () => {

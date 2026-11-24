@@ -8,6 +8,7 @@ import { downgradeResponse, type VersionDrift } from '../../../adapters/version'
 import { translationSteps } from '../../../adapters/version/translate';
 import { projectErrorsForRelease } from '../../error-release-projection';
 import { hasSchemaBundle } from '../../../validation/schema-loader';
+import { projectPlatformIdsForRelease, toolHasPlatformIdRows } from '../../../utils/platform-id';
 
 /**
  * Convert `result` for task type `tool` from `fromVersion` (the server's
@@ -22,7 +23,7 @@ export function projectTaskResultForRelease(
 ): { data: unknown; drifts: VersionDrift[] } {
   const converted = downgradeResponse(tool, result, range);
   const errors = projectErrorsForRelease(converted.data, { toolName: tool, ...range });
-  return { data: errors.data, drifts: [...converted.drifts, ...errors.drifts] };
+  return { data: platformIdsFor(tool, errors.data, range.toVersion), drifts: [...converted.drifts, ...errors.drifts] };
 }
 
 /**
@@ -43,7 +44,7 @@ export function projectBoundTaskResultForRelease(
   servedVersion: string
 ): unknown {
   const steps = translationSteps(recordedServerVersion, servedVersion);
-  if (steps.length === 0) return result;
+  if (steps.length === 0) return platformIdsFor(tool, result, servedVersion);
   for (const step of steps) {
     for (const version of [step.upper, step.lower]) {
       if (!hasSchemaBundle(version)) throw new Error(`AdCP ${version} schemas are not packaged in this SDK`);
@@ -53,4 +54,14 @@ export function projectBoundTaskResultForRelease(
     fromVersion: recordedServerVersion,
     toVersion: servedVersion,
   }).data;
+}
+
+/**
+ * AdCP 3.3 renamed the platform identifier on sync_event_sources and
+ * sync_audiences rows to platform_id and kept seller_id as an alias. A result
+ * is stored as the seller wrote it; each reader gets both names at 3.3 and
+ * later and seller_id alone below 3.3.
+ */
+function platformIdsFor(tool: string, result: unknown, servedVersion: string): unknown {
+  return toolHasPlatformIdRows(tool) ? projectPlatformIdsForRelease(result, servedVersion) : result;
 }

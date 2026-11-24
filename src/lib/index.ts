@@ -1959,9 +1959,10 @@ export {
   hasAdvisorySuccessPayload,
   getAuthoritativeMediaBuyStatus,
   isMediaBuyStatus,
+  platformIdOf,
   resolveTaskState,
 } from './utils';
-export type { EffectiveTaskState, ResolvedTaskState, ResolveTaskStateOptions } from './utils';
+export type { EffectiveTaskState, ResolvedTaskState, ResolveTaskStateOptions, PlatformIdentifiedRow } from './utils';
 export { injectLegacyEnvelopeStatus } from './utils/envelope-status-compat';
 export { extractResult, type ToolCallResultLike } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, LEGACY_STANDARD_FORMATS } from './utils';
