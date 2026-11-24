@@ -882,6 +882,33 @@ describe('normalizeReportingUnreadableMarkWriteV1 (#3653 round 4)', () => {
     assert.equal(ahead.resolvedAt, NOW);
   });
 
+  test('a recorded start stays put and an earlier incoming end is raised to it', () => {
+    const prior = mark({ openedAt: '2026-03-09T02:00:00.000Z' });
+    const result = normalize(
+      mark({ openedAt: '2026-03-09T02:00:00.000Z', resolvedAt: '2026-03-09T01:00:00.000Z' }),
+      prior
+    );
+    assert.equal(result.openedAt, '2026-03-09T02:00:00.000Z');
+    assert.equal(result.resolvedAt, '2026-03-09T02:00:00.000Z');
+    // The incoming start does not matter once one is recorded.
+    const moved = normalize(
+      mark({ openedAt: '2026-03-09T01:00:00.000Z', resolvedAt: '2026-03-09T01:30:00.000Z' }),
+      prior
+    );
+    assert.equal(moved.openedAt, '2026-03-09T02:00:00.000Z');
+    assert.equal(moved.resolvedAt, '2026-03-09T02:00:00.000Z');
+    // A terminal-state end behind the recorded start is raised too.
+    const terminal = normalize(mark({ issueState: 'resolved', observedAt: '2026-03-09T01:00:00.000Z' }), prior);
+    assert.equal(terminal.openedAt, '2026-03-09T02:00:00.000Z');
+    assert.equal(terminal.resolvedAt, '2026-03-09T02:00:00.000Z');
+  });
+
+  test('with no prior the start moves back to a backdated end', () => {
+    const result = normalize(mark({ openedAt: '2026-03-09T02:00:00.000Z', resolvedAt: '2026-03-09T01:00:00.000Z' }));
+    assert.equal(result.openedAt, '2026-03-09T01:00:00.000Z');
+    assert.equal(result.resolvedAt, '2026-03-09T01:00:00.000Z');
+  });
+
   test('the input and prior are not mutated', () => {
     const issue = Object.freeze(mark({ openedAt: '2026-03-09T05:00:00.000Z', resolvedAt: '2026-03-09T06:00:00.000Z' }));
     const prior = Object.freeze(mark({ resolvedAt: '2026-03-09T02:30:00.000Z' }));

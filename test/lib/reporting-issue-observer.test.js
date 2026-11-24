@@ -1412,5 +1412,69 @@ describe('unreadable recurrence identity and timing (#3653 round 2)', () => {
       assert.equal(mismatch.issue.issueId, x.issueId);
       assert.equal(mismatch.issue.openedAt, T('03:00:00.000Z'));
     });
+
+    test('a backdated end on a retried write leaves the start alone and the recurrence renders', async () => {
+      const w = fixture();
+      await openedAt2(w);
+      const original = w.events()[0];
+
+      w.at(T('03:00:00.000Z'));
+      await w.store.putIssue({ ...mark(), resolvedAt: T('01:30:00.000Z') });
+      const [stored] = await w.store.listIssues('ob-1');
+      assert.equal(stored.openedAt, T('02:00:00.000Z'), 'the recorded start stays');
+      assert.equal(stored.resolvedAt, T('02:00:00.000Z'), 'the end is raised to the start');
+
+      const resolved = w.events().find(event => event.kind === 'resolved');
+      const reopened = w.events().filter(event => event.kind === 'opened')[1];
+      assert.ok(resolved, 'the mark first settled the original');
+      assert.notEqual(reopened.issueId, original.issueId);
+      assert.ok(reopened.occurredAt >= T('02:00:00.000Z'));
+      assert.ok(reopened.occurredAt >= resolved.occurredAt, 'never before the original resolved');
+
+      const mismatch = await projected(w, T('03:00:00.000Z'));
+      assert.equal(mismatch.issue.issueId, reopened.issueId);
+      const seen = await deliver(w);
+      const rendered = seen.find(event => event.kind === 'opened' && event.issueId === reopened.issueId);
+      assert.notEqual(rendered.issue, null);
+      assert.equal(rendered.issue.issueId, reopened.issueId);
+    });
+
+    test('the row shape PostgreSQL stores for a backdated end (start kept, end raised) renders its occurrence', async () => {
+      const w = fixture();
+      await unreadableAt1(w);
+      const store = w.store;
+      const statement = store.consumerStatements[0];
+      const obligation = store.obligations.get('ob-1');
+      const revisions = store.revisionMetadata('ob-1');
+      // openedAt is the first write's, resolvedAt the incoming 01:30 raised to it; observedAt is the retry's.
+      const row = mark({
+        openedAt: T('02:00:00.000Z'),
+        resolvedAt: T('02:00:00.000Z'),
+        observedAt: T('03:00:00.000Z'),
+      });
+      const at = T('03:00:00.000Z');
+      const occurrence = ledger.reportingConsumerMismatchOccurrenceV1(obligation, statement, revisions, [row], at);
+      assert.ok(occurrence, 'the ended mark leaves the statement in conflict');
+      assert.equal(occurrence.openedAt, T('02:00:00.000Z'));
+
+      const lease = {
+        eventId: reportingIssueEventIdV1(occurrence.issueId, occurrence.consumerId, 'opened'),
+        kind: 'opened',
+        issueId: occurrence.issueId,
+        accountId: occurrence.accountId,
+        consumerId: occurrence.consumerId,
+        reportingObligationId: occurrence.reportingObligationId,
+        reportingStatusId: occurrence.reportingStatusId,
+        occurredAt: at,
+        recordedAt: at,
+        attempts: 1,
+        leaseToken: 't',
+        leaseExpiresAt: T('04:00:00.000Z'),
+      };
+      const rendered = renderReportingIssueEventV1(lease, { obligation, revisions, issues: [row], statement });
+      assert.notEqual(rendered.issue, null);
+      assert.equal(rendered.issue.issueId, occurrence.issueId);
+      assert.equal(rendered.issue.openedAt, T('02:00:00.000Z'));
+    });
   });
 });
