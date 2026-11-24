@@ -1246,6 +1246,7 @@ ${managedDueArm}       )
           if (issue.reporting_obligation_id !== obligation.reporting_obligation_id) {
             throw new Error('Reporting issue must belong to the leased obligation');
           }
+          issue = await this.clampUnreadableMarkEndOn(client, issue);
           const issueResult = await client.query(
             `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
              VALUES ($1, $2, $3::jsonb, $4, $5)
@@ -4021,10 +4022,11 @@ ${managedDueArm}       )
     return result.rows.map(row => clone(row.data));
   }
 
-  async putIssue(issue: ReportingLedgerIssueV1): Promise<void> {
-    const lock = await this.accountLockForObligation(issue.reporting_obligation_id);
+  async putIssue(value: ReportingLedgerIssueV1): Promise<void> {
+    const lock = await this.accountLockForObligation(value.reporting_obligation_id);
     await this.transaction(
       async client => {
+        const issue = await this.clampUnreadableMarkEndOn(client, value);
         const result = await client.query(
           `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
        VALUES ($1, $2, $3::jsonb, $4, $5)
@@ -4055,14 +4057,18 @@ ${managedDueArm}       )
     if (!lock) return;
     await this.transaction(
       async client => {
+        // A seller unreadable mark cannot end after this write; see clampUnreadableMarkEndOn.
+        const now = await databaseInstantOn(client);
+        const markEnd = compareReportingInstants(resolvedAt, now) > 0 ? now : resolvedAt;
         const resolved = await client.query<JsonRow<ReportingLedgerIssueV1>>(
           `UPDATE adcp_reporting_issues
-          SET resolved_at = $2::text::timestamptz,
-              data = data || jsonb_build_object('resolvedAt', $2::text),
+          SET resolved_at = (CASE WHEN data->>'code' = 'REVISION_UNREADABLE' THEN $3 ELSE $2 END)::text::timestamptz,
+              data = data || jsonb_build_object(
+                'resolvedAt', CASE WHEN data->>'code' = 'REVISION_UNREADABLE' THEN $3 ELSE $2 END),
               changed_at = clock_timestamp()
         WHERE issue_id = $1 AND resolved_at IS NULL
         RETURNING data`,
-          [issueId, resolvedAt]
+          [issueId, resolvedAt, markEnd]
         );
         const issue = resolved.rows[0]?.data;
         if (issue) await this.settleUnreadableMarkOn(client, issue);
@@ -4078,17 +4084,29 @@ ${managedDueArm}       )
    */
   private async settleUnreadableMarkOn(client: ReportingLedgerTransactionV1, issue: ReportingLedgerIssueV1) {
     if (issue.code !== 'REVISION_UNREADABLE' || !(await this.issueEventsOn(client))) return;
-    // Settle no earlier than the mark's end, or a mark ending ahead of the
-    // database clock would never reopen the mismatch.
+    await settleIssueObligationOn(client, issue.reporting_obligation_id, await databaseInstantOn(client));
+  }
+
+  /**
+   * A seller `REVISION_UNREADABLE` mark cannot end after the write that records it. An end ahead of the
+   * database clock (`resolvedAt`, or `observedAt` under a terminal `issueState`) is clamped to it, so the
+   * mismatch the mark agreed with reopens at this write's settle rather than at an instant no later write
+   * revisits (adcp-client#3653).
+   */
+  private async clampUnreadableMarkEndOn(
+    client: ReportingLedgerTransactionV1,
+    issue: ReportingLedgerIssueV1
+  ): Promise<ReportingLedgerIssueV1> {
+    if (issue.code !== 'REVISION_UNREADABLE') return issue;
     const now = await databaseInstantOn(client);
-    const end =
-      issue.resolvedAt ??
-      (issue.issueState === 'resolved' || issue.issueState === 'waived' ? issue.observedAt : undefined);
-    await settleIssueObligationOn(
-      client,
-      issue.reporting_obligation_id,
-      end !== undefined && compareReportingInstants(end, now) > 0 ? end : now
-    );
+    const ahead = (instant: string | undefined) => instant !== undefined && compareReportingInstants(instant, now) > 0;
+    const terminal = issue.issueState === 'resolved' || issue.issueState === 'waived';
+    if (!ahead(issue.resolvedAt) && !(terminal && ahead(issue.observedAt))) return issue;
+    return {
+      ...issue,
+      ...(ahead(issue.resolvedAt) && { resolvedAt: now }),
+      ...(terminal && ahead(issue.observedAt) && { observedAt: now }),
+    };
   }
 
   async listIssues(obligationId: string): Promise<ReportingLedgerIssueV1[]> {

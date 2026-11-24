@@ -474,8 +474,8 @@ function firstSupersedingRevision<
  *
  * - `obligation_missing` always conflicts: the obligation is in front of the seller.
  * - `revision_missing` conflicts while the seller has a current required revision.
- * - `unreadable` conflicts unless an open `REVISION_UNREADABLE` in `issues`
- *   marks the named revision unreadable.
+ * - `unreadable` conflicts unless a `REVISION_UNREADABLE` in `issues`, opened
+ *   by `at` and not yet ended, marks the named revision unreadable.
  * - `content_mismatch` conflicts while the named revision is still the current
  *   required one, so a restatement clears it.
  * - `received` conflicts while the named revision is not the current required one.
@@ -515,6 +515,8 @@ function reportingConsumerStatementConflictV1(
         ) {
           continue;
         }
+        // A mark the seller opened after `at` did not exist yet.
+        if (compareReportingInstants(mark.openedAt, at) > 0) continue;
         const endedAt = unreadableMarkEnd(mark);
         if (endedAt === undefined || compareReportingInstants(endedAt, at) > 0) return undefined;
         // A mark ending as the statement was recorded still reopens it: two

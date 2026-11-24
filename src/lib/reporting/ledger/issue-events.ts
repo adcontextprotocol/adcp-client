@@ -455,13 +455,16 @@ function renderIssue(
 ): ReportingLedgerIssueV1 | null {
   const at = lease.occurredAt;
   const revisions = context.revisions.filter(value => compareReportingInstants(value.createdAt, at) <= 0);
-  const known = context.issues.filter(value => compareReportingInstants(value.observedAt, at) <= 0);
-  const issues = known.filter(
-    value => value.resolvedAt === undefined || compareReportingInstants(value.resolvedAt, at) > 0
+  const issues = context.issues.filter(
+    value =>
+      compareReportingInstants(value.observedAt, at) <= 0 &&
+      (value.resolvedAt === undefined || compareReportingInstants(value.resolvedAt, at) > 0)
   );
   const core = projectReportingObligationHealthV1(context.obligation, revisions, at);
   const sellerHealth = projectReportingUnreadableRevisionHealthV1(context.obligation, revisions, issues, core.health);
-  // The mismatch also needs the seller's ended `REVISION_UNREADABLE` marks: they name a recurrence.
+  // The mismatch takes every mark, ended ones included: a mark's end names a
+  // recurrence, and the projection dates each mark itself, by `openedAt` and
+  // its end. A later write can advance `observedAt`, so it can't filter them.
   const mismatch = projectReportingConsumerStatusMismatchV1(
     context.obligation,
     context.statement,
@@ -469,7 +472,7 @@ function renderIssue(
     sellerHealth,
     at,
     escalation,
-    known
+    context.issues
   );
   return mismatch?.issue.issueId === lease.issueId ? structuredClone(mismatch.issue) : null;
 }

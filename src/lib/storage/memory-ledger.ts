@@ -356,16 +356,22 @@ export class MemoryReportingLedgerStore implements ReportingLedgerStore, Reporti
 
   /** A seller `REVISION_UNREADABLE` mark agrees with an `unreadable` statement, so it settles occurrences. */
   private setIssue(value: Row): void {
-    this.issues.set(value.issueId, clone(value));
-    if (value.code !== 'REVISION_UNREADABLE') return;
-    // Settle no earlier than the mark's end, or a mark ending ahead of this
-    // store's clock would never reopen the mismatch.
+    if (value.code !== 'REVISION_UNREADABLE') {
+      this.issues.set(value.issueId, clone(value));
+      return;
+    }
+    // A mark cannot end after the write that records it. An end ahead of this
+    // store's clock is clamped to it, so the mismatch reopens at a settle that
+    // happens now, not at an instant no later write revisits.
     const now = this.instant();
-    const end = value.resolvedAt ?? (['resolved', 'waived'].includes(value.issueState) ? value.observedAt : undefined);
-    this.settleIssueObligation(
-      value.reporting_obligation_id,
-      end !== undefined && compareReportingInstants(end, now) > 0 ? end : now
-    );
+    const ahead = (instant: unknown) => typeof instant === 'string' && compareReportingInstants(instant, now) > 0;
+    const terminal = value.issueState === 'resolved' || value.issueState === 'waived';
+    this.issues.set(value.issueId, {
+      ...clone(value),
+      ...(ahead(value.resolvedAt) && { resolvedAt: now }),
+      ...(terminal && ahead(value.observedAt) && { observedAt: now }),
+    });
+    this.settleIssueObligation(value.reporting_obligation_id, now);
   }
 
   private issuesOn(obligationId: string): Row[] {
