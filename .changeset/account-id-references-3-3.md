@@ -13,4 +13,4 @@ AdCP 3.3 (adcontextprotocol/adcp#8474) makes the seller's `account_id` the accou
 - a 3.3 account the seller returned no ID for;
 - `accountReferenceMode: 'natural-key'`.
 
-Strict account policy's `get_products` gate is unchanged and still keys off the seller's declaration.
+When the natural key is replaced, its brand moves to the top-level `brand` on tasks that take one, unless the caller set a `brand`. `request_proposals` and `buy_products` need a brand source. A request carrying a `governance_context` keeps its authored account, because the authorization's payload hash covers it. Format routes learned by `getProducts` stay keyed by the caller's authored account, so `createMediaBuy` and `syncCreatives` still find them. Strict account policy's `get_products` gate is unchanged and still keys off the seller's declaration.

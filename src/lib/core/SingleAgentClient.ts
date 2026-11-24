@@ -2505,7 +2505,10 @@ export class SingleAgentClient {
       known &&
       !['unknown', 'provisioning', 'failed_provisioning'].includes(known.status) &&
       !('account_id' in ref) &&
-      this.config.accountReferenceMode !== 'natural-key'
+      this.config.accountReferenceMode !== 'natural-key' &&
+      // A governance authorization binds the payload as authored, account
+      // included; rewriting it would break the token's payload hash.
+      params.governance_context === undefined
     ) {
       const scope = this.accountScope();
       capabilities = await this.getCapabilities(options);
@@ -2534,7 +2537,16 @@ export class SingleAgentClient {
       }
       if (capabilities) {
         const account = this.accountWireReference(ref, known.account_id, capabilities, options);
-        if (account !== ref) return { ...params, account };
+        if (account !== ref) {
+          // The natural key was the request's brand source (request_proposals
+          // and buy_products require one). Keep its brand at the top level
+          // where the task takes one, without overriding an explicit brand.
+          const brand =
+            params.brand === undefined && 'brand' in ref && schemaAllowsTopLevelField(task, 'brand')
+              ? ref.brand
+              : undefined;
+          return { ...params, account, ...(brand !== undefined && { brand }) };
+        }
       }
       return params;
     }
@@ -8129,7 +8141,16 @@ export class SingleAgentClient {
       if (!request.buying_mode && !request.brief) {
         request = { ...request, buying_mode: 'wholesale' };
       }
-      const account = canonicalAccountRoutingSnapshot(accountReference);
+      // Format routes are keyed by the account the caller authored: that is
+      // the reference createMediaBuy and syncCreatives look them up by, while
+      // the account policy may have sent the seller's account_id instead.
+      const authoredLegacyAccountId = (params as { account_id?: unknown }).account_id;
+      const account = canonicalAccountRoutingSnapshot(
+        params.account ??
+          (typeof authoredLegacyAccountId === 'string' && authoredLegacyAccountId
+            ? { account_id: authoredLegacyAccountId }
+            : undefined)
+      );
       const cache =
         !effectiveOptions.skipRequestValidation &&
         !this.usesScopedDiscoveryTransport(effectiveOptions) &&
