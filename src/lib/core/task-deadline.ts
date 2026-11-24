@@ -44,7 +44,8 @@ export function idempotentOperationId(agentId: string, taskName: string, idempot
 /**
  * Settle one dispatch's operation id. A caller-supplied id wins. Otherwise a
  * request with an idempotency key takes {@link idempotentOperationId}, and the
- * call's deadline error is re-pointed at it. Without a key the placeholder
+ * call's deadline error, if it still names this dispatch's placeholder, is
+ * re-pointed at it. Without a key the placeholder
  * assigned by {@link withTaskDeadline} (or a fresh UUID) stands.
  */
 export function resolveDispatchOperationId(
@@ -60,7 +61,9 @@ export function resolveDispatchOperationId(
   }
   const operationId = idempotentOperationId(idempotent.agentId, idempotent.taskName, idempotent.idempotencyKey);
   const error = (options as Partial<DeadlineTaskOptions>)[TASK_DEADLINE_ERROR];
-  if (error) {
+  // A child dispatch shares its parent's deadline error; only the dispatch
+  // that owns the placeholder it names may re-point it.
+  if (error && error.taskId === assigned) {
     (error as { taskId: string }).taskId = operationId;
     error.message = `Task ${operationId} timed out after ${error.timeout}ms`;
   }

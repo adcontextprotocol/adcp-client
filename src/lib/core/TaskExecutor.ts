@@ -1444,6 +1444,15 @@ export class TaskExecutor {
           : 'operationId is already in use by this client; track the existing task instead.'
       );
     }
+    // Reserve the id before anything below can re-enter: task-event listeners,
+    // the abort listener and the webhook tools predicate run synchronously,
+    // and one may retry this same key. That retry must wait for this dispatch
+    // to unwind, not reclaim the id while it still runs.
+    let finishExecution!: () => void;
+    const execution = new Promise<void>(resolve => {
+      finishExecution = resolve;
+    });
+    this.executionsInProgress.set(taskId, execution);
 
     // Register task in active tasks
     const taskState: TaskState = {
@@ -1534,14 +1543,6 @@ export class TaskExecutor {
         >
       | undefined;
     let dispatchSettlementStarted = false;
-
-    // Everything from the collision check to here is synchronous, so no other
-    // dispatch can claim this operation id in between.
-    let finishExecution!: () => void;
-    const execution = new Promise<void>(resolve => {
-      finishExecution = resolve;
-    });
-    this.executionsInProgress.set(taskId, execution);
 
     try {
       // Emit protocol_request activity. The activity payload is the boundary
