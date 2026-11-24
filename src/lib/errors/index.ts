@@ -467,8 +467,10 @@ export interface WwwAuthenticateDiagnostics {
 
 /**
  * Structured diagnostics for an HTTP 401 or 403 response, built from an
- * allowlist so every field is safe to log. It carries no credentials, bearer
- * tokens, `Signature` bytes, webhook secrets, or request-body data.
+ * allowlist so every field is safe to log. It carries no `Signature` bytes,
+ * nonce value, webhook secrets, or request-body data. Every emitted value is
+ * screened against credential-named header values at any length, and other
+ * custom header values when equal or 8+ characters.
  */
 export interface AuthFailureDiagnostics {
   /** HTTP status, `401` or `403`. */

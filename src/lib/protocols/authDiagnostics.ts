@@ -51,11 +51,11 @@ const PUBLIC_REQUEST_HEADERS = new Set([
   'signature-input',
   'content-digest',
 ]);
-// Header names that carry a credential. Their values, the nonce, and the
-// signature bytes are protected at any length; other header values are
-// metadata matched exactly or when long enough to be a credential.
-const CREDENTIAL_HEADER_RE =
-  /(^|[_-])(authorization|auth|cookie|credentials?|secret|token|api[_-]?key|key|password|session|signature)([_-]|$)/i;
+// Header names that carry a credential, matched with separators removed so
+// compound names such as `X-AuthToken` count too. Their values, the nonce,
+// and the signature bytes are protected at any length; other header values
+// are metadata, matched exactly or when long enough to be a credential.
+const CREDENTIAL_HEADER_NAME_RE = /auth|cookie|credential|secret|token|key|password|session|signature/;
 // Real signatures are 86+ Base64 characters. A floor keeps short fixture
 // values from masking ordinary seller words.
 const MIN_SIGNATURE_BYTES_LENGTH = 16;
@@ -228,7 +228,7 @@ function protectedValues(headers: Headers): ProtectedValues {
   headers.forEach((value, name) => {
     const lower = name.toLowerCase();
     if (!value || PUBLIC_REQUEST_HEADERS.has(lower)) return;
-    const into = CREDENTIAL_HEADER_RE.test(lower) ? strong : metadata;
+    const into = CREDENTIAL_HEADER_NAME_RE.test(lower.replace(/[_-]/g, '')) ? strong : metadata;
     into.push(value);
     // `Bearer <token>`, `Basic <credentials>`.
     const credential = value.replace(/^\S+\s+/, '');
@@ -245,8 +245,8 @@ function protectedValues(headers: Headers): ProtectedValues {
 /**
  * Every `nonce` parameter in `Signature-Input`, read with the Structured
  * Fields parser so a `;nonce=` inside another quoted value cannot hide the
- * real one. When the field does not parse cleanly, every quoted string in it
- * is treated as a possible nonce.
+ * real one. When the field does not parse cleanly, has duplicate keys, or has
+ * a nonce that is not a string, every value in it is protected instead.
  */
 function signatureNonces(header: string | null): string[] {
   if (!header) return [];
@@ -255,14 +255,44 @@ function signatureNonces(header: string | null): string[] {
     const nonces: string[] = [];
     for (const [, member] of parseDictionary(header)) {
       for (const [key, value] of member[1]) {
-        if (key === 'nonce' && typeof value === 'string' && value) nonces.push(value);
+        if (key !== 'nonce') continue;
+        if (typeof value !== 'string') throw new TypeError('nonce is not a string');
+        if (value) nonces.push(value);
       }
     }
     return nonces;
   } catch {
-    // Quoted strings consumed left to right, so each is whole.
-    return [...header.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(match => match[1]!.replace(/\\(.)/g, '$1')).filter(Boolean);
+    return fieldValues(header);
   }
+}
+
+/**
+ * One linear pass over a Structured Field: every quoted string (unescaped)
+ * and every bare value. A quote is never rescanned after it is consumed.
+ */
+function fieldValues(header: string): string[] {
+  const values: string[] = [];
+  const isDelimiter = (ch: string) =>
+    ch === '"' || ch === ';' || ch === ',' || ch === '=' || ch === '(' || ch === ')' || ch.trim() === '';
+  let i = 0;
+  while (i < header.length) {
+    if (header[i] === '"') {
+      let value = '';
+      for (i++; i < header.length && header[i] !== '"'; i++) {
+        if (header[i] === '\\' && i + 1 < header.length) i++;
+        value += header[i];
+      }
+      i++;
+      if (value) values.push(value);
+    } else if (isDelimiter(header[i]!)) {
+      i++;
+    } else {
+      const start = i;
+      while (i < header.length && !isDelimiter(header[i]!)) i++;
+      values.push(header.slice(start, i));
+    }
+  }
+  return values;
 }
 
 /**

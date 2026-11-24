@@ -443,13 +443,54 @@ test('a nonce hidden behind a quoted ;nonce= is still protected from realm refle
   const error = await rejection(new Response('', { status: 401, headers: challengeHeader }), headers);
   assert.equal(error.authDiagnostics.wwwAuthenticate.realm, undefined);
 
-  // Unparseable or duplicate-keyed input falls back to protecting every quoted string.
+  // Unparseable or duplicate-keyed input falls back to protecting every field value.
   const duplicate = await transportDiagnosticsFor(
     signedHeaders({ 'Signature-Input': `sig1=("@method");nonce="${secretNonce}", sig1=("@method");nonce="other"` }),
     challengeHeader
   );
   assert.equal(duplicate.wwwAuthenticate.realm, undefined);
   assert.equal(duplicate.requestSignature, undefined);
+});
+
+test('a nonce that is not a quoted string is still protected from realm reflection', async () => {
+  for (const nonce of ['123456789', 'private-nonce-value']) {
+    const headers = signedHeaders({ 'Signature-Input': `sig1=("@method");keyid="k1";nonce=${nonce}` });
+    const challengeHeader = { 'WWW-Authenticate': `Signature realm="${nonce}"` };
+    const diagnostics = await transportDiagnosticsFor(headers, challengeHeader);
+    assert.equal(diagnostics.wwwAuthenticate.realm, undefined, nonce);
+    assert.equal(JSON.stringify(diagnostics).includes(nonce), false, nonce);
+    const error = await rejection(new Response('', { status: 401, headers: challengeHeader }), headers);
+    assert.equal(error.authDiagnostics.wwwAuthenticate.realm, undefined, nonce);
+  }
+});
+
+test('the malformed Signature-Input fallback scans in linear time', async () => {
+  const time = async n => {
+    const header = 'sig1=("' + '\\"'.repeat(n) + '\\';
+    const started = process.hrtime.bigint();
+    await transportDiagnosticsFor(signedHeaders({ 'Signature-Input': header }), {
+      'WWW-Authenticate': 'Signature realm="seller.example"',
+    });
+    return Number(process.hrtime.bigint() - started) / 1e6;
+  };
+  await time(1000); // warm up
+  const small = await time(8000);
+  const large = await time(64000);
+  // Quadratic scanning takes ~64x as long for 8x the input (about a second at
+  // 64k). The floor absorbs scheduler noise on a loaded machine.
+  assert.ok(large < Math.max(small * 24, 200), `small=${small}ms large=${large}ms`);
+});
+
+test('compound credential header names are protected at any length', async () => {
+  const diagnostics = await transportDiagnosticsFor(
+    signedHeaders({
+      'X-AuthToken': 'pass123',
+      'Signature-Input': 'sig1=("@method");keyid="https://keys.example/pass123";nonce="n1"',
+    }),
+    {}
+  );
+  assert.equal(diagnostics.requestSignature.keyid, '[redacted]');
+  assert.equal(JSON.stringify(diagnostics).includes('pass123'), false);
 });
 
 test('diagnostics use the headers fetch sends: init.headers replaces Request headers', async () => {
