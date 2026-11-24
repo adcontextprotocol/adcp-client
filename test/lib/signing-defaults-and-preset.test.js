@@ -644,6 +644,149 @@ describe('createAgentSignedFetch preset', () => {
     assert.ok(headers.get('signature'), 'Signature header should be present');
   });
 
+  describe('webhook credentials and the seller advertisement (adcp#9204)', () => {
+    const webhookAuthBody = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          push_notification_config: {
+            url: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+            authentication: {
+              schemes: ['HMAC-SHA256'],
+              credentials: 'placeholder_secret_min_32_characters_required',
+            },
+          },
+        },
+      },
+    });
+
+    async function send({ entry, signingConfig = signing, body = webhookAuthBody }) {
+      const cache = new CapabilityCache();
+      const { buildCapabilityCacheKey } = require('../../dist/lib/signing/index.js');
+      if (entry) cache.set(buildCapabilityCacheKey(sellerAgentUri, undefined, undefined, ADCP_VERSION), entry);
+      const { captured, upstream } = makeCapturingUpstream();
+      const signedFetch = createAgentSignedFetch({ signing: signingConfig, sellerAgentUri, cache, upstream });
+      await signedFetch('https://seller.example.com/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      return new Headers(captured.init?.headers);
+    }
+
+    const fetchedAt = () => Math.floor(Date.now() / 1000);
+
+    it('signs for a seller that advertises request_signing, without required_for', async () => {
+      const headers = await send({
+        entry: {
+          requestSigning: { supported: true, required_for: [], covers_content_digest: 'either' },
+          adcpVersion: 3,
+          fetchedAt: fetchedAt(),
+        },
+      });
+      assert.ok(
+        headers.get('signature-input'),
+        'signing-capable seller should get a signed webhook-credential request'
+      );
+      assert.ok(headers.get('signature'), 'Signature header should be present');
+    });
+
+    it('does not sign for a seller whose capabilities omit request_signing', async () => {
+      const headers = await send({
+        entry: { requestSigning: undefined, adcpVersion: 3, fetchedAt: fetchedAt() },
+      });
+      assert.strictEqual(headers.get('signature-input'), null, 'seller cannot verify, so no signature');
+      assert.strictEqual(headers.get('signature'), null);
+    });
+
+    it('does not sign for a seller that advertises request_signing.supported: false', async () => {
+      const headers = await send({
+        entry: {
+          requestSigning: { supported: false, required_for: [], covers_content_digest: 'either' },
+          adcpVersion: 3,
+          fetchedAt: fetchedAt(),
+        },
+      });
+      assert.strictEqual(headers.get('signature-input'), null, 'supported: false should not get a signature');
+    });
+
+    it('still signs after failed discovery, because the advertisement is unknown', async () => {
+      const now = fetchedAt();
+      const headers = await send({
+        entry: {
+          requestSigning: undefined,
+          adcpVersion: undefined,
+          fetchedAt: now,
+          staleAt: now + 60,
+          discoveryFailed: true,
+        },
+      });
+      assert.ok(headers.get('signature-input'), 'failed discovery should keep failing closed by signing');
+    });
+
+    it('still signs always_sign operations for a seller without request_signing', async () => {
+      const headers = await send({
+        entry: { requestSigning: undefined, adcpVersion: 3, fetchedAt: fetchedAt() },
+        signingConfig: { ...signing, always_sign: ['create_media_buy'] },
+      });
+      assert.ok(headers.get('signature-input'), 'buyer always_sign is unchanged by this rule');
+    });
+
+    it('still signs when the fetched no-signing entry has expired', async () => {
+      const headers = await send({
+        entry: { requestSigning: undefined, adcpVersion: 3, fetchedAt: fetchedAt() - 3600 },
+      });
+      assert.ok(headers.get('signature-input'), 'an expired advertisement is unknown, so the request is signed');
+    });
+
+    describe('discovery results that are not an advertisement', () => {
+      const { ensureCapabilityLoaded } = require('../../dist/lib/signing/capability-priming.js');
+      const { buildCapabilityCacheKey } = require('../../dist/lib/signing/index.js');
+
+      async function primeThenSend(raw) {
+        const cache = new CapabilityCache();
+        const capabilityCacheKey = buildCapabilityCacheKey(sellerAgentUri, undefined, undefined, ADCP_VERSION);
+        const entry = await ensureCapabilityLoaded({}, { cache, capabilityCacheKey }, async () => raw);
+        const { captured, upstream } = makeCapturingUpstream();
+        const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+        await signedFetch('https://seller.example.com/mcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: webhookAuthBody,
+        });
+        return { entry, headers: new Headers(captured.init?.headers) };
+      }
+
+      it('treats an MCP tool error from get_adcp_capabilities as failed discovery', async () => {
+        const { entry, headers } = await primeThenSend({
+          isError: true,
+          content: [{ type: 'text', text: 'temporarily unavailable' }],
+        });
+        assert.strictEqual(entry.discoveryFailed, true);
+        assert.ok(headers.get('signature-input'), 'failed discovery keeps signing webhook credentials');
+      });
+
+      it('treats a payload without adcp as failed discovery', async () => {
+        const { entry, headers } = await primeThenSend({
+          structuredContent: { errors: [{ code: 'SERVICE_UNAVAILABLE', message: 'try later' }] },
+        });
+        assert.strictEqual(entry.discoveryFailed, true);
+        assert.ok(headers.get('signature-input'), 'an error payload is not an advertisement');
+      });
+
+      it('treats a capabilities document without request_signing as an advertisement', async () => {
+        const { entry, headers } = await primeThenSend({
+          structuredContent: { adcp: { major_versions: [3] }, supported_protocols: ['media_buy'] },
+        });
+        assert.strictEqual(entry.discoveryFailed, undefined);
+        assert.strictEqual(headers.get('signature-input'), null, 'a real advertisement without signing is honored');
+      });
+    });
+  });
+
   it('defaults to defaultCapabilityCache when no cache is passed', () => {
     const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri });
     assert.strictEqual(typeof signedFetch, 'function');

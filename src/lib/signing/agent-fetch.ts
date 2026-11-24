@@ -29,6 +29,8 @@ export { requestSigningEncodingForVersion } from './content-digest';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 const MAX_WEBHOOK_AUTH_INSPECTION_BYTES = 1_048_576;
+/** Matches `CapabilityCache`'s default TTL; used when no staleness check is passed. */
+const DEFAULT_CAPABILITY_TTL_SECONDS = 300;
 
 /**
  * Resolve `globalThis.fetch` at the moment of each outbound request — not at
@@ -99,10 +101,13 @@ export function extractAdcpOperation(body: unknown): string | undefined {
 }
 
 /**
- * Detect webhook receiver credentials in the outbound JSON-RPC payload. The
- * verifier rejects unsigned requests carrying these credentials regardless of
- * the seller's operation-level capability advertisement, so the client must
- * sign them even while the capability cache is cold or silent for that op.
+ * Detect webhook receiver credentials in the outbound JSON-RPC payload. A
+ * signing-capable verifier rejects unsigned requests carrying these
+ * credentials regardless of its operation-level `required_for` (3.x condition
+ * (b), removed in 4.0), so the client signs them even while the capability
+ * cache is cold or silent for that op. It does not sign them for a seller
+ * whose fetched capabilities advertise no request signing: that seller cannot
+ * verify the signature, and the rule binds only signing-capable sellers.
  * The scan is bounded; if the body exceeds the inspection budget, sign it.
  */
 function carriesWebhookAuthentication(body: unknown): boolean {
@@ -254,6 +259,12 @@ export interface BuildAgentSigningFetchOptions {
   signing: AgentRequestSigningConfig;
   /** Lazy accessor for the current cached capability — re-read on every call. */
   getCapability: () => CachedCapability | undefined;
+  /**
+   * Staleness check for the entry `getCapability` returns. Pass the cache's
+   * `isStale` when the cache uses a custom TTL. Without it, an entry is stale
+   * at its `staleAt`, or 300 seconds after `fetchedAt`.
+   */
+  isCapabilityStale?: (entry: CachedCapability) => boolean;
   /** Trusted SDK/endpoint version pin; never inferred from the request body. */
   adcpVersion?: string;
 }
@@ -270,6 +281,10 @@ export interface BuildAgentSigningFetchOptions {
  */
 export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): FetchLike {
   const { signing, getCapability } = options;
+  const isCapabilityStale =
+    options.isCapabilityStale ??
+    ((entry: CachedCapability) =>
+      Math.floor(Date.now() / 1000) >= (entry.staleAt ?? entry.fetchedAt + DEFAULT_CAPABILITY_TTL_SECONDS));
   assertSigningPolicy(signing);
   // Resolve `globalThis.fetch` per-call when no explicit upstream was passed
   // so a polyfill installed between factory creation and first request still
@@ -279,12 +294,19 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
   const upstream: FetchLike = explicitUpstream ?? ((input, init) => defaultUpstream()(input, init));
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
-    const capability = getCapability()?.requestSigning;
+    const entry = getCapability();
+    const capability = entry?.requestSigning;
     // Credentials and oversized payloads must not bypass strict policy selection.
     const policyMethods = hasProtocolSigningPolicy(capability, signing)
       ? jsonRpcMethodsForSigning(init?.body)
       : undefined;
-    if (carriesWebhookAuthentication(init?.body)) {
+    // Fresh, fetched capabilities without request signing: the seller can't
+    // verify a signature, so webhook credentials alone don't trigger one
+    // (adcp#9204). A cold, expired or failed-discovery entry is unknown, and
+    // still signs.
+    const sellerCannotVerify =
+      entry !== undefined && !entry.discoveryFailed && !isCapabilityStale(entry) && capability?.supported !== true;
+    if (!sellerCannotVerify && carriesWebhookAuthentication(init?.body)) {
       if (signing.profile === 'web-bot-auth' && !signingListIncludes(capability?.profiles, 'web-bot-auth'))
         throw new TypeError('Seller did not advertise the Web Bot Auth request signing profile');
       return true;
@@ -458,6 +480,7 @@ export function createAgentSignedFetch(options: CreateAgentSignedFetchOptions): 
     signing: options.signing,
     upstream: options.upstream,
     getCapability: () => cache.get(cacheKey),
+    isCapabilityStale: entry => cache.isStale(entry),
     adcpVersion,
   });
 }

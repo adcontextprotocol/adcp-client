@@ -51,6 +51,8 @@ export interface AgentSigningContext {
   cacheKey: string;
   /** Lazy accessor for the currently cached capability for this agent. */
   getCapability: () => CachedCapability | undefined;
+  /** The context cache's staleness check, forwarded to the signing fetch. */
+  isCapabilityStale?: (entry: CachedCapability) => boolean;
   /** Capability cache backing this context (for external invalidation). */
   cache: CapabilityCache;
   /** Stable cache key used against the capability cache itself. */
@@ -170,6 +172,7 @@ export function buildAgentSigningContext(
     capabilityCacheKey,
     adcpVersion,
     getCapability: () => cache.get(capabilityCacheKey),
+    isCapabilityStale: entry => cache.isStale(entry),
     invalidate: () => cache.invalidate(capabilityCacheKey),
   };
 }
