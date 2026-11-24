@@ -257,7 +257,7 @@ describe('A2A JSON-RPC error — structured data survives (#3689)', () => {
             },
           };
         }
-        return respond(payload);
+        return respond();
       },
     };
     a2aShim = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
