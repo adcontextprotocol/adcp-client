@@ -1486,4 +1486,277 @@ describe('canonical creative asynchronous boundaries', () => {
       assert.equal(Object.isFrozen(association.routingSnapshot.packages[0].format_option_refs[0]), true);
     }
   });
+
+  describe('SDK error classes on creative-task failures', () => {
+    const sdkErrors = require('../../dist/lib/errors');
+    const { NeedsAuthorizationError } = require('../../dist/lib/index.js');
+    const mediaBuyParams = {
+      account: { account_id: 'acct' },
+      brand: { domain: 'acme.example' },
+      start_time: 'asap',
+      end_time: '2027-01-01T00:00:00Z',
+      packages: [],
+      idempotency_key: 'create-media-buy-0123456789',
+    };
+    const legacyMessage = `Rejected format_id ${legacyId} from agent_url ${legacyUrl}`;
+
+    // Each factory takes the message to use (when the class accepts one).
+    const typedErrors = {
+      AuthenticationRequiredError: message =>
+        new sdkErrors.AuthenticationRequiredError(
+          'https://seller.example/mcp',
+          undefined,
+          message,
+          { scheme: 'signature', error: 'request_signature_key_unknown' },
+          { status: 401, responseBody: 'unknown key' }
+        ),
+      AuthenticationCredentialsRejectedError: () =>
+        new sdkErrors.AuthenticationCredentialsRejectedError('https://seller.example/mcp', new Error('401')),
+      NeedsAuthorizationError: message =>
+        new NeedsAuthorizationError(
+          { agentUrl: 'https://seller.example/mcp', challenge: { scheme: 'bearer' } },
+          message
+        ),
+      IdempotencyConflictError: message => new sdkErrors.IdempotencyConflictError('key-conflict-0123456789', message),
+      IdempotencyExpiredError: message => new sdkErrors.IdempotencyExpiredError('key-expired-0123456789', message),
+      AccountNotFoundError: message => new sdkErrors.AccountNotFoundError(message),
+      AccountSetupRequiredError: message => new sdkErrors.AccountSetupRequiredError(message),
+      AccountPaymentRequiredError: message => new sdkErrors.AccountPaymentRequiredError(message),
+      ActionNotAllowedError: message =>
+        new sdkErrors.ActionNotAllowedError({ attempted_action: 'cancel', reason: 'wrong_status' }, message),
+    };
+
+    function failedWith(errorInstance, taskName = 'create_media_buy') {
+      return {
+        success: false,
+        status: 'failed',
+        error: errorInstance.message,
+        metadata: { ...metadata('failed'), taskName },
+        errorInstance,
+      };
+    }
+
+    for (const [name, make] of Object.entries(typedErrors)) {
+      test(`${name} survives create_media_buy canonicalization`, async () => {
+        const unchanged = make(undefined);
+        const client = makeClient(async () => failedWith(unchanged));
+        const result = await client.executeTask('create_media_buy', mediaBuyParams);
+        assert.equal(result.status, 'failed');
+        const { errorInstance } = result;
+        assert.equal(Object.getPrototypeOf(errorInstance), Object.getPrototypeOf(unchanged));
+        assert.equal(errorInstance instanceof sdkErrors.ADCPError, true);
+        assert.equal(errorInstance.name, unchanged.name);
+        assert.equal(errorInstance.message, unchanged.message);
+        assert.equal(typeof errorInstance.stack, 'string');
+        assert.ok(errorInstance.stack.length > 0);
+        for (const key of Reflect.ownKeys(unchanged)) {
+          if (key === 'stack') continue;
+          const expected = Object.getOwnPropertyDescriptor(unchanged, key);
+          const actual = Object.getOwnPropertyDescriptor(errorInstance, key);
+          assert.ok(actual, `own property ${String(key)} kept`);
+          assert.equal(actual.enumerable, expected.enumerable, `${String(key)} enumerability kept`);
+          if (key === 'cause') assert.equal(actual.value.message, expected.value.message);
+          else assert.deepEqual(actual.value, expected.value, `${String(key)} value kept`);
+        }
+
+        if (name === 'AuthenticationCredentialsRejectedError') return; // fixed message, nothing to sanitize
+        const legacy = make(legacyMessage);
+        const sanitizedClient = makeClient(async () => failedWith(legacy));
+        const sanitized = (await sanitizedClient.executeTask('create_media_buy', mediaBuyParams)).errorInstance;
+        assert.notEqual(sanitized, legacy);
+        assert.equal(Object.getPrototypeOf(sanitized), Object.getPrototypeOf(legacy));
+        assert.equal(sanitized instanceof sdkErrors.ADCPError, true);
+        assert.equal(sanitized.name, legacy.name);
+        assertCanonical(sanitized.message);
+        assert.notEqual(sanitized.message, legacy.message);
+        if (name === 'IdempotencyConflictError' || name === 'IdempotencyExpiredError') {
+          const descriptor = Object.getOwnPropertyDescriptor(sanitized, 'idempotencyKey');
+          assert.equal(descriptor.value, legacy.idempotencyKey);
+          assert.equal(descriptor.enumerable, false);
+        }
+      });
+    }
+
+    test('SDK error stack is sanitized like message and stays non-enumerable', async () => {
+      // Expected to fail until the fast path is removed and `stack` is sanitized (pending change).
+      const error = typedErrors.AuthenticationRequiredError(undefined);
+      error.stack = `AuthenticationRequiredError: x\n format_id ${legacyId} ${legacyUrl}`;
+      const client = makeClient(async () => failedWith(error));
+      const { errorInstance } = await client.executeTask('create_media_buy', mediaBuyParams);
+      assert.equal(errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(typeof errorInstance.stack, 'string');
+      assert.ok(errorInstance.stack.length > 0);
+      assert.doesNotMatch(errorInstance.stack, new RegExp(`${legacyId}|formats\\.publisher\\.example`));
+      assert.equal(Object.getOwnPropertyDescriptor(errorInstance, 'stack').enumerable, false);
+    });
+
+    // The error must be created while the formatter is installed: V8 formats `stack` lazily on first read,
+    // which happens during canonicalization.
+    async function runWithStackFormatter(formatter, makeError) {
+      const original = Error.prepareStackTrace;
+      Error.prepareStackTrace = formatter;
+      try {
+        const error = makeError();
+        const client = makeClient(async () => failedWith(error));
+        return await client.executeTask('create_media_buy', mediaBuyParams);
+      } finally {
+        Error.prepareStackTrace = original;
+      }
+    }
+
+    test('a stack formatter returning a non-string is omitted, not copied', async () => {
+      const leaky = () => {};
+      leaky.format_id = legacyFormat;
+      leaky.toJSON = () => ({ format_id: legacyFormat });
+      const result = await runWithStackFormatter(
+        () => leaky,
+        () => typedErrors.AuthenticationRequiredError(undefined)
+      );
+      const { errorInstance } = result;
+      assert.equal(errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(errorInstance.status, 401);
+      assert.notEqual(errorInstance.stack, leaky);
+      assert.equal(typeof errorInstance.stack === 'function', false);
+      assertCanonical(result);
+      assertCanonical(errorInstance);
+    });
+
+    test('a throwing stack formatter still yields the typed failure without a stack', async () => {
+      const result = await runWithStackFormatter(
+        () => {
+          throw new Error('formatter failed');
+        },
+        () => typedErrors.AuthenticationRequiredError(undefined)
+      );
+      assert.equal(result.success, false);
+      const { errorInstance } = result;
+      assert.equal(errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(errorInstance.status, 401);
+      assert.equal(errorInstance.signatureErrorCode, 'request_signature_key_unknown');
+      assert.equal(errorInstance.responseBody, 'unknown key');
+      assert.equal(Object.hasOwn(errorInstance, 'stack'), false);
+    });
+
+    test('a non-string data-property stack is omitted', async () => {
+      const error = typedErrors.AuthenticationRequiredError(undefined);
+      Object.defineProperty(error, 'stack', {
+        value: { format_id: legacyFormat },
+        writable: true,
+        configurable: true,
+        enumerable: false,
+      });
+      const client = makeClient(async () => failedWith(error));
+      const result = await client.executeTask('create_media_buy', mediaBuyParams);
+      assert.equal(result.errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(Object.hasOwn(result.errorInstance, 'stack'), false);
+      assertCanonical(result.errorInstance);
+    });
+
+    test('non-enumerable idempotencyKey survives a sanitizing clone', async () => {
+      const conflict = typedErrors.IdempotencyConflictError(legacyMessage);
+      const client = makeClient(async () => failedWith(conflict));
+      const { errorInstance } = await client.executeTask('create_media_buy', mediaBuyParams);
+      assert.equal(errorInstance instanceof sdkErrors.IdempotencyConflictError, true);
+      assert.equal(errorInstance.idempotencyKey, 'key-conflict-0123456789');
+      assert.equal(JSON.stringify(errorInstance).includes('key-conflict'), false);
+    });
+
+    test('SDK error prototypes only carry vetted members', () => {
+      // Mirrors SDK_ERROR_PROTOTYPES in SingleAgentClient.ts: these classes are trusted on a constructor-free clone.
+      const {
+        NeedsAuthorizationError: NeedsAuthorization,
+      } = require('../../dist/lib/auth/oauth/authorization-required');
+      const trusted = [...Object.values(sdkErrors), NeedsAuthorization].filter(
+        value => typeof value === 'function' && value.prototype instanceof sdkErrors.ADCPError
+      );
+      for (const known of [
+        sdkErrors.AuthenticationRequiredError,
+        sdkErrors.IdempotencyConflictError,
+        NeedsAuthorization,
+      ]) {
+        assert.ok(trusted.includes(known), `${known.name} must be a trusted SDK error class`);
+      }
+
+      const vetted = new Set(['hasOAuth', 'authorizationUrl', 'suggestedScheme']);
+      const unvetted = [];
+      for (const ErrorClass of trusted) {
+        for (
+          let proto = ErrorClass.prototype;
+          proto && proto !== Error.prototype;
+          proto = Object.getPrototypeOf(proto)
+        ) {
+          for (const key of Reflect.ownKeys(proto)) {
+            if (key === 'constructor' || vetted.has(key)) continue;
+            unvetted.push(`${ErrorClass.name} (via ${proto.constructor.name}): ${String(key)}`);
+          }
+        }
+      }
+      assert.deepEqual(
+        unvetted,
+        [],
+        'SDK error prototypes gained members that are not vetted (a toJSON is never allowed). Before adding one to the ' +
+          'allowlist, check that it reads only sanitized own fields and works on a constructor-free clone ' +
+          '(see canonicalCreativeErrorInstance in src/lib/core/SingleAgentClient.ts).'
+      );
+    });
+
+    test('adopter subclasses of SDK classes are still flattened and their getters never run', async () => {
+      let reads = 0;
+      class AdopterAuthError extends sdkErrors.AuthenticationRequiredError {
+        get format_id() {
+          reads += 1;
+          return legacyFormat;
+        }
+      }
+      class AdopterIdempotencyError extends sdkErrors.IdempotencyConflictError {
+        get details() {
+          reads += 1;
+          return { format_id: legacyFormat };
+        }
+      }
+      for (const adopter of [
+        new AdopterAuthError('https://seller.example/mcp'),
+        new AdopterIdempotencyError('adopter-key-0123456789'),
+      ]) {
+        const client = makeClient(async () => failedWith(adopter));
+        const { errorInstance } = await client.executeTask('create_media_buy', mediaBuyParams);
+        assert.equal(Object.getPrototypeOf(errorInstance), Error.prototype);
+        assert.equal(errorInstance instanceof sdkErrors.ADCPError, false);
+        assert.equal(errorInstance.name, adopter.name);
+      }
+      assert.equal(reads, 0);
+    });
+
+    test('submitted waitForCompletion and deferred resume keep the SDK error class', async () => {
+      const refused = () => typedErrors.AuthenticationRequiredError(undefined);
+      const waited = refused();
+      const resumed = refused();
+      const submitted = {
+        success: true,
+        status: 'submitted',
+        metadata: { ...metadata('submitted'), taskName: 'create_media_buy' },
+        submitted: {
+          taskId: 'seller-task',
+          track: async () => ({}),
+          waitForCompletion: async () => failedWith(waited),
+        },
+      };
+      const submittedResult = await makeClient(async () => submitted).executeTask('create_media_buy', mediaBuyParams);
+      const afterWait = await submittedResult.submitted.waitForCompletion(1);
+      assert.equal(afterWait.success, false);
+      assert.equal(afterWait.errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+      assert.equal(afterWait.errorInstance.status, 401);
+
+      const deferred = {
+        success: true,
+        status: 'deferred',
+        metadata: { ...metadata('deferred'), taskName: 'create_media_buy' },
+        deferred: { token: 'human-token', question: 'Approve?', resume: async () => failedWith(resumed) },
+      };
+      const deferredResult = await makeClient(async () => deferred).executeTask('create_media_buy', mediaBuyParams);
+      const afterResume = await deferredResult.deferred.resume({ approved: true });
+      assert.equal(afterResume.errorInstance.status, 401);
+      assert.equal(afterResume.errorInstance instanceof sdkErrors.AuthenticationRequiredError, true);
+    });
+  });
 });

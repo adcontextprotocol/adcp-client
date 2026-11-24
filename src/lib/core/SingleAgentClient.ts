@@ -218,6 +218,7 @@ import {
   VersionUnsupportedError,
   is401Error,
 } from '../errors';
+import * as sdkErrors from '../errors';
 import { createAgentTransportFetch, isLikelyPrivateUrl } from '../net';
 import {
   discoverAuthorizationRequirements,
@@ -1139,11 +1140,56 @@ function canonicalCreativeTransportActivity(
   };
 }
 
+/**
+ * SDK error classes (`ADCPError` subclasses) keep their prototype across the
+ * canonical creative boundary, so `errorInstance instanceof IdempotencyConflictError`
+ * holds on creative-bearing tasks too. Their accessors read only own fields,
+ * which the boundary sanitizes. Any other prototype, including an adopter
+ * subclass of an SDK class, is still replaced with `Error.prototype`.
+ */
+const SDK_ERROR_PROTOTYPES: ReadonlySet<unknown> = new Set(
+  [...Object.values(sdkErrors), NeedsAuthorizationError]
+    .map(value => (typeof value === 'function' ? (value as { prototype?: unknown }).prototype : undefined))
+    .filter(prototype => prototype instanceof sdkErrors.ADCPError)
+);
+const NATIVE_ERROR_STACK_GETTER = Object.getOwnPropertyDescriptor(new Error(), 'stack')?.get;
+
+/**
+ * Formatted stack text from a data property or V8's native lazy accessor.
+ * Reading it can run an adopter `Error.prepareStackTrace` (on Node 20, reading
+ * the descriptor already does), which may throw or return a non-string; either
+ * way the stack is omitted.
+ */
+function errorStackText(error: Error): string | undefined {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'stack');
+    let stack: unknown;
+    if (descriptor && 'value' in descriptor) stack = descriptor.value;
+    else if (descriptor?.get !== undefined && descriptor.get === NATIVE_ERROR_STACK_GETTER) {
+      stack = descriptor.get.call(error);
+    }
+    return typeof stack === 'string' ? stack : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Clone a typed error without retaining legacy identity in reflective own fields. */
 function canonicalCreativeErrorInstance<T extends Error>(error: T, legacySource?: unknown): T {
   const own: Record<string, unknown> = {};
-  const descriptors = Object.getOwnPropertyDescriptors(error);
-  for (const [key, descriptor] of Object.entries(descriptors)) {
+  const descriptors: Record<string, PropertyDescriptor> = {};
+  for (const key of Object.getOwnPropertyNames(error)) {
+    if (key === 'stack') {
+      // Only formatted text crosses, sanitized like `message` and copied as data.
+      const stack = errorStackText(error);
+      if (stack === undefined) continue;
+      own.stack = stack;
+      descriptors.stack = { value: stack, writable: true, enumerable: false, configurable: true };
+      continue;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(error, key);
+    if (descriptor === undefined) continue;
+    descriptors[key] = descriptor;
     // Invoking an adopter-defined accessor while sanitizing is unsafe. Prototype
     // accessors remain available; reflective own accessors are omitted.
     if ('value' in descriptor) own[key] = descriptor.value;
@@ -1154,7 +1200,8 @@ function canonicalCreativeErrorInstance<T extends Error>(error: T, legacySource?
   };
   void _dropLegacySource;
 
-  const clone = Object.create(Object.getPrototypeOf(error)) as T;
+  const prototype = Object.getPrototypeOf(error) as object | null;
+  const clone = Object.create(prototype) as T;
   for (const [key, value] of Object.entries(safeOwn)) {
     const descriptor = descriptors[key];
     if (!descriptor || !('value' in descriptor)) continue;
@@ -1170,7 +1217,7 @@ function canonicalCreativeErrorInstance<T extends Error>(error: T, legacySource?
     };
     Object.defineProperty(clone, symbol, { ...descriptor, value: safe.value });
   }
-  return stripLegacyCreativeIdentity(clone) as T;
+  return SDK_ERROR_PROTOTYPES.has(prototype) ? clone : (stripLegacyCreativeIdentity(clone) as T);
 }
 
 export type CreativeDeliveryTaskOptions = TaskOptions & {
