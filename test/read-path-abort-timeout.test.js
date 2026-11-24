@@ -1342,9 +1342,13 @@ describe('read-path cancellation and timeout', () => {
           ),
         err => {
           assert.ok(err instanceof TaskTimeoutError);
-          assert.match(err.taskId, /^[0-9a-f-]{36}$/);
           assert.ok(err.idempotency_key);
           assert.strictEqual(err.idempotencyKey, err.idempotency_key);
+          // A mutating dispatch's operation id derives from its idempotency key (#3693).
+          const digest = createHash('sha256')
+            .update(JSON.stringify(['adcp-operation-id/v1', 'deadline-mutating', 'create_media_buy', err.idempotency_key]))
+            .digest('hex');
+          assert.strictEqual(err.taskId, `idem-${digest.slice(0, 40)}`);
           return true;
         }
       );
