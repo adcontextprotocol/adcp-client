@@ -548,10 +548,10 @@ function unreadableMarkEnd(mark: ReportingLedgerIssueV1): string | undefined {
  * (adcp-client#3653). A consumer-mismatch recurrence takes its identity and
  * `openedAt` from the mark's start and end, so both must be facts of the ledger:
  *
- * - nothing about the mark is later than the write recording it: a start or
- *   end ahead of the store's clock is clamped to `now`;
+ * - neither the start nor the end is later than the write recording it: one
+ *   ahead of the store's clock is clamped to `now`;
  * - the start is fixed by the first write (`prior`), as `openedAt` is for every
- *   issue;
+ *   issue, and the end is never before it;
  * - the end is materialized as `resolvedAt` once the mark ends and never moves
  *   afterwards, so a retried or later write cannot re-date an occurrence. A
  *   retired issue is not reopened under the same id: a recurrence takes a new
@@ -570,9 +570,14 @@ export function normalizeReportingUnreadableMarkWriteV1(
   const notAfterNow = (instant: string): string => (compareReportingInstants(instant, now) > 0 ? now : instant);
   const priorEnd = prior?.code === 'REVISION_UNREADABLE' ? unreadableMarkEnd(prior) : undefined;
   const incomingEnd = unreadableMarkEnd(issue);
-  const end = priorEnd ?? (incomingEnd === undefined ? undefined : notAfterNow(incomingEnd));
+  let end = priorEnd ?? (incomingEnd === undefined ? undefined : notAfterNow(incomingEnd));
   let openedAt = notAfterNow(prior?.openedAt ?? issue.openedAt);
-  if (end !== undefined && compareReportingInstants(openedAt, end) > 0) openedAt = end;
+  if (end !== undefined && compareReportingInstants(openedAt, end) > 0) {
+    // A recorded start stays put, so an end before it is raised to it; on a
+    // first write the start moves back to the end instead.
+    if (prior !== undefined) end = openedAt;
+    else openedAt = end;
+  }
   const terminal = issue.issueState === 'resolved' || issue.issueState === 'waived';
   return {
     ...issue,
