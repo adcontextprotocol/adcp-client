@@ -1796,7 +1796,11 @@ export const TOOL_INPUT_SHAPE = {
   // The request's version envelope. Parsing keeps these so the response is
   // served at the caller's release (adcp-client#3769).
   adcp_version: z.string().optional().describe('AdCP release the caller pins; the response is served at it'),
-  adcp_major_version: z.number().int().optional().describe('AdCP major version the caller supports'),
+  // A string major was stripped before this field existed; keep accepting one.
+  adcp_major_version: z
+    .union([z.number().int(), z.string()])
+    .optional()
+    .describe('AdCP major version the caller supports'),
 };
 
 // ────────────────────────────────────────────────────────────

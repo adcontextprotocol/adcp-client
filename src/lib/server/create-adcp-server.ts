@@ -6250,10 +6250,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     const releaseArgs = isPlainObject(call.releaseArgs) ? call.releaseArgs : {};
     const selected = selectServedAdcpRelease(releaseArgs, capConfig, adcpVersion, defaultAdcpVersion);
     if (isMcpToolResponse(selected)) return finishFrameworkRejection(toolName, selected, call, defaultErrorRelease);
-    let response = await run();
-    const structured = response.structuredContent;
+    const produced = await run();
+    const structured = produced.structuredContent;
     // A framework rejection was already finished at this release.
-    if (!isPlainObject(structured) || 'adcp_error' in structured) return response;
+    if (!isPlainObject(structured) || 'adcp_error' in structured) return produced;
+    // Copy before stamping per-call fields: a store may return a cached body.
+    const response = cloneFormattedResponse(produced);
     if (translationSteps(adcpVersion, selected.validationVersion).length > 0) {
       const downgraded = downgradeResponse(toolName, structured, {
         fromVersion: adcpVersion,
@@ -6261,7 +6263,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       });
       if (downgraded.data !== structured) {
         const mirrors = contentTextMirrorsStructuredContent(response, structured);
-        response = cloneFormattedResponse(response);
         response.structuredContent = downgraded.data;
         syncContentJsonText(response, downgraded.data, mirrors);
       }
@@ -6273,6 +6274,23 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           toVersion: selected.validationVersion,
           drifts: downgraded.drifts,
         });
+      }
+      // A value the served release cannot express (a 3.3-only enum value such
+      // as `forced.arm: 'unable'`) is dropped, which leaves a body that release
+      // rejects. Refuse rather than answer with a malformed success.
+      if (
+        validateResponse(toolName, structured, adcpVersion).valid &&
+        !validateResponse(toolName, response.structuredContent, selected.validationVersion).valid
+      ) {
+        return finishFrameworkRejection(
+          toolName,
+          adcpError('VERSION_UNSUPPORTED', {
+            message: `The ${toolName} result cannot be expressed in AdCP ${selected.validationVersion}; call it at a release that defines it.`,
+            details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
+          }),
+          call,
+          selected
+        );
       }
     }
     injectVersionIntoResponse(response, selected.wireVersion);

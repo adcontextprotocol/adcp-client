@@ -4258,7 +4258,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
                   if (requestExt !== undefined) structured['ext'] = requestExt;
                   response.content = [{ type: 'text', text: JSON.stringify(structured) }];
                 }
-                return response;
+                // Finished like every other framework rejection: envelope
+                // status and the served release (adcp-client#3769).
+                return reject(response);
               }
 
               const controllerParams =
