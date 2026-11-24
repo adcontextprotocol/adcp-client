@@ -9,14 +9,17 @@ export interface NonemptyArrayInternals<Element extends z.ZodType> extends z.cor
 /**
  * A normal ZodArray whose checked minimum is reflected in its input/output.
  *
- * Only the internals are narrowed, so inferred types stay as shallow as a
- * plain `z.ZodArray`. Re-declaring the schema as a `z.ZodType` of the tuple
- * instantiated every ZodType member with the full element output and made
- * `z.infer` of large response schemas exceed TypeScript's instantiation depth
- * (TS2589, #3472).
+ * Only the internals and the `_output`/`_input` markers derived from them are
+ * narrowed, so inferred types stay as shallow as a plain `z.ZodArray` and the
+ * schema still assigns to `z.ZodType<[T, ...T[]]>`. Re-declaring the schema as
+ * a `z.ZodType` of the tuple instantiated every ZodType member with the full
+ * element output and made `z.infer` of large response schemas exceed
+ * TypeScript's instantiation depth (TS2589, #3472).
  */
 export interface NonemptyArraySchema<Element extends z.ZodType> extends z.ZodArray<Element> {
   _zod: NonemptyArrayInternals<Element>;
+  _output: NonemptyArrayInternals<Element>['output'];
+  _input: NonemptyArrayInternals<Element>['input'];
 }
 
 /**

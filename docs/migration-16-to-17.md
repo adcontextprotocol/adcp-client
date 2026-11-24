@@ -915,9 +915,10 @@ array output types are now `[T, ...T[]]`.
 
 The schema for such a field is `NonemptyArraySchema<T>` (exported as a type from
 `@adcp/sdk/schemas`). It is a `z.ZodArray<T>` whose input and output are the
-`[T, ...T[]]` tuple, so it is assignable wherever a `z.ZodArray<T>` is
-expected and keeps `.element`, `.unwrap()`, `.min()`, `.max()` and the other
-array methods. Earlier 17.0 betas declared it as a `z.ZodType` of the tuple.
+`[T, ...T[]]` tuple, so it assigns to `z.ZodType<[T, ...T[]]>` as before and
+is now also assignable wherever a `z.ZodArray<T>` is expected. It keeps
+`.element`, `.unwrap()`, `.min()`, `.max()` and the other array methods.
+Earlier 17.0 betas declared it as a `z.ZodType` of the tuple.
 That made `z.infer` of large response schemas such as
 `GetMediaBuyDeliveryResponseSchema` exceed TypeScript's instantiation depth
 (TS2589) when code sliced or spread their arrays (#3472). `z.infer` and

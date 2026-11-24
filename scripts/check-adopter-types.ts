@@ -1062,9 +1062,12 @@ void nonemptyInfersTuple;
 // Contract: NonemptyArraySchema is a ZodArray subtype (element/unwrap work).
 declare const nonemptyStrings: publicSchemas.NonemptyArraySchema<z.ZodString>;
 const asZodArray: z.ZodArray<z.ZodString> = nonemptyStrings;
+// ...and still a ZodType of the non-empty tuple, through \`_output\`/\`_input\` too.
+const asTupleZodType: z.ZodType<[string, ...string[]], [string, ...string[]]> = nonemptyStrings;
 const nonemptyElement: z.ZodString = nonemptyStrings.element;
 const nonemptyUnwrapped: z.ZodString = nonemptyStrings.unwrap();
 void asZodArray;
+void asTupleZodType;
 void nonemptyElement;
 void nonemptyUnwrapped;
 `;
