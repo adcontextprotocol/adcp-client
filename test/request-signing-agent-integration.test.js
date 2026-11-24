@@ -661,6 +661,14 @@ for (const challenge of [undefined, 'Signature error="request_signature_key_unkn
         assert.match(err.responseBody, /Seller could not discover the signing key/);
         assert.strictEqual(err.signatureErrorCode, challenge ? 'request_signature_key_unknown' : undefined);
         assert.doesNotMatch(err.message, /auth_token|OAuth/);
+        assert.strictEqual(err.authDiagnostics.status, 401);
+        assert.strictEqual(err.authDiagnostics.requestSignature.noncePresent, true);
+        assert.ok(err.authDiagnostics.requestSignature.keyid);
+        assert.match(err.authDiagnostics.adcpVersion, /^\d+\.\d+/);
+        assert.strictEqual(
+          err.authDiagnostics.wwwAuthenticate?.error,
+          challenge ? 'request_signature_key_unknown' : undefined
+        );
         return true;
       });
       assert.strictEqual(stub.state.toolCallHeaders.filter(r => r.headers.signature).length, 1);

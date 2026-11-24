@@ -230,7 +230,7 @@ export function wrapFetchWithTransportDiagnostics(upstream: typeof fetch): typeo
       const responseHeaders = sanitizeResponseHeaders(response.headers);
       const authDiagnostics = buildAuthFailureDiagnostics(
         response.status,
-        outboundHeaders,
+        effectiveRequestHeaders(input, init),
         response.headers,
         slot.adcpVersion
       );
@@ -486,6 +486,19 @@ function mergeRequestHeaders(input: RequestInfo | URL, init?: RequestInit): Head
     }
   }
   return headers;
+}
+
+/**
+ * The headers fetch actually sends: `init.headers` replaces a `Request`'s own
+ * headers rather than merging with them. Structured auth evidence must not
+ * report a signature the request did not carry.
+ */
+function effectiveRequestHeaders(input: RequestInfo | URL, init?: RequestInit): Headers {
+  try {
+    return new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  } catch {
+    return new Headers();
+  }
 }
 
 function sanitizeResponseHeaders(headers: Headers): Record<string, string> {

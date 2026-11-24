@@ -4,6 +4,28 @@ import { parseSignatureInput } from '../signing/parser';
 import { RequestSigningErrorCodeMetadata } from '../types/enums.generated';
 
 const BEARER_ERROR_CODES = new Set(['invalid_request', 'invalid_token', 'insufficient_scope']);
+// IANA HTTP Authentication Scheme Registry, plus AdCP's `Signature` and
+// common vendor schemes.
+const KNOWN_SCHEMES = new Set([
+  'basic',
+  'bearer',
+  'concealed',
+  'digest',
+  'dpop',
+  'gnap',
+  'hoba',
+  'mutual',
+  'negotiate',
+  'ntlm',
+  'oauth',
+  'privatetoken',
+  'scram-sha-1',
+  'scram-sha-256',
+  'vapid',
+  'signature',
+  'aws4-hmac-sha256',
+]);
+const OTHER_SCHEME = 'other';
 // Public protocol metadata. Every other request header value is treated as a
 // possible credential when deciding whether seller text reflects one.
 const PUBLIC_REQUEST_HEADERS = new Set([
@@ -25,9 +47,13 @@ const PUBLIC_REQUEST_HEADERS = new Set([
 // Real signatures are 86+ Base64 characters. A floor keeps short fixture
 // values from masking ordinary seller words.
 const MIN_SIGNATURE_BYTES_LENGTH = 16;
+// Shorter protected values are matched exactly, so an incidental short header
+// value cannot blank out a legitimate key id.
+const MIN_CONTAINED_SECRET_LENGTH = 8;
+const REDACTED = '[redacted]';
 const MAX_COMPONENTS = 32;
 const MAX_PARAM_LENGTH = 256;
-const MAX_SCHEME_LENGTH = 64;
+const MAX_SCHEME_LENGTH = 32;
 const MAX_REALM_LENGTH = 128;
 const MAX_CONTENT_DIGEST_LENGTH = 512;
 const REALM_RE = /^[A-Za-z0-9][A-Za-z0-9._:/@-]*$/;
@@ -39,8 +65,10 @@ const ADCP_VERSION_RE = /^[0-9A-Za-z.+-]{1,32}$/;
 /**
  * Build allowlisted diagnostics for a 401/403 response. Only parsed fields
  * leave this function: never the raw challenge, the `Signature` bytes, the
- * nonce value, or any credential header. Returns undefined for other statuses
- * and never throws, so diagnostics cannot change protocol behavior.
+ * nonce value, or any credential header. Every emitted string is screened
+ * against those protected values. `requestHeaders` must be the headers fetch
+ * actually sends. Returns undefined for other statuses and never throws, so
+ * diagnostics cannot change protocol behavior.
  */
 export function buildAuthFailureDiagnostics(
   status: number,
@@ -50,9 +78,17 @@ export function buildAuthFailureDiagnostics(
 ): AuthFailureDiagnostics | undefined {
   if (status !== 401 && status !== 403) return undefined;
   try {
-    const requestSignature = signatureDiagnostics(requestHeaders.get('signature-input'));
-    const contentDigest = contentDigestDiagnostic(requestHeaders.get('content-digest'));
-    const wwwAuthenticate = challengeDiagnostics(responseHeaders.get('www-authenticate'), requestHeaders);
+    const secrets = protectedValues(requestHeaders);
+    // A caller can set these headers on an unsigned request, and its values are
+    // not the SDK's. Report them only for a signed request, and the digest only
+    // when the signature covered it.
+    const requestSignature = requestHeaders.has('signature')
+      ? signatureDiagnostics(requestHeaders.get('signature-input'), secrets)
+      : undefined;
+    const contentDigest = requestSignature?.components.includes('content-digest')
+      ? contentDigestDiagnostic(requestHeaders.get('content-digest'), secrets)
+      : undefined;
+    const wwwAuthenticate = challengeDiagnostics(responseHeaders.get('www-authenticate'), secrets);
     return {
       status,
       ...(requestSignature && { requestSignature }),
@@ -65,7 +101,7 @@ export function buildAuthFailureDiagnostics(
   }
 }
 
-function signatureDiagnostics(header: string | null): RequestSignatureDiagnostics | undefined {
+function signatureDiagnostics(header: string | null, secrets: string[]): RequestSignatureDiagnostics | undefined {
   if (!header) return undefined;
   let parsed: ReturnType<typeof parseSignatureInput>;
   try {
@@ -73,32 +109,33 @@ function signatureDiagnostics(header: string | null): RequestSignatureDiagnostic
   } catch {
     return undefined;
   }
+  const screen = (value: string) => (containsSecret(value, secrets) ? REDACTED : bound(value));
   const { keyid, alg, created, expires, nonce, tag } = parsed.params;
   return {
-    label: bound(parsed.label),
-    ...(typeof keyid === 'string' && { keyid: bound(keyid) }),
-    ...(typeof alg === 'string' && { alg: bound(alg) }),
+    label: screen(parsed.label),
+    ...(typeof keyid === 'string' && { keyid: screen(keyid) }),
+    ...(typeof alg === 'string' && { alg: screen(alg) }),
     ...(typeof created === 'number' && { created }),
     ...(typeof expires === 'number' && { expires }),
     noncePresent: typeof nonce === 'string',
-    ...(typeof tag === 'string' && { tag: bound(tag) }),
-    components: parsed.components.slice(0, MAX_COMPONENTS).map(bound),
+    ...(typeof tag === 'string' && { tag: screen(tag) }),
+    components: parsed.components.slice(0, MAX_COMPONENTS).map(screen),
   };
 }
 
-function contentDigestDiagnostic(header: string | null): string | undefined {
+function contentDigestDiagnostic(header: string | null, secrets: string[]): string | undefined {
   if (!header || header.length > MAX_CONTENT_DIGEST_LENGTH) return undefined;
   const value = header.trim();
-  return CONTENT_DIGEST_RE.test(value) ? value : undefined;
+  return CONTENT_DIGEST_RE.test(value) && !containsSecret(value, secrets) ? value : undefined;
 }
 
-function challengeDiagnostics(header: string | null, requestHeaders: Headers): WwwAuthenticateDiagnostics | undefined {
+function challengeDiagnostics(header: string | null, secrets: string[]): WwwAuthenticateDiagnostics | undefined {
   const parsed = parseWWWAuthenticate(header);
   if (!parsed) return undefined;
   const error = parsed.error && isRecognizedChallengeError(parsed.error) ? parsed.error : undefined;
-  const realm = safeRealm(parsed.realm, requestHeaders);
+  const realm = safeRealm(parsed.realm, secrets);
   return {
-    scheme: parsed.scheme.slice(0, MAX_SCHEME_LENGTH),
+    scheme: safeScheme(parsed.scheme, secrets),
     ...(error && { error }),
     ...(realm && { realm }),
   };
@@ -109,19 +146,55 @@ function isRecognizedChallengeError(error: string): boolean {
 }
 
 /**
- * Seller-controlled realm text survives only as a short token that shares no
- * substring relationship with any credential-bearing request header. The
- * whitespace-free charset also rules out free-text prose.
+ * The scheme is seller-controlled too, and a seller can put any token there.
+ * A registered scheme is a fixed word. Any other scheme survives only when it
+ * overlaps no protected value; otherwise it is reported as `other`.
  */
-function safeRealm(realm: string | undefined, requestHeaders: Headers): string | undefined {
-  if (!realm || realm.length > MAX_REALM_LENGTH || !REALM_RE.test(realm)) return undefined;
-  for (const secret of requestSecrets(requestHeaders)) {
-    if (realm.includes(secret) || secret.includes(realm)) return undefined;
-  }
-  return realm;
+function safeScheme(scheme: string, secrets: string[]): string {
+  if (KNOWN_SCHEMES.has(scheme)) return scheme;
+  return scheme.length <= MAX_SCHEME_LENGTH && !overlapsSecret(scheme, secrets) ? scheme : OTHER_SCHEME;
 }
 
-function requestSecrets(headers: Headers): string[] {
+/**
+ * Seller-controlled realm text survives only as a short token that shares no
+ * substring relationship with any protected value. The whitespace-free
+ * charset also rules out free-text prose.
+ */
+function safeRealm(realm: string | undefined, secrets: string[]): string | undefined {
+  if (!realm || realm.length > MAX_REALM_LENGTH || !REALM_RE.test(realm)) return undefined;
+  return overlapsSecret(realm, secrets) ? undefined : realm;
+}
+
+/**
+ * For seller-controlled text: any substring relationship in either direction.
+ * Case-insensitive, because the challenge parser lowercases the scheme.
+ */
+function overlapsSecret(text: string, secrets: string[]): boolean {
+  const lower = text.toLowerCase();
+  return secrets.some(secret => {
+    const candidate = secret.toLowerCase();
+    return lower.includes(candidate) || candidate.includes(lower);
+  });
+}
+
+/**
+ * For the SDK's own outbound values, which can only collide by accident: an
+ * exact match, or containing a protected value long enough to be a credential.
+ */
+function containsSecret(text: string, secrets: string[]): boolean {
+  const lower = text.toLowerCase();
+  return secrets.some(secret => {
+    const candidate = secret.toLowerCase();
+    return lower === candidate || (candidate.length >= MIN_CONTAINED_SECRET_LENGTH && lower.includes(candidate));
+  });
+}
+
+/**
+ * Values no diagnostic may carry: every non-public request header value, the
+ * credential part of `Authorization`-style values, structured-field byte
+ * sequences, the nonce, and every form of the `Signature` bytes.
+ */
+function protectedValues(headers: Headers): string[] {
   const secrets: string[] = [];
   headers.forEach((value, name) => {
     if (!value || PUBLIC_REQUEST_HEADERS.has(name.toLowerCase())) return;
@@ -132,6 +205,11 @@ function requestSecrets(headers: Headers): string[] {
     // Structured-field byte sequences.
     for (const match of value.matchAll(/:([^:\s]+):/g)) secrets.push(match[1]!);
   });
+  // `Signature-Input` is public, but the diagnostics expose only whether a
+  // nonce was sent, never its value.
+  for (const match of (headers.get('signature-input') ?? '').matchAll(/;\s*nonce="((?:[^"\\]|\\.)*)"/g)) {
+    if (match[1]) secrets.push(match[1].replace(/\\(.)/g, '$1'));
+  }
   return [...secrets, ...signatureSecrets(headers)];
 }
 

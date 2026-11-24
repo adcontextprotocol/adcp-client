@@ -444,7 +444,11 @@ export interface RequestSignatureDiagnostics {
 
 /** Normalized `WWW-Authenticate` challenge. The raw header is never exposed. */
 export interface WwwAuthenticateDiagnostics {
-  /** Lowercased auth scheme, e.g. `signature` or `bearer`. */
+  /**
+   * Lowercased auth scheme, e.g. `signature` or `bearer`. A scheme outside
+   * the IANA registry is kept only when it is at most 32 characters and
+   * overlaps no credential-bearing request header value; otherwise `other`.
+   */
   scheme: string;
   /**
    * Challenge `error` code, present only when it is a recognized AdCP
@@ -469,9 +473,9 @@ export interface WwwAuthenticateDiagnostics {
 export interface AuthFailureDiagnostics {
   /** HTTP status, `401` or `403`. */
   status: number;
-  /** Parsed outbound `Signature-Input`, when the request was signed. */
+  /** Parsed outbound `Signature-Input`, present only when the request carried a `Signature`. */
   requestSignature?: RequestSignatureDiagnostics;
-  /** Outbound `Content-Digest` header value (a body hash), when one was sent. */
+  /** Outbound `Content-Digest` header value (a body hash), present only when the signature covered it. */
   contentDigest?: string;
   /** Normalized response challenge, when the response carried `WWW-Authenticate`. */
   wwwAuthenticate?: WwwAuthenticateDiagnostics;
