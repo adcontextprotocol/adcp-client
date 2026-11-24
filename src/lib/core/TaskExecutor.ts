@@ -39,7 +39,7 @@ import {
 import { withPreparedProtocolToolCall } from '../protocols/prepared-call-context';
 import { getAuthToken } from '../auth';
 import { getSignedRequestRejection } from '../protocols/signedRequestRejection';
-import { is401Error, adcpErrorToTypedError, ConfigurationError } from '../errors';
+import { is401Error, adcpErrorToTypedError, AuthenticationRequiredError, ConfigurationError } from '../errors';
 import type { ADCPError } from '../errors';
 import type { DeferredTaskState, DeferredTaskStorage } from '../storage/interfaces';
 import {
@@ -944,6 +944,22 @@ interface DeferredFinalizationLease {
 
 interface DeferredDispatchAdmissionLease {
   stop(): Promise<{ version: string; state: DeferredTaskState }>;
+}
+
+/**
+ * The SDK authentication error a failed result keeps as `errorInstance`. A
+ * `NeedsAuthorizationError` counts only when its requirements prove the MCP
+ * endpoint is OAuth protected, because callers start an interactive OAuth flow
+ * from it. Other `AuthenticationRequiredError`s, such as a rejected static
+ * credential, are kept as raised.
+ */
+function authenticationErrorInstance(error: unknown, agentUrl: string): ADCPError | undefined {
+  const signedRejection = getSignedRequestRejection(error);
+  if (signedRejection) return signedRejection;
+  if (error instanceof NeedsAuthorizationError) {
+    return hasValidatedMcpAuthorizationRequirements(error.requirements, agentUrl) ? error : undefined;
+  }
+  return error instanceof AuthenticationRequiredError ? error : undefined;
 }
 
 /**
@@ -6231,11 +6247,7 @@ export class TaskExecutor {
       error: error.message || String(error),
       adcpError: adcpErrorInfo,
       errorInstance:
-        getSignedRequestRejection(error) ??
-        (error instanceof NeedsAuthorizationError &&
-        hasValidatedMcpAuthorizationRequirements(error.requirements, agent.agent_uri)
-          ? error
-          : this.buildErrorInstance(taskId, adcpErrorInfo)),
+        authenticationErrorInstance(error, agent.agent_uri) ?? this.buildErrorInstance(taskId, adcpErrorInfo),
       correlationId,
       metadata: this.buildMetadata({
         taskId,

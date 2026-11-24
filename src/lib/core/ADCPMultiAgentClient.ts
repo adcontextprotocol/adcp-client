@@ -1,6 +1,7 @@
 // Multi-agent orchestrator providing simple, intuitive API
 
 import type { AgentConfig } from '../types';
+import { ADCPError } from '../errors';
 import {
   AgentClient,
   type CanonicalGetProductsResponse,
@@ -122,6 +123,8 @@ export class AgentCollection {
         success: false as const,
         status: 'failed' as const,
         error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        // The error a single-agent call would have thrown, so callers can branch with `instanceof`.
+        ...(result.reason instanceof ADCPError && { errorInstance: result.reason }),
         metadata: {
           taskId: '',
           taskName: '',

@@ -744,13 +744,21 @@ export interface TaskResultFailure<T> extends TaskResultBase<T> {
   /** Structured AdCP error (code, recovery, suggestion, retryAfterMs) */
   adcpError?: AdcpErrorInfo;
   /**
-   * Typed `ADCPError` subclass instance when the seller's error code has a
-   * dedicated class — currently `IdempotencyConflictError` and
-   * `IdempotencyExpiredError`. Lets callers write
+   * Typed `ADCPError` subclass instance, so callers can write
    * `if (result.errorInstance instanceof IdempotencyConflictError)` instead of
-   * switching on `adcpError.code` strings. Absent for codes without a typed
-   * mapping. Also preserves validated NeedsAuthorizationError metadata from
-   * MCP authentication challenges for interactive authorization flows.
+   * switching on `adcpError.code` strings. Present for:
+   * - a seller error code with a dedicated class: `IdempotencyConflictError`,
+   *   `IdempotencyExpiredError`, `AccountNotFoundError`,
+   *   `AccountSetupRequiredError`, `AccountPaymentRequiredError`,
+   *   `ActionNotAllowedError`;
+   * - an authentication rejection: `AuthenticationRequiredError`, including a
+   *   rejected signed request and `AuthenticationCredentialsRejectedError` for
+   *   a rejected static credential. A `NeedsAuthorizationError` is kept only
+   *   when its MCP OAuth requirements were validated, for interactive
+   *   authorization flows;
+   * - in a multi-agent collection result, the `ADCPError` the agent's call threw.
+   *
+   * Absent otherwise.
    */
   errorInstance?: import('../errors').ADCPError;
   /** Correlation ID from the error response context, for tracing across agents */
