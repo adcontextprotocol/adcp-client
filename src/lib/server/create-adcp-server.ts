@@ -1447,6 +1447,14 @@ export interface AdcpCapabilitiesConfig {
    * `experimental_features`. Requires `accounts.requestAccount`.
    */
   accountRequests?: AccountRequestsCapabilityOptions;
+  /**
+   * `media_buy.reporting_delivery.offerings` ids served to AdCP 3.3 callers only, because their
+   * report definition is at `contract_version` 1.2 (`core/reporting-report-definition.json`
+   * `x-adcp-validation.package_dimension`). They are dropped from `get_adcp_capabilities` for
+   * callers pinned below 3.3, and `reporting_delivery` goes too when none is left.
+   * `createAdcpServerFromPlatform` fills this from the installed reporting service.
+   */
+  reportingAdcp33OnlyOfferingIds?: readonly string[];
 }
 
 /**
@@ -10225,13 +10233,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // AdCP 3.3 reporting registration fields. A seller listing only sync_principal
         // serves reporting registration to 3.3 callers only.
         const reporting = data.media_buy?.reporting_delivery as
-          | (Record<string, unknown> & { configuration_task?: string })
+          | (Record<string, unknown> & { configuration_task?: string; offerings?: Array<{ offering_id?: unknown }> })
           | undefined;
         const features = data.experimental_features as string[] | undefined;
         if (reporting) {
           delete reporting.configuration_tasks;
           delete reporting.subscriptions;
-          if (reporting.configuration_task === undefined) {
+          // A 1.2 report definition serves 3.3 callers only (core/reporting-report-definition.json
+          // package_dimension); with no offering left there is nothing to advertise.
+          const adcp33Only = new Set(capConfig?.reportingAdcp33OnlyOfferingIds ?? []);
+          if (adcp33Only.size > 0 && Array.isArray(reporting.offerings)) {
+            reporting.offerings = reporting.offerings.filter(
+              offering => typeof offering.offering_id !== 'string' || !adcp33Only.has(offering.offering_id)
+            );
+          }
+          if (reporting.configuration_task === undefined || reporting.offerings?.length === 0) {
             delete (data.media_buy as { reporting_delivery?: unknown }).reporting_delivery;
             if (features) {
               data.experimental_features = features.filter(

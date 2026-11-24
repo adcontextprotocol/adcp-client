@@ -518,6 +518,7 @@ export async function createPostgresReliableReportingProductionService<TCtxMeta 
   );
   const platform: ReliableReportingPlatform<TCtxMeta> = {
     capabilities,
+    ...(core.platform.adcp33OnlyOfferingIds ? { adcp33OnlyOfferingIds: core.platform.adcp33OnlyOfferingIds } : {}),
     getReportingStatus: subscriptions
       ? async (request, context) =>
           withReportingSubscriptionCoverageV1(

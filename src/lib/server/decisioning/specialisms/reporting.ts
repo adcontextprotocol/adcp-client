@@ -24,6 +24,15 @@ export interface ReliableReportingPlatform<TCtxMeta = Record<string, unknown>> {
   /** Capability document derived from the reporting components installed. */
   readonly capabilities: ReportingDeliveryCapabilities;
 
+  /**
+   * `capabilities.offerings` ids served to AdCP 3.3 callers only, because their report definition is
+   * at `contract_version` 1.2 (`core/reporting-report-definition.json`
+   * `x-adcp-validation.package_dimension`). The framework drops them from `get_adcp_capabilities` for
+   * callers pinned below 3.3, refuses those callers' `sync_accounts` `reporting_delivery_configs`
+   * naming them, and refuses to start a server pinned below 3.3 that has any.
+   */
+  readonly adcp33OnlyOfferingIds?: readonly string[];
+
   /** Snapshot-stable reads from the authoritative reporting ledger. */
   getReportingStatus(
     request: AdcpToolMap['get_reporting_status']['params'],
