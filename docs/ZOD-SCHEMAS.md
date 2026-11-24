@@ -233,6 +233,44 @@ schema projections can retain them. Use the protocol JSON Schema returned by
 `getToolInputSchema()` or the framework's strict request validation when exact
 array cardinality matters.
 
+### Unknown keys and closed objects
+
+Generated Zod object schemas are `.passthrough()` by default: they keep keys
+the schema doesn't declare, so extension fields survive a parse. AdCP 3.3 opens
+the objects that were closed by accident and keeps about 115 locations closed
+on purpose (`additionalProperties: false`), each for a stated reason: signed
+commercial terms, join keys such as metric qualifiers, privacy boundaries,
+credential-free reporting destinations, signature envelopes, and `oneOf`
+branches told apart by which keys are present.
+
+**In SDK 17.0 most of those closed objects are still permissive in Zod.** Only a
+few are enforced: the Trusted Match context and identity match requests, the
+placement presentation document, `CanonicalMetricQualifierSchema` where the
+generated code reuses it, and the `brand.json` branches in `BrandJsonSchema`.
+The rest, for example `CommercialTermsSchema` and the inline metric `qualifier`
+objects, accept an unknown key that the published schema rejects
+([#3679](https://github.com/adcontextprotocol/adcp-client/issues/3679)).
+
+**A 17.x minor release may tighten them.** Exported schemas will become
+`.strict()` wherever AdCP 3.3 keeps the object closed, and stay `.passthrough()`
+wherever AdCP leaves it open. After that change, `parse()` throws, and
+`safeParse()` fails, for a payload carrying an unknown key at a closed location.
+This reservation covers only objects the published schema closes. It does not
+cover open objects, other constraints, or the inferred TypeScript types.
+
+To stay compatible:
+
+- Don't add vendor keys to closed objects such as `commercial_terms` or a
+  metric `qualifier`. Put extensions in `ext`, or in objects AdCP leaves open.
+- If your code depends on Zod accepting a key at one of these locations,
+  treat it as a bug to fix now.
+- For exact enforcement today, validate against the protocol JSON Schema:
+  `getCanonicalToolValidator()` from `@adcp/sdk/schemas` compiles the published
+  schema as is, and `getToolInputSchema()` / `getToolResponseSchema()` return
+  it. The SDK's own request and response validation also enforces these closed
+  objects; live response validation additionally admits transport envelope
+  fields at the response root.
+
 ## Error Handling
 
 ```typescript

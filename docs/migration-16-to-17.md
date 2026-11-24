@@ -109,6 +109,19 @@ A `3.3.0` or `3.3` configuration pin does not select a beta. Use the exact
 `3.3.0-rc.3` bundle (wire alias `3.3-rc.3`); unavailable pins now produce a
 short list of bundled release lines instead of every compatible patch.
 
+## Zod schemas for closed objects may tighten in 17.x
+
+AdCP 3.3 keeps about 115 object locations closed on purpose, such as signed
+commercial terms, metric qualifiers and privacy-boundary error arms. Most of
+the exported Zod schemas for them are still `.passthrough()` in 17.0, so they
+accept unknown keys that the published schema rejects (#3679). The SDK's own
+JSON Schema validation already rejects those keys.
+
+A 17.x **minor** release may make these schemas `.strict()` wherever AdCP 3.3
+keeps the object closed. Objects AdCP leaves open stay `.passthrough()`. Don't
+rely on Zod accepting a vendor key in a closed object: put extensions in `ext`.
+See [Unknown keys and closed objects](./ZOD-SCHEMAS.md#unknown-keys-and-closed-objects).
+
 ## pnpm peer resolution
 
 The official A2A SDK `1.0.1` already marks its Express peer optional, and the
