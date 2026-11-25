@@ -361,7 +361,7 @@ interface ExpectedCanonicalization {
  *   definitive and the omitted buy must never be treated as reported.
  */
 export type ExpectedReportingMembership =
-  | { kind: 'media_buy_ids'; packageCoverage?: never }
+  | { kind: 'media_buy_ids' }
   | {
       kind: 'all_media_buys';
       /** Buys that unambiguously belong to the period; each one the seller omits is a blocking issue. */
@@ -520,7 +520,13 @@ function assertExpectedMemberships(expectedPeriods: readonly ExpectedReportingPe
 /** Two RFC 3339 instants that name the same moment, whatever their formatting. */
 function sameInstant(left: unknown, right: unknown): boolean {
   const normalized = normalizedInstant(left);
-  return normalized !== undefined && normalized === normalizedInstant(right);
+  if (normalized === undefined || normalized !== normalizedInstant(right)) return false;
+  const fraction = (value: unknown): string => {
+    if (typeof value !== 'string') return '';
+    const match = /:\d{2}\.(\d+)(?:[Zz]|[+-]\d{2}(?::?\d{2})?)$/.exec(value);
+    return match?.[1]?.replace(/0+$/, '') ?? '';
+  };
+  return fraction(left) === fraction(right);
 }
 
 function membershipIssues(

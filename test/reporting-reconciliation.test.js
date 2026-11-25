@@ -4030,3 +4030,16 @@ test('media_buy_ids seller-frozen package coverage compares cutoff instants by v
   assert.deepEqual(result.missingExpectedPeriods, []);
   assert.ok(!result.obligations[0].reasons.includes('SCOPE_CUTOFF_MISMATCH'));
 });
+
+test('media_buy_ids seller-frozen package coverage rejects a sub-millisecond late cutoff', async () => {
+  const late = '2026-09-01T00:00:00.000001Z';
+  const { result } = await reconcileAllMediaBuys(['buy-1', 'buy-2'], expectedWithSellerPackageCoverage(), raw => {
+    raw.periods[0].scope_resolved_at = late;
+    for (const item of [...raw.periods, ...raw.revisions]) {
+      item.coverage.evaluated_at = late;
+    }
+    return raw;
+  });
+  assertMatchedButBlocked(result, 'SCOPE_CUTOFF_MISMATCH');
+  assert.deepEqual(result.submittedReceipts, []);
+});

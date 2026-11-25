@@ -51,3 +51,7 @@ export const sellerPackagePeriod: ExpectedReportingPeriod = {
   coverage: buyCoverage,
   verificationProfile: 'native_commit',
 };
+
+export function membershipFromPeriod(period: ExpectedReportingPeriod): ExpectedReportingMembership | undefined {
+  return period.membership;
+}
