@@ -3929,3 +3929,82 @@ test('media_buy_ids membership (explicit or default) keeps exact buy-set and cov
   assert.equal(reshapedCoverage.missingExpectedPeriods.length, 1);
   assert.ok(reshapedCoverage.obligations[0].reasons.includes('EXPECTED_COVERAGE_MISMATCH'));
 });
+
+function expectedWithSellerPackageCoverage(overrides = {}) {
+  const expected = expectedPeriod();
+  for (const key of ['package_ids', 'covered_package_ids', 'unsupported_package_ids', 'unknown_package_ids']) {
+    delete expected.coverage[key];
+  }
+  return {
+    ...expected,
+    membership: { kind: 'media_buy_ids', packageCoverage: 'seller_frozen' },
+    ...overrides,
+  };
+}
+
+test('media_buy_ids accepts a seller-frozen package roster while retaining the pinned buy set', async () => {
+  const expected = expectedWithSellerPackageCoverage();
+  const { result, contexts } = await reconcileAllMediaBuys(['buy-1', 'buy-2'], expected);
+
+  assert.equal(result.definitive, true, JSON.stringify(result.obligations));
+  assert.deepEqual(result.missingExpectedPeriods, []);
+  assert.equal(result.submittedReceipts.length, 1);
+  assert.equal(result.submittedReceipts[0].status, 'accepted');
+  assert.deepEqual(contexts[0].obligation.coverage.package_ids, ['package-1', 'package-2']);
+});
+
+test('media_buy_ids seller-frozen package coverage still rejects buy and package inconsistencies', () => {
+  const expected = expectedWithSellerPackageCoverage();
+  const wrongBuySet = evaluateReportingLedger(
+    asLedger(withFrozenMembership(response([]), ['buy-1', 'buy-3'])),
+    [expected],
+    reportingNow
+  );
+  assert.equal(wrongBuySet.missingExpectedPeriods.length, 1);
+
+  const invalidPackagePartition = evaluateReportingLedger(
+    asLedger(
+      withFrozenMembership(response([]), ['buy-1', 'buy-2'], {
+        ...frozenCoverage(['buy-1', 'buy-2']),
+        covered_package_ids: ['package-1'],
+      })
+    ),
+    [expected],
+    reportingNow
+  );
+  assert.equal(invalidPackagePartition.definitive, false);
+  assert.ok(
+    invalidPackagePartition.missingExpectedPeriods.length > 0 ||
+      invalidPackagePartition.obligations[0].reasons.includes('COVERAGE_SCOPE_MISMATCH')
+  );
+
+  const divergentRevision = withFrozenMembership(response([]), ['buy-1', 'buy-2']);
+  divergentRevision.revisions[0].coverage.package_ids = ['different-package'];
+  divergentRevision.revisions[0].coverage.covered_package_ids = ['different-package'];
+  const inconsistentRevision = evaluateReportingLedger(asLedger(divergentRevision), [expected], reportingNow);
+  assert.deepEqual(inconsistentRevision.missingExpectedPeriods, []);
+  assert.ok(inconsistentRevision.obligations[0].reasons.includes('COVERAGE_SCOPE_MISMATCH'));
+});
+
+test('media_buy_ids seller-frozen package coverage rejects caller package pins', () => {
+  const invalid = expectedWithSellerPackageCoverage({ coverage: expectedPeriod().coverage });
+  assert.throws(
+    () => evaluateReportingLedger(asLedger(response([])), [invalid], reportingNow),
+    error => error.code === 'INVALID_EXPECTED_MEMBERSHIP'
+  );
+});
+
+test('media_buy_ids accepts a partial buy expectation when covered packages establish partial coverage', () => {
+  const expected = expectedWithSellerPackageCoverage({
+    coverageRequirement: 'allow_partial',
+    coverage: {
+      status: 'partial',
+      media_buy_ids: ['buy-1', 'buy-2'],
+      fully_covered_media_buy_ids: [],
+      partially_covered_media_buy_ids: ['buy-1', 'buy-2'],
+      unsupported_media_buy_ids: [],
+      unknown_media_buy_ids: [],
+    },
+  });
+  assert.doesNotThrow(() => evaluateReportingLedger(asLedger(response([])), [expected], reportingNow));
+});
