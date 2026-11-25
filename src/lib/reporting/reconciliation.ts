@@ -529,8 +529,12 @@ function sameInstant(left: unknown, right: unknown): boolean {
   if (normalized === undefined || normalized !== normalizedInstant(right)) return false;
   const fraction = (value: unknown): string => {
     if (typeof value !== 'string') return '';
-    const match = /:\d{2}\.(\d+)(?:[Zz]|[+-]\d{2}(?::?\d{2})?)$/.exec(value);
-    return match?.[1]?.replace(/0+$/, '') ?? '';
+    const separator = value.indexOf('.');
+    if (separator < 0) return '';
+    let end = separator + 1;
+    while (end < value.length && value.charCodeAt(end) >= 48 && value.charCodeAt(end) <= 57) end++;
+    while (end > separator + 1 && value.charCodeAt(end - 1) === 48) end--;
+    return value.slice(separator + 1, end);
   };
   const leapSecond = (value: unknown): boolean =>
     typeof value === 'string' && RFC3339_INSTANT.exec(value)?.[6] === '60';
