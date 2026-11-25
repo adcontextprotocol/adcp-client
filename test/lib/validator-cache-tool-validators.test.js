@@ -40,6 +40,13 @@ const TOOLS = [
   'sync_creatives',
   'update_media_buy',
 ];
+// Schema refs validated through getSchemaValidatorByRef (the shared schema-ref registry) in every release.
+const REFS = [
+  'account/sync-accounts-request.json',
+  'core/account-ref.json',
+  'core/mcp-webhook-payload.json',
+  'core/product.json',
+];
 
 const tempDirs = [];
 const scenario = {};
@@ -66,7 +73,7 @@ const crypto = require('node:crypto');
 const cfg = JSON.parse(process.env.PLAN);
 const cacheEntries = cfg.cacheDir ? path.join(cfg.cacheDir, 'v1') + path.sep : '\0';
 
-const counts = { compile: 0, compileSchemaEnv: 0, lookups: 0, evaluated: 0, scans: 0, writes: 0 };
+const counts = { compile: 0, compileSchemaEnv: 0, addSchema: 0, lookups: 0, evaluated: 0, scans: 0, writes: 0 };
 const readdirSync = fs.readdirSync;
 fs.readdirSync = function countingReaddir(dir, ...rest) {
   if (typeof dir === 'string' && dir + path.sep === cacheEntries) counts.scans++;
@@ -99,6 +106,12 @@ for (const [method, key] of [['compile', 'compile'], ['_compileSchemaEnv', 'comp
     return original.apply(this, args);
   };
 }
+// Document registrations; a new Ajv adds its meta-schemas through addSchema(_, _, true).
+const addSchema = Ajv.prototype.addSchema;
+Ajv.prototype.addSchema = function countingAddSchema(schema, key, meta, ...rest) {
+  if (meta !== true) counts.addSchema += Array.isArray(schema) ? schema.length : 1;
+  return addSchema.call(this, schema, key, meta, ...rest);
+};
 
 const loader = require(path.join(cfg.sdkRoot, 'dist/lib/validation/schema-loader.js'));
 const validator = require(path.join(cfg.sdkRoot, 'dist/lib/validation/schema-validator.js'));
@@ -157,6 +170,23 @@ for (const version of versions) {
       else { modular(); canonical(); }
     }
   }
+  for (const ref of cfg.only ? [] : cfg.refs) {
+    for (const allErrors of [false, true]) {
+      steps.push({ label: version + '|ref|' + ref + '|' + allErrors, run: () => {
+        const fn = loader.getSchemaValidatorByRef(ref, version, undefined, { allErrors });
+        if (!fn) return null;
+        const doc = loader.getSchemaDocumentByRef(ref, version);
+        const properties = Object.keys((doc && doc.schema.properties) || {}).sort().slice(0, 12);
+        const payloads = [{}, [], null, ...properties.flatMap(p => [7, {}, [{}]].map(v => ({ [p]: v })))];
+        return { schema: digest(fn.schema), frozen: Object.isFrozen(fn.schema), props: Object.getOwnPropertyNames(fn).sort(),
+                 outcomes: raw(fn, payloads) };
+      } });
+    }
+  }
+  if (!cfg.only) steps.push({ label: version + '|delivery-envelope', run: () => {
+    const fn = loader.getMediaBuyDeliveryEnvelopeValidator(version);
+    return fn ? raw(fn, [{}, { task_type: 'x' }, { result: 7 }]) : null;
+  } });
   steps.push({ label: version + '|registeredIds', run: () => [...loader.getRegisteredSchemaIds(version)].sort() });
 }
 
@@ -202,6 +232,7 @@ function runChild({
       externalRoots,
       extraPayloads,
       resultFile,
+      refs: REFS,
     }),
   };
   delete env.ADCP_VALIDATOR_CACHE_DIR;
@@ -376,11 +407,28 @@ test('warm runs compile no tool validator, for valid and failing payloads alike'
     `canonical validators in the plan: ${canonical.length}`
   );
   for (const run of [warm, warmReverse]) {
+    // The delivery-envelope projection keeps its own uncached Ajv (one per release).
     const compiled = run.results
-      .filter(r => compiles(r) > 0)
+      .filter(r => !r.label.endsWith('|delivery-envelope') && compiles(r) > 0)
       .map(r => `${r.label}: ${r.compile}+${r.compileSchemaEnv}`);
     assert.deepEqual(compiled, [], 'steps that compiled in a warm run');
-    assert.equal(run.counts.compile + run.counts.compileSchemaEnv, 0);
+  }
+});
+
+test('warm runs build no schema-ref registry: schema-ref validators register and compile nothing', async () => {
+  const { off, warm, warmReverse } = await scenario.main;
+  const refSteps = off.results.filter(r => r.label.includes('|ref|'));
+  assert.ok(refSteps.length >= VERSIONS.length * REFS.length * 2, `schema-ref steps: ${refSteps.length}`);
+  assert.ok(
+    refSteps.some(r => r.addSchema > 0 && compiles(r) > 0),
+    'cache off, the first schema-ref validator of a release builds its registry'
+  );
+  for (const run of [warm, warmReverse]) {
+    const work = run.results
+      .filter(r => r.label.includes('|ref|'))
+      .filter(r => r.addSchema > 0 || compiles(r) > 0)
+      .map(r => `${r.label}: addSchema ${r.addSchema}, compiles ${compiles(r)}`);
+    assert.deepEqual(work, [], 'schema-ref steps that registered or compiled in a warm run');
   }
 });
 
@@ -436,6 +484,50 @@ test('each validator served from the cache is its own function: calling one leav
 });
 
 // ---------------------------------------------------------------- key coverage and damage
+
+test('schema-ref validators of two files that mirror one $id stay two functions, warm too', async () => {
+  // Releases mirror async-response documents under the same $id in two files.
+  const version = '3.3.0-rc.3';
+  const A = 'core/async-response-refs/creative/sync-creatives-async-response-submitted.json';
+  const B = 'creative/sync-creatives-async-response-submitted.json';
+  const MIRROR = String.raw`
+    const path = require('node:path');
+    const { sdkRoot, version, A, B } = JSON.parse(process.env.PLAN);
+    const loader = require(path.join(sdkRoot, 'dist/lib/validation/schema-loader.js'));
+    const a = loader.getSchemaValidatorByRef(A, version);
+    const b = loader.getSchemaValidatorByRef(B, version);
+    const docA = loader.getSchemaDocumentByRef(A, version).schema;
+    const docB = loader.getSchemaDocumentByRef(B, version).schema;
+    a({});
+    const held = JSON.stringify(a.errors);
+    b({ status: 'submitted', bogus: 1 });
+    const out = { sameId: docA.$id === docB.$id, distinct: a !== b, ownSchemas: a.schema.allOf === docA.allOf && b.schema.allOf === docB.allOf,
+                  untouched: JSON.stringify(a.errors) === held && held !== 'null' };
+    process.stdout.write('\n@@RESULT@@' + JSON.stringify(out) + '\n');
+  `;
+  const dir = privateDir('mirror');
+  const run = () =>
+    new Promise((resolve, reject) => {
+      const env = {
+        ...process.env,
+        ADCP_VALIDATOR_CACHE_DIR: dir,
+        PLAN: JSON.stringify({ sdkRoot: SDK_ROOT, version, A, B }),
+      };
+      const child = spawn(process.execPath, ['-e', MIRROR], { cwd: SDK_ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', chunk => (stdout += chunk));
+      child.stderr.on('data', chunk => (stderr += chunk));
+      child.on('close', status => {
+        const line = stdout.split('\n').find(l => l.startsWith('@@RESULT@@'));
+        if (status !== 0 || !line) return reject(new Error(`child exited ${status}: ${stderr}`));
+        resolve(JSON.parse(line.slice('@@RESULT@@'.length)));
+      });
+    });
+  const expected = { sameId: true, distinct: true, ownSchemas: true, untouched: true };
+  assert.deepEqual(await run(), expected, 'cold');
+  assert.deepEqual(await run(), expected, 'warm');
+});
 
 test('a referenced document edited in place is a miss: the next process validates against the new content', async () => {
   const version = '3.0.25';
@@ -820,4 +912,16 @@ test('a release whose documents have ambiguous identities still throws on the ca
   assert.match(String(read(off).threw), /unambiguous schema identities/);
   assertSameOutcomes(cold, off, 'cold');
   assertSameOutcomes(warm, off, 'warm');
+  // The schema-ref getter: a warm run first has entries from the unchanged
+  // release, then sees the conflicting copy and must still throw.
+  const refsPlan = { versions: [version], tools: [], externalRoots: [[version, root]] };
+  const plainRoot = copyRoot(version, 'unambiguous');
+  const refsDir = privateDir('ambiguous-refs-cache');
+  await runChild({ ...refsPlan, externalRoots: [[version, plainRoot]], cacheDir: refsDir });
+  const [refsOff, refsWarm] = await Promise.all([runChild(refsPlan), runChild({ ...refsPlan, cacheDir: refsDir })]);
+  assert.match(
+    String(stepValue(refsOff, `${version}|ref|core/account-ref.json|false`).threw),
+    /unambiguous schema identities/
+  );
+  assertSameOutcomes(refsWarm, refsOff, 'schema-ref getter, warm');
 });

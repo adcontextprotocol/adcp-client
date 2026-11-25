@@ -7,7 +7,9 @@
 // one before, in any order, and the cases that keep their own Ajv (projected
 // roots, roots outside the registered set) still fail and succeed as before.
 // Work is counted through the Ajv prototype the SDK loads; no SDK internals
-// are replaced.
+// are replaced. The counts are of live registration, so the cross-process
+// validator cache stays off here (with entries on disk, hits register nothing).
+delete process.env.ADCP_VALIDATOR_CACHE_DIR;
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
