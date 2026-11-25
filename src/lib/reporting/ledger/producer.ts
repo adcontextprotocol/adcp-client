@@ -41,6 +41,7 @@ import {
   retryReportingStatusNotificationsV1,
 } from './lifecycle';
 import { listAdjustmentMetadataFromStore, listRevisionMetadataFromStore } from './revision-metadata';
+import { reportingSubscriptionSource } from './subscription-routing';
 import { ReportingConfigurationImmutableError, isReportingLedgerErrorNamed } from './types';
 import type {
   ReportingSubscriptionConfigurationInputV1,
@@ -68,6 +69,11 @@ const MAX_REVISION_ROWS = 1_000_000;
 class ReportingSourceConfigurationError extends Error {}
 
 export function createReportingProducer(options: CreateReportingProducerOptionsV1): ReportingProducerV1 {
+  const matchesSubscriptionSource = (
+    options as CreateReportingProducerOptionsV1 & {
+      [reportingSubscriptionSource]?: (deliveryId: string, sourceId: string, finality: ReportingFinalityV1) => boolean;
+    }
+  )[reportingSubscriptionSource];
   const offeringById = new Map(options.offerings.map(offering => [offering.offeringId, offering]));
   if (offeringById.size !== options.offerings.length) throw new TypeError('Reporting offering IDs must be unique');
   if (!options.contact.name.trim()) throw new TypeError('Reporting producer contact name is required');
@@ -398,7 +404,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       );
       const generations = new Map<string, ReportingLedgerConfigurationV1>();
       for (const input of inputs) {
-        const configuration = subscriptionConfiguration(input, plan, nowIso);
+        const configuration = subscriptionConfiguration(input, plan, nowIso, matchesSubscriptionSource);
         const key = `${configuration.delivery_config_version}\0${configuration.offeringId}`;
         if (generations.has(key)) {
           throw new TypeError('planSubscriptionObligations names one (version, offering) generation twice');
@@ -637,6 +643,11 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await options.store.updateObligation(obligation, lease);
           }
           const offering = requiredOffering(offeringById, obligation.offeringId);
+          if ((obligation.requiredFinality === 'official') !== (offering.publicationClass === 'AUTHORITATIVE')) {
+            throw new ReportingSourceConfigurationError(
+              'Reporting source publication class does not match the obligation finality'
+            );
+          }
           if (isReportingCalendarDay(obligation.schedule, obligation.period.sourceTimezone)) {
             try {
               assertReportingCalendarDayPeriod(
@@ -1018,7 +1029,8 @@ function planObligation(
 function subscriptionConfiguration(
   input: ReportingSubscriptionConfigurationInputV1,
   plan: { account_id: string; principal: { tenantId: string; principalId: string }; subscriptionId: string },
-  installedAt: string
+  installedAt: string,
+  matchesSubscriptionSource?: (deliveryId: string, sourceId: string, finality: ReportingFinalityV1) => boolean
 ): ReportingLedgerConfigurationV1 {
   if (!input || typeof input !== 'object') throw new TypeError('Subscription configuration input must be an object');
   for (const field of [
@@ -1045,12 +1057,13 @@ function subscriptionConfiguration(
     subscription.principalId !== plan.principal.principalId ||
     subscription.subscriptionId !== plan.subscriptionId ||
     subscription.subscriptionId !== input.delivery_config_id ||
-    subscription.offeringId !== input.offeringId ||
+    (subscription.offeringId !== input.offeringId &&
+      !matchesSubscriptionSource?.(subscription.offeringId, input.offeringId, input.requiredFinality)) ||
     input.account?.account_id !== plan.account_id
   ) {
     throw new TypeError(
       'Subscription configuration must name the planned account, owner and subscription, with ' +
-        'delivery_config_id equal to subscription_id and offeringId equal to the resolved offering'
+        'delivery_config_id equal to subscription_id and a matching source offering'
     );
   }
   if (input.supersededAt !== undefined) {

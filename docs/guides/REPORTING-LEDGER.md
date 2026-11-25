@@ -63,6 +63,22 @@ reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true });
 process.once('SIGTERM', () => void reporting.stop());
 ```
 
+A report can advertise snapshot and official finality in one delivery offering. Register two adapters
+with unique source offering IDs, the same contract and the same `deliveryOffering` declaration:
+
+```ts
+adapters: {
+  snapshot: { sourceOffering: snapshotSource, deliveryOffering, fetchSlice: fetchSnapshot },
+  official: { sourceOffering: officialSource, deliveryOffering, executor: officialExecutor },
+}
+```
+
+Set `deliveryOffering.supported_finality` to `['snapshot', 'official']`. The sources must respectively
+declare `PROVISIONAL_SNAPSHOT` and `AUTHORITATIVE`, and each must meet the advertised SLA. Direct
+configurations name the appropriate source offering ID; `resolveSource` routes that ID to its adapter.
+Subscriptions select the advertised offering and finality; the service freezes the selected source ID
+on the generation. Configure official finality policies to match the authoritative source's evidence.
+
 Apply the schema before starting a release with `npx adcp-reporting-storage migrate`
 (`--status` lists applied and pending versions, `--dry-run` prints the plan; it reads
 `--database-url`, `$ADCP_DATABASE_URL` or `$DATABASE_URL`, and `--schema`). The migrations are

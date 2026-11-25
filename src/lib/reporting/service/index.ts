@@ -62,6 +62,7 @@ import {
 } from './scheduler-support';
 import type { InlineReportingReplayRetentionV1 } from '../source';
 import { listedReportingSourceProductIdsV1 } from '../source/applicability';
+import { reportingSubscriptionSource } from '../ledger/subscription-routing';
 import { assertReportingCalendarDaySource, reportingCalendarDayOrigin } from '../ledger/schedule';
 import {
   ReportingCoverageConstituentIdentityV1Schema,
@@ -694,6 +695,13 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   const adapterOfferings = new Map<string, ReportingSourceOfferingV1>();
   const offerings = new Map<string, ReportingSourceOfferingV1>();
   const deliveryOfferings: ReportingDeliveryOffering[] = [];
+  const deliveryBySource = new Map<string, ReportingDeliveryOffering>();
+  const sourcesByDelivery = new Map<string, ReportingSourceOfferingV1[]>();
+  const deliveryCounts = new Map<string, number>();
+  for (const [, adapter] of adapterEntries) {
+    const id = adapter.deliveryOffering.offering_id;
+    deliveryCounts.set(id, (deliveryCounts.get(id) ?? 0) + 1);
+  }
   for (const [adapterId, adapter] of adapterEntries) {
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(adapterId)) throw new TypeError('Reporting adapter IDs must be bounded IDs');
     const sourceOffering = ReportingSourceOfferingV1Schema.parse(structuredClone(adapter.sourceOffering));
@@ -730,6 +738,12 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     if (canonicalize(routedOffering.contract) !== canonicalize(sourceOffering.contract)) {
       throw new TypeError('Reporting adapter executor offering contract differs from its declared source offering');
     }
+    if (
+      deliveryCounts.get(deliveryOffering.offering_id) === 2 &&
+      routedOffering.publicationClass !== sourceOffering.publicationClass
+    ) {
+      throw new TypeError('Reporting adapter executor publication class differs from its declared source offering');
+    }
     const declaredProducts = listedReportingSourceProductIdsV1(sourceOffering.applicability);
     const routedProducts = listedReportingSourceProductIdsV1(routedOffering.applicability);
     if (declaredProducts !== undefined) {
@@ -744,7 +758,8 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       routedOffering,
       deliveryOffering,
       allowManagedDelivery,
-      (options.subscriptions ?? options.reportingSubscriptions) !== undefined
+      (options.subscriptions ?? options.reportingSubscriptions) !== undefined,
+      deliveryCounts.get(deliveryOffering.offering_id) === 2
     );
     sources.set(adapterId, source);
     // Keyed by adapter, not by offering ID: the route must resolve to the exact
@@ -753,7 +768,32 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     // be selected while that other adapter's contract is the one stored.
     adapterOfferings.set(adapterId, routedOffering);
     offerings.set(routedOffering.offeringId, routedOffering);
-    deliveryOfferings.push(deliveryOffering);
+    deliveryBySource.set(routedOffering.offeringId, deliveryOffering);
+    const grouped = sourcesByDelivery.get(deliveryOffering.offering_id) ?? [];
+    const existingDelivery = deliveryOfferings.find(value => value.offering_id === deliveryOffering.offering_id);
+    if (existingDelivery && canonicalize(existingDelivery) !== canonicalize(deliveryOffering)) {
+      throw new TypeError('Reporting adapters sharing a delivery offering must declare identical delivery offerings');
+    }
+    if (grouped.some(value => canonicalize(value.contract) !== canonicalize(routedOffering.contract))) {
+      throw new TypeError('Reporting sources sharing a delivery offering must have identical contracts');
+    }
+    grouped.push(routedOffering);
+    sourcesByDelivery.set(deliveryOffering.offering_id, grouped);
+    if (!existingDelivery) deliveryOfferings.push(deliveryOffering);
+  }
+  for (const delivery of deliveryOfferings) {
+    const grouped = sourcesByDelivery.get(delivery.offering_id)!;
+    if (
+      grouped.length > 1 &&
+      (grouped.length !== 2 ||
+        delivery.supported_finality.length !== 2 ||
+        !delivery.supported_finality.includes('snapshot') ||
+        !delivery.supported_finality.includes('official') ||
+        grouped.filter(value => value.publicationClass === 'PROVISIONAL_SNAPSHOT').length !== 1 ||
+        grouped.filter(value => value.publicationClass === 'AUTHORITATIVE').length !== 1)
+    ) {
+      throw new TypeError('A shared reporting delivery offering requires one snapshot and one authoritative source');
+    }
   }
   const adcp33OnlyOfferings = reportingAdcp33OnlyOfferings(
     deliveryOfferings,
@@ -762,13 +802,22 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   );
 
   const routedSource = createRoutedSource(sources, offerings);
-  const producer = createReportingProducer({
+  const producerOptions = {
     store: options.store,
     source: routedSource,
+    [reportingSubscriptionSource]: (deliveryId: string, sourceId: string, finality: 'snapshot' | 'official') =>
+      sourcesByDelivery
+        .get(deliveryId)
+        ?.some(
+          source =>
+            source.offeringId === sourceId &&
+            source.publicationClass === (finality === 'official' ? 'AUTHORITATIVE' : 'PROVISIONAL_SNAPSHOT')
+        ) ?? false,
     offerings: [...offerings.values()],
     contact: options.contact,
     ...(options.subscribers ? { subscribers: options.subscribers } : {}),
-  });
+  };
+  const producer = createReportingProducer(producerOptions);
 
   const hasConsumerStatus = options.resolveConsumerId !== undefined;
   if (options.consumerMismatchEscalation && !hasConsumerStatus) {
@@ -1054,7 +1103,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     const frozenInput = structuredClone(configuration);
     const offering = offerings.get(configuration.offeringId);
     if (!offering) throw new TypeError('Reporting configuration selected an unknown offering');
-    const deliveryOffering = deliveryOfferings.find(value => value.offering_id === offering.offeringId)!;
+    const deliveryOffering = deliveryBySource.get(offering.offeringId)!;
     validateConfigurationAgainstDeliveryOffering(frozenInput, deliveryOffering, options.automatedRecoveryWindowSeconds);
     const [route, currency, coverage] = await Promise.all([
       options.resolveSource(account, frozenInput),
@@ -1220,6 +1269,12 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     if (account?.id !== set.account_id) {
       throw new TypeError('resolveSubscriptionAccount must return the account it was asked for');
     }
+    const stored = (await options.store.listConfigurations(set.account_id)).filter(
+      value =>
+        value.subscription?.tenantId === principal.tenantId &&
+        value.subscription?.principalId === principal.principalId &&
+        value.subscription?.subscriptionId === set.subscription_id
+    );
     const generations = new Map<string, Awaited<ReturnType<typeof subscriptionGeneration>>>();
     const obligations: ReportingSubscriptionLedgerObligationInputV1[] = [];
     for (const owed of set.obligations) {
@@ -1231,7 +1286,19 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         if (!version) {
           throw new TypeError(`Subscription version ${owed.subscription_version} owes periods but is not retained`);
         }
-        generation = await subscriptionGeneration(subscriptions, principal, account, version, owed.offering_id);
+        const existing = stored.find(
+          value =>
+            value.delivery_config_version === owed.subscription_version &&
+            value.subscription?.offeringId === owed.offering_id
+        );
+        generation = await subscriptionGeneration(
+          subscriptions,
+          principal,
+          account,
+          version,
+          owed.offering_id,
+          existing?.offeringId
+        );
         generations.set(key, generation);
       }
       if (owed.report_definition_id !== generation.input.report_definition_id) {
@@ -1262,7 +1329,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       }
       obligations.push({
         delivery_config_version: owed.subscription_version,
-        offeringId: owed.offering_id,
+        offeringId: generation.input.offeringId,
         period: { start: owed.period_start, end: owed.period_end },
         mediaBuyIds: [...owed.media_buy_ids],
         constituents: structuredClone(constituents),
@@ -1310,7 +1377,8 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     principal: PrincipalRef,
     account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>,
     version: ReportingSubscriptionFrozenOwedSetV1['versions'][number],
-    offeringId: string
+    offeringId: string,
+    storedSourceId?: string
   ): Promise<{
     input: ReportingSubscriptionConfigurationInputV1;
     pool: ReportingLedgerConfigurationV1['constituents'];
@@ -1320,11 +1388,32 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     version: ReportingSubscriptionFrozenOwedSetV1['versions'][number];
   }> {
     const deliveryOffering = deliveryOfferings.find(value => value.offering_id === offeringId);
-    const sourceOffering = offerings.get(offeringId);
-    if (!deliveryOffering || !sourceOffering) {
+    const sourceOffering =
+      storedSourceId !== undefined
+        ? offerings.get(storedSourceId)
+        : sourcesByDelivery
+            .get(offeringId)
+            ?.find(
+              value =>
+                value.publicationClass ===
+                (version.configuration.selector.required_finality === 'official'
+                  ? 'AUTHORITATIVE'
+                  : 'PROVISIONAL_SNAPSHOT')
+            );
+    if (
+      !deliveryOffering ||
+      !sourceOffering ||
+      deliveryBySource.get(sourceOffering.offeringId)?.offering_id !== offeringId
+    ) {
       throw new TypeError(
         `Subscription resolved offering ${JSON.stringify(offeringId)}, which this service does not serve`
       );
+    }
+    if (
+      (version.configuration.selector.required_finality === 'official') !==
+      (sourceOffering.publicationClass === 'AUTHORITATIVE')
+    ) {
+      throw new TypeError('Stored reporting source publication class does not match subscription finality');
     }
     // A managed offering (one with a delivery method) is delivered to the subscription's
     // destination, which only a composition that owns managed delivery can bind. Selection
@@ -1355,7 +1444,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     const configuration: ReliableReportingConfigurationInputV1 = {
       delivery_config_id: subscription.subscription_id,
       delivery_config_version: version.subscription_version,
-      offeringId,
+      offeringId: sourceOffering.offeringId,
       report_definition_id: deliveryOffering.report_definition_id,
       feedPurpose: subscription.selector.feed_purpose,
       requiredFinality: subscription.selector
@@ -1415,9 +1504,11 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
 
     async installConfiguration(configuration, context) {
       if (!context?.account?.id) throw new TypeError('Reporting configuration requires a framework-resolved account');
-      const adcp33OnlyReason = adcp33OnlyOfferings.get(configuration.offeringId);
+      const deliveryOfferingId =
+        deliveryBySource.get(configuration.offeringId)?.offering_id ?? configuration.offeringId;
+      const adcp33OnlyReason = adcp33OnlyOfferings.get(deliveryOfferingId);
       if (adcp33OnlyReason !== undefined && !acceptsReportDefinition12(context.servedAdcpVersion)) {
-        throw reportingOfferingRequiresAdcp33Error(configuration.offeringId, adcp33OnlyReason);
+        throw reportingOfferingRequiresAdcp33Error(deliveryOfferingId, adcp33OnlyReason);
       }
       const { input } = await prepareGeneration(configuration, context.account, 'account');
       return producer.installConfiguration(input, {
@@ -1816,9 +1907,11 @@ function validateDeliveryOffering(
   source: ReportingSourceOfferingV1,
   delivery: ReportingDeliveryOffering,
   allowManagedDelivery = false,
-  servesSubscriptions = false
+  servesSubscriptions = false,
+  shared = false
 ): void {
-  if (delivery.offering_id !== source.offeringId) throw new TypeError('Source and delivery offering IDs differ');
+  if (!shared && delivery.offering_id !== source.offeringId)
+    throw new TypeError('Source and delivery offering IDs differ');
   if (delivery.report_definition_id !== source.contract.report_definition_id) {
     throw new TypeError('Source and delivery report definitions differ');
   }
@@ -1881,13 +1974,13 @@ function validateDeliveryOffering(
     delivery.schedule.period_duration === 'P1D' &&
     delivery.schedule.alignment === 'source_timezone' &&
     /^PT/.test(delivery.schedule.delivery_sla);
-  if (delivery.supported_finality.includes('official') && source.publicationClass !== 'AUTHORITATIVE') {
+  if (!shared && delivery.supported_finality.includes('official') && source.publicationClass !== 'AUTHORITATIVE') {
     throw new TypeError('Official delivery finality requires an authoritative source offering');
   }
   // The ledger refuses any non-official configuration against an authoritative
   // source, so advertising snapshot for one publishes a finality every install
   // rejects.
-  if (source.publicationClass === 'AUTHORITATIVE' && delivery.supported_finality.includes('snapshot')) {
+  if (!shared && source.publicationClass === 'AUTHORITATIVE' && delivery.supported_finality.includes('snapshot')) {
     throw new TypeError(
       'Authoritative source offerings cannot advertise snapshot delivery finality; the ledger installs them ' +
         'as official only'

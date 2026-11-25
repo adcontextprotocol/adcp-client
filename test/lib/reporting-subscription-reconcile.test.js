@@ -371,6 +371,22 @@ describe('reporting.explainCoverage (seller)', () => {
     assert.equal(coverageTraceForBuyer(seller).seller_only, undefined);
   });
 
+  test('seller coverage matches the advertised offering when the source ID differs', async () => {
+    const w = world();
+    await w.reporting.subscribe(subscription);
+    const now = new Date();
+    w.clock.now = now;
+    await w.service.runCycle({ accountId: ACCOUNT });
+    for (const obligation of w.store.obligations.values()) obligation.offeringId = 'distinct-source';
+    const [seller] = await w.service.explainCoverage({
+      principal: { tenantId: TENANT, principalId: 'principal-a' },
+      accountId: ACCOUNT,
+      period: w.day(3).slice(0, 10),
+      now,
+    });
+    assert.ok(seller.seller_only.reporting_obligation_id);
+  });
+
   test('an unknown subscription is refused with a fix', async () => {
     const w = world();
     await w.reporting.subscribe(subscription);

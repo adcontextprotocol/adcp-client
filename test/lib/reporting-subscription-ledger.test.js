@@ -131,6 +131,16 @@ const read = (store, principal, body) =>
   );
 
 describe('subscription obligations in the reporting ledger', () => {
+  test('standalone producers refuse unrelated subscription and source offerings', async () => {
+    const { producer } = setup();
+    const input = generation(PRINCIPAL_A);
+    input.subscription.offeringId = 'unrelated-offering';
+    await assert.rejects(
+      producer.planSubscriptionObligations(plan(PRINCIPAL_A, [owed(1, ['mb-a'])], 3, [input])),
+      /offering/
+    );
+  });
+
   test('plans a sparse owed set without grid fill or a continuity error', async () => {
     const { store, producer } = setup();
     const result = await producer.planSubscriptionObligations(

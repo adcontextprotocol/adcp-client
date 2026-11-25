@@ -1026,7 +1026,10 @@ export async function runManagedDeliveryWorker(
  */
 export function reportingSubscriptionDeliveryPathV1(
   binding: Pick<ReportingManagedDeliveryBindingV1, 'path_template' | 'account_id'>,
-  obligation: Pick<ReportingLedgerObligationV1, 'delivery_config_id' | 'offeringId' | 'period' | 'account'>
+  obligation: Pick<
+    ReportingLedgerObligationV1,
+    'delivery_config_id' | 'offeringId' | 'period' | 'account' | 'subscription'
+  >
 ): string {
   if (binding.path_template === undefined) throw new TypeError('Managed binding has no path_template');
   if (obligation.account.account_id !== binding.account_id) {
@@ -1035,7 +1038,7 @@ export function reportingSubscriptionDeliveryPathV1(
   return expandReportingSubscriptionPathTemplate(binding.path_template, {
     account_id: binding.account_id,
     subscription_id: obligation.delivery_config_id,
-    offering_id: obligation.offeringId,
+    offering_id: obligation.subscription?.offeringId ?? obligation.offeringId,
     period_start: obligation.period.start,
   });
 }

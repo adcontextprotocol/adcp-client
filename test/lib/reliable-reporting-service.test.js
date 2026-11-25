@@ -219,7 +219,146 @@ function serviceFixture(overrides = {}) {
   return { service, store, currencies, reportingAdapter };
 }
 
+function sharedAdapters() {
+  const snapshot = adapter();
+  const official = adapter();
+  const { cadence, ...source } = official.sourceOffering;
+  official.sourceOffering = {
+    ...source,
+    offeringId: 'fixture-daily-official',
+    publicationClass: 'AUTHORITATIVE',
+    finalization: {
+      schedule: { sourceLocalReadyTime: '01:00', daysAfterPeriodEnd: 0 },
+      expectedAvailabilityLag: 'PT0S',
+      worstCaseAvailabilityLag: 'PT1H',
+      triggerSupport: cadence.triggerSupport,
+      correctionWindow: 'P7D',
+      correctionPolicy: 'immutable_correction',
+    },
+    revisionSemantics: 'official_with_declared_correction_policy',
+  };
+  snapshot.deliveryOffering.offering_id = 'shared-daily';
+  snapshot.deliveryOffering.supported_finality = ['snapshot', 'official'];
+  snapshot.deliveryOffering.schedule.delivery_sla = 'PT2H';
+  official.deliveryOffering = structuredClone(snapshot.deliveryOffering);
+  official.fetchSlice = request => ({
+    reporting_period: { start: request.start_date, end: request.end_date },
+    currency: 'USD',
+    reporting_rows: [],
+    is_final: true,
+    data_through: request.end_date,
+    observed_at: request.end_date,
+  });
+  return { snapshot, official };
+}
+
 describe('ReliableReportingService', () => {
+  test('advertises a shared offering for snapshot and official sources', () => {
+    const { service } = serviceFixture({ adapters: sharedAdapters() });
+    assert.equal(service.capabilities.offerings.length, 1);
+    assert.deepEqual(service.capabilities.offerings[0].supported_finality, ['snapshot', 'official']);
+  });
+
+  test('refuses invalid shared source declarations and unreachable SLAs', () => {
+    const missing = sharedAdapters();
+    missing.snapshot.deliveryOffering.offering_id = missing.snapshot.sourceOffering.offeringId;
+    assert.throws(() => serviceFixture({ adapters: { snapshot: missing.snapshot } }), /authoritative/);
+    const duplicate = sharedAdapters();
+    duplicate.official.sourceOffering = { ...structuredClone(duplicate.snapshot.sourceOffering), offeringId: 'other' };
+    assert.throws(() => serviceFixture({ adapters: duplicate }), /one snapshot and one authoritative/);
+    const mismatch = sharedAdapters();
+    mismatch.official.sourceOffering.contract.mappingVersion = 'different';
+    assert.throws(() => serviceFixture({ adapters: mismatch }), /contract/);
+    const differentDelivery = sharedAdapters();
+    differentDelivery.official.deliveryOffering.schedule.delivery_sla = 'PT3H';
+    assert.throws(() => serviceFixture({ adapters: differentDelivery }), /identical delivery offerings/);
+    const badSnapshotSla = sharedAdapters();
+    badSnapshotSla.snapshot.sourceOffering.cadence.worstCaseAvailabilityLag = 'PT3H';
+    assert.throws(() => serviceFixture({ adapters: badSnapshotSla }), /Snapshot reporting delivery SLA/);
+    const badSla = sharedAdapters();
+    badSla.snapshot.deliveryOffering.schedule.delivery_sla = 'PT1H';
+    badSla.official.deliveryOffering.schedule.delivery_sla = 'PT1H';
+    assert.throws(() => serviceFixture({ adapters: badSla }), /shorter than the source can finalize/);
+  });
+
+  test('applies the advertised report definition version gate to each source', async () => {
+    const adapters = sharedAdapters();
+    const { service } = serviceFixture({
+      adapters,
+      reportDefinitionVersions: { [adapters.snapshot.sourceOffering.contract.reportDefinitionSha256]: '1.2' },
+      resolveSource: () => ({ adapterId: 'snapshot', sourceScope: {}, sourceTimezone: 'UTC' }),
+    });
+    await assert.rejects(
+      service.installConfiguration(
+        configuration({
+          schedule: { ...configuration().schedule, deliverySlaMilliseconds: 7_200_000 },
+        }),
+        { account: { id: 'account-a', ctx_metadata: {} }, servedAdcpVersion: '3.2' }
+      ),
+      /shared-daily.*3\.3/
+    );
+  });
+
+  test('produces both finalities using their source offering IDs', async () => {
+    const adapters = sharedAdapters();
+    const { service, store } = serviceFixture({
+      adapters,
+      resolveSource: (account, input) => ({
+        adapterId: input.offeringId === 'fixture-daily-official' ? 'official' : 'snapshot',
+        sourceScope: { network_id: account.id },
+        sourceTimezone: 'UTC',
+      }),
+    });
+    const now = new Date();
+    const anchor = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - 259_200_000
+    ).toISOString();
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+    for (const finality of ['snapshot', 'official']) {
+      const input = configuration({
+        delivery_config_id: finality,
+        offeringId: adapters[finality].sourceOffering.offeringId,
+        requiredFinality: finality,
+        ...(finality === 'official'
+          ? {
+              finalityPolicy: {
+                policyId: 'policy',
+                basis: 'source_final',
+                sourceSignal: 'get_media_buy_delivery.is_final',
+              },
+            }
+          : {}),
+        schedule: { ...configuration().schedule, anchor, deliverySlaMilliseconds: 7_200_000 },
+      });
+      const installed = await service.installConfiguration(input, context);
+      store.configurations.get(installed.configurationId).installedAt = anchor;
+    }
+    const cycle = await service.runCycle({ accountId: 'account-a', maxObligations: 4, maxWorkerIterations: 4 });
+    assert.equal(cycle.revisionsCommitted, 4, JSON.stringify(cycle));
+    const obligations = await store.listObligations('account-a');
+    const kinds = [];
+    for (const obligation of obligations) {
+      const [revision] = await store.listRevisions(obligation.reporting_obligation_id);
+      kinds.push([obligation.offeringId, revision.kind]);
+    }
+    assert.deepEqual([...new Set(kinds.map(value => value.join(':')))].sort(), [
+      'fixture-daily-official:official',
+      'fixture-daily-snapshot:snapshot',
+    ]);
+    await assert.rejects(
+      service.installConfiguration(
+        configuration({
+          delivery_config_id: 'wrong',
+          offeringId: 'fixture-daily-official',
+          requiredFinality: 'snapshot',
+          schedule: { ...configuration().schedule, anchor, deliverySlaMilliseconds: 7_200_000 },
+        }),
+        context
+      ),
+      /authoritative|official/i
+    );
+  });
+
   test('installs and executes per-buy products from trusted host-attested coverage', async () => {
     const calls = [];
     const reportingAdapter = adapter(calls);

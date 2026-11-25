@@ -89,7 +89,13 @@ const BUYS = {
   'principal-b': [buy('mb-b', 4, 5)],
 };
 
-async function world({ failPolicyFor, withPackages = false, omitPackageDimension = false } = {}) {
+async function world({
+  failPolicyFor,
+  withPackages = false,
+  omitPackageDimension = false,
+  dual = false,
+  finality = 'snapshot',
+} = {}) {
   const clock = { now: new Date(day(0.5)) };
   const { lifecycle } = createTestPrincipalLifecycle({ clock, reportingSubscriptions: {} });
   let key = 0;
@@ -97,7 +103,11 @@ async function world({ failPolicyFor, withPackages = false, omitPackageDimension
     const response = await lifecycle.protocol.syncPrincipal(
       {
         idempotency_key: `subscription-service-${String(++key).padStart(4, '0')}`,
-        configuration: { reporting_subscriptions: [subscription()] },
+        configuration: {
+          reporting_subscriptions: [
+            { ...subscription(), selector: { ...subscription().selector, required_finality: finality } },
+          ],
+        },
       },
       {
         callerMutationScope: {
@@ -109,9 +119,15 @@ async function world({ failPolicyFor, withPackages = false, omitPackageDimension
     );
     assert.equal(response.result.kind, 'applied', JSON.stringify(response));
   }
+  const advertised = deliveryOffering();
+  if (dual) {
+    advertised.offering_id = 'shared-daily';
+    advertised.supported_finality = ['snapshot', 'official'];
+    advertised.schedule.delivery_sla = 'PT2H';
+  }
   const engine = createReportingSubscriptionEngineV1({
     principal: lifecycle,
-    offerings: [deliveryOffering()],
+    offerings: [advertised],
     store: createInMemoryReportingSubscriptionEngineStoreV1(),
     statusRetentionDays: redactedReportingSourceOfferingV1.retentionDays,
     now: () => clock.now,
@@ -119,7 +135,13 @@ async function world({ failPolicyFor, withPackages = false, omitPackageDimension
       listAuthorizedAccounts: () => ({
         accounts: [{ account_id: ACCOUNT, authorized_at: '2026-08-01T00:00:00.000Z' }],
       }),
-      listAccountBuys: principal => structuredClone(BUYS[principal.principalId] ?? []),
+      listAccountBuys: principal => {
+        const buys = structuredClone(BUYS[principal.principalId] ?? []);
+        if (dual)
+          for (const buy of buys)
+            for (const pkg of buy.packages) pkg.reporting_delivery_offering_ids = [advertised.offering_id];
+        return buys;
+      },
       resolveRevocationInstant: (_principal, _account, input) => input.observedAt,
       isPeriodDelivered: () => false,
     },
@@ -157,15 +179,30 @@ async function world({ failPolicyFor, withPackages = false, omitPackageDimension
     expectedAvailabilityLag: 'PT0S',
     worstCaseAvailabilityLag: 'PT0S',
   };
+  const { cadence, ...base } = sourceOffering;
+  const authoritative = {
+    ...base,
+    offeringId: 'fixture-daily-official',
+    publicationClass: 'AUTHORITATIVE',
+    finalization: {
+      schedule: { sourceLocalReadyTime: '01:00', daysAfterPeriodEnd: 0 },
+      expectedAvailabilityLag: 'PT0S',
+      worstCaseAvailabilityLag: 'PT1H',
+      triggerSupport: cadence.triggerSupport,
+      correctionWindow: 'P7D',
+      correctionPolicy: 'immutable_correction',
+    },
+    revisionSemantics: 'official_with_declared_correction_policy',
+  };
   const fetched = [];
   const store = new MemoryLedgerStore();
   const { currency: _currency, ...sourceSettings } = request.sourceSettings;
-  const service = createReliableReportingService({
+  const options = {
     store,
     adapters: {
       fixture: {
         sourceOffering,
-        deliveryOffering: deliveryOffering(),
+        deliveryOffering: advertised,
         fetchSlice: slice => {
           fetched.push({
             start: slice.start_date,
@@ -199,12 +236,28 @@ async function world({ failPolicyFor, withPackages = false, omitPackageDimension
           };
         },
       },
+      ...(dual
+        ? {
+            official: {
+              sourceOffering: authoritative,
+              deliveryOffering: advertised,
+              fetchSlice: slice => ({
+                reporting_period: { start: slice.start_date, end: slice.end_date },
+                currency: 'USD',
+                reporting_rows: [],
+                is_final: true,
+                data_through: slice.end_date,
+                observed_at: slice.end_date,
+              }),
+            },
+          }
+        : {}),
     },
     contact: { name: 'Reporting operations', email: 'reporting@example.com' },
     automatedRecoveryWindowSeconds: 86_400,
     statusRetentionDays: redactedReportingSourceOfferingV1.retentionDays,
-    resolveSource: account => ({
-      adapterId: 'fixture',
+    resolveSource: (account, input) => ({
+      adapterId: input.offeringId === 'fixture-daily-official' ? 'official' : 'fixture',
       sourceScope: { network_id: `network-${account.id}` },
       sourceTimezone: 'UTC',
     }),
@@ -237,11 +290,21 @@ async function world({ failPolicyFor, withPackages = false, omitPackageDimension
               ? [...request.requestedDimensions, 'package_id']
               : request.requestedDimensions,
           sourceSettings,
+          ...(finality === 'official'
+            ? {
+                finalityPolicy: {
+                  policyId: 'policy',
+                  basis: 'source_final',
+                  sourceSignal: 'get_media_buy_delivery.is_final',
+                },
+              }
+            : {}),
         };
       },
     },
-  });
-  return { clock, engine, service, store, fetched };
+  };
+  const service = createReliableReportingService(options);
+  return { clock, engine, service, store, fetched, options };
 }
 
 const read = (service, principal, body) =>
@@ -251,6 +314,113 @@ const read = (service, principal, body) =>
   );
 
 describe('reliable reporting service with subscription obligations', () => {
+  test('expands managed delivery paths with the advertised offering ID', () => {
+    const { reportingSubscriptionDeliveryPathV1 } = require('../../packages/reporting-storage/dist/managed/runtime.js');
+    const path = reportingSubscriptionDeliveryPathV1(
+      { account_id: ACCOUNT, path_template: '{account_id}/{offering_id}/{period_start}' },
+      {
+        account: { account_id: ACCOUNT },
+        delivery_config_id: 'daily',
+        offeringId: 'source-official',
+        subscription: {
+          tenantId: TENANT,
+          principalId: A.principalId,
+          subscriptionId: 'daily',
+          offeringId: 'shared-daily',
+          ownership: 'owed_set',
+        },
+        period: { start: day(3), end: day(4), sourceTimezone: 'UTC' },
+      }
+    );
+    assert.equal(path, `${ACCOUNT}/shared-daily/${day(3)}`);
+  });
+
+  for (const finality of ['snapshot', 'official']) {
+    test(`routes ${finality} subscription to its source while advertising one offering`, async () => {
+      const { clock, engine, service, store } = await world({ dual: true, finality });
+      clock.now = new Date(day(8));
+      await engine.reconcile(A);
+      const cycle = await service.runCycle({ accountId: ACCOUNT, now: new Date(day(8)) });
+      assert.equal(cycle.revisionsCommitted, 4, JSON.stringify(cycle));
+      const [configuration] = await store.listConfigurations(ACCOUNT);
+      const expectedSource = finality === 'official' ? 'fixture-daily-official' : offeringId;
+      assert.equal(configuration.offeringId, expectedSource);
+      assert.equal(configuration.subscription.offeringId, 'shared-daily');
+      for (const obligation of await store.listObligations(ACCOUNT)) {
+        assert.equal(obligation.offeringId, expectedSource);
+        const [revision] = await store.listRevisions(obligation.reporting_obligation_id);
+        assert.equal(revision.kind, finality);
+      }
+      store.ledgerAsOf = day(8);
+      const status = await read(service, A, { view: 'periods', period: { start: day(0), end: day(8) } });
+      assert.ok(status.periods.every(value => value.offering_id === 'shared-daily'));
+      assert.equal((await service.runCycle({ accountId: ACCOUNT, now: new Date(day(8)) })).planned, 0);
+    });
+  }
+
+  test('replay refuses to replace a stored source when the advertised mapping changes', async () => {
+    const { clock, engine, service, store, options } = await world({ dual: true });
+    clock.now = new Date(day(8));
+    await engine.reconcile(A);
+    await service.runCycle({ accountId: ACCOUNT, now: clock.now });
+    const [original] = await store.listConfigurations(ACCOUNT);
+    const snapshot = structuredClone(options.adapters.fixture.sourceOffering);
+    snapshot.offeringId = 'replacement-snapshot';
+    const replacement = createReliableReportingService({
+      ...options,
+      adapters: { ...options.adapters, fixture: { ...options.adapters.fixture, sourceOffering: snapshot } },
+    });
+    await assert.rejects(
+      replacement.runCycle({ accountId: ACCOUNT, now: clock.now }),
+      error => error instanceof AggregateError && error.errors.some(item => /does not serve/.test(item.message))
+    );
+    const [retained] = await store.listConfigurations(ACCOUNT);
+    assert.equal(retained.configurationId, original.configurationId);
+    assert.equal(retained.offeringId, offeringId);
+    assert.equal(retained.subscription.offeringId, 'shared-daily');
+  });
+
+  test('retained obligations refuse a source ID reassigned to another finality', async () => {
+    const { clock, engine, service, store, options } = await world({ dual: true });
+    clock.now = new Date(day(8));
+    await engine.reconcile(A);
+    const first = await service.runCycle({ accountId: ACCOUNT, now: clock.now, maxWorkerIterations: 1 });
+    assert.equal(first.revisionsCommitted, 1);
+    const previous = (await store.listObligations(ACCOUNT)).length;
+    const snapshot = structuredClone(options.adapters.fixture.sourceOffering);
+    const official = structuredClone(options.adapters.official.sourceOffering);
+    snapshot.offeringId = 'fixture-daily-official';
+    official.offeringId = offeringId;
+    let fetched = 0;
+    const replacement = createReliableReportingService({
+      ...options,
+      adapters: {
+        fixture: {
+          ...options.adapters.official,
+          sourceOffering: official,
+          fetchSlice: (...args) => {
+            fetched++;
+            return options.adapters.official.fetchSlice(...args);
+          },
+        },
+        official: { ...options.adapters.fixture, sourceOffering: snapshot },
+      },
+    });
+    const worker = await replacement.producer.runWorker({
+      account_id: ACCOUNT,
+      now: () => clock.now,
+      maxIterations: 1,
+    });
+    assert.equal(worker.revisionsCommitted, 0, JSON.stringify(worker));
+    assert.equal(worker.failed, 1, JSON.stringify(worker));
+    assert.equal(fetched, 0);
+    assert.equal((await store.listObligations(ACCOUNT)).length, previous);
+    await assert.rejects(
+      replacement.runCycle({ accountId: ACCOUNT, now: clock.now }),
+      error => error instanceof AggregateError && error.errors.some(item => /finality/.test(item.message))
+    );
+  });
+
   test('freezes each subscription period with only its authorized package bindings', async () => {
     const { clock, engine, service, store, fetched } = await world({ withPackages: true });
     clock.now = new Date(day(8));

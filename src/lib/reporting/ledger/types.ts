@@ -196,7 +196,7 @@ export interface ReportingLedgerSubscriptionV1 {
   principalId: string;
   /** Equals the generation's `delivery_config_id`. */
   subscriptionId: string;
-  /** Equals the generation's `offeringId`. */
+  /** The advertised delivery offering selected by the subscription. */
   offeringId: string;
   ownership: 'owed_set';
 }
@@ -1394,8 +1394,8 @@ export interface ReportingProducerContactV1 {
 /**
  * One subscription generation to install: everything a configuration carries except the
  * identity, install metadata, mutable owed-set progress and the per-obligation denominator.
- * `subscription` is required, and `delivery_config_id`/`offeringId` must equal its
- * `subscriptionId`/`offeringId`.
+ * `subscription` is required, and `delivery_config_id` must equal its `subscriptionId`.
+ * The subscription offering identifies the advertised delivery offering; `offeringId` identifies its source.
  *
  * @experimental Reliable Reporting storage surface: breaking changes may ship in minor releases. See https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/REPORTING-STABILITY.md
  */

@@ -1025,7 +1025,7 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
             item.subscription?.tenantId === principal.tenantId &&
             item.subscription.principalId === principal.principalId &&
             item.subscription.subscriptionId === entry.subscriptionId &&
-            item.offeringId === trace.subject.offering_id &&
+            item.subscription.offeringId === trace.subject.offering_id &&
             Date.parse(item.period.start) === start &&
             Date.parse(item.period.end) === end &&
             item.mediaBuyIds.includes(trace.subject.media_buy_id)
