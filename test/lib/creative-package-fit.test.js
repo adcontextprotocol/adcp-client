@@ -1359,3 +1359,66 @@ test('pinned mapped aliases cannot be widened by a creative resolver', () => {
   });
   assert.deepEqual(allowed.wire.selector.format_id, first);
 });
+
+test('native package fit uses the declared dimensions, density and format of each named image', () => {
+  const asset = (width, height, format = 'png') => ({
+    asset_type: 'image',
+    url: 'https://example.test/img',
+    width,
+    height,
+    format,
+  });
+  const native = (main, icon) => ({
+    creative_id: 'card',
+    format_kind: 'native_in_feed',
+    assets: {
+      title: { asset_type: 'text', content: 'News' },
+      advertiser_name: { asset_type: 'text', content: 'Acme' },
+      landing_page_url: { asset_type: 'url', url: 'https://example.test/' },
+      main_image: main,
+      ...(icon && { icon }),
+    },
+  });
+  const option = {
+    format_kind: 'native_in_feed',
+    format_option_id: 'card',
+    technical_requirements_complete: true,
+    params: {
+      main_image_sizes: [{ width: 600, height: 400 }],
+      icon_size: { width: 80, height: 80 },
+      image_formats: ['png'],
+      slots: [
+        { asset_group_id: 'main_image', asset_type: 'image', required: true },
+        { asset_group_id: 'icon', asset_type: 'image', pixel_ratios: [1, 2] },
+      ],
+    },
+  };
+  const packages = [pkg('A', option)];
+  const decide = creative => fit(creative, packages).perPackage[0];
+  const main = asset(600, 400);
+  assert.equal(decide(native(main)).verdict, 'fits');
+  assert.equal(decide(native(main, asset(160, 160))).verdict, 'fits');
+  for (const [creative, slot] of [
+    [native(asset(300, 250)), 'main_image'],
+    [native(main, asset(32, 32)), 'icon'],
+    [native(main, asset(80, 80, 'jpg')), 'icon'],
+    [native(asset(600, 400, 'gif')), 'main_image'],
+  ]) {
+    const result = decide(creative);
+    assert.equal(result.verdict, 'does_not_fit');
+    assert.ok(result.reasons.some(reason => reason.path.includes(slot)));
+    assert.throws(
+      () => projectSyncCreativesForDelivery({ creatives: [creative] }, packages, 'canonical'),
+      CreativeFormatProjectionError
+    );
+  }
+  assert.equal(decide(native(asset(undefined, undefined))).verdict, 'insufficient_facts');
+  assert.equal(
+    fit(native(main), [pkg('A', { ...option, technical_requirements_complete: false })]).perPackage[0].verdict,
+    'insufficient_facts'
+  );
+  assert.equal(
+    projectSyncCreativesForDelivery({ creatives: [native(main)] }, packages, 'canonical').creatives.length,
+    1
+  );
+});
