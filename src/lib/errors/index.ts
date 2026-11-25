@@ -1256,6 +1256,18 @@ export function is401Error(error: unknown, got401Flag = false): boolean {
     return true;
   }
 
+  // An error carrying the seller's structured AdCP error body is an
+  // application error with its own code. Words in its message are not an
+  // HTTP 401, and treating them as one would drop that body (adcp-client#3689).
+  const data = (errorObj as { data?: unknown }).data;
+  if (
+    data !== null &&
+    typeof data === 'object' &&
+    ('adcp_error' in data || Array.isArray((data as { errors?: unknown }).errors))
+  ) {
+    return false;
+  }
+
   // Fall back to string matching in error message. Use word boundaries so
   // we don't misidentify things like "product prod-401-xyz" as an HTTP 401,
   // and require "Unauthorized" as a whole word rather than as a substring.

@@ -846,7 +846,15 @@ async function callA2AToolImpl(
       if (!hasTerminalTaskWithDataArtifact(messageResponse)) {
         const errorObj = messageResponse.error || messageResponse.result?.error;
         const errorMessage = errorObj.message || JSON.stringify(errorObj);
-        throw new Error(`A2A agent returned error: ${errorMessage}`);
+        const transportError = new Error(`A2A agent returned error: ${errorMessage}`);
+        // Keep the JSON-RPC error's structured data (an AdCP error body with
+        // `mutation_outcome`) for the executor's error result (adcp-client#3689).
+        // The JSON-RPC code is not carried over: -32001 would read as a timeout.
+        const errorData = errorObj?.data;
+        if (errorData && typeof errorData === 'object' && !Array.isArray(errorData)) {
+          Object.defineProperty(transportError, 'data', { value: errorData, enumerable: true });
+        }
+        throw transportError;
       }
     }
 
