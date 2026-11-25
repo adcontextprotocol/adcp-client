@@ -1064,6 +1064,35 @@ function readStoredDocument(store: DocumentStore, file: string): LoadedSchema {
   return entry.schema!;
 }
 
+/** Documents a store has deep-frozen: their content never changes. */
+const storedDocuments = new WeakSet<object>();
+
+/**
+ * Stored documents that passed Ajv's draft-07 meta-validation in a registry
+ * with the SDK's plain options (strict off, union types, ajv-formats, no custom
+ * keywords). Every registry below that adds them has those options, and the
+ * outcome depends only on the document, so each is validated once per process
+ * instead of once per registry. A document that fails is never recorded, so it
+ * fails again wherever it is added.
+ */
+const metaValidatedDocuments = new WeakSet<object>();
+
+/**
+ * `ajv.addSchema(schema)`, skipping meta-validation of a stored document that
+ * passed it before. Only for registries with the SDK's plain options.
+ */
+function addPlainRegistryDocument(ajv: Ajv, schema: LoadedSchema): void {
+  const validated = metaValidatedDocuments.has(schema);
+  ajv.addSchema(schema, undefined, undefined, validated ? false : undefined);
+  if (!validated && storedDocuments.has(schema)) metaValidatedDocuments.add(schema);
+}
+
+function frozenStoredDocument(schema: LoadedSchema): LoadedSchema {
+  deepFreeze(schema);
+  storedDocuments.add(schema);
+  return schema;
+}
+
 function loadStoredDocument(file: string): StoredDocument {
   const recordContent = validatorCacheDir() !== undefined;
   const bundled = file.includes(`${path.sep}bundled${path.sep}`);
@@ -1088,13 +1117,13 @@ function loadStoredDocument(file: string): StoredDocument {
       };
     }
     const content = recordContent ? `archive\0${contentHash(JSON.stringify(entry))}` : undefined;
-    return { schema: deepFreeze(openExtensibleReportingDimensions(entry)), ...(content && { content }) };
+    return { schema: frozenStoredDocument(openExtensibleReportingDimensions(entry)), ...(content && { content }) };
   }
   const content = recordContent ? `file\0${contentHash(text)}` : undefined;
   try {
     const parsed = JSON.parse(text) as LoadedSchema;
     const schema = bundled ? (expandBundledSchemaDocument(parsed) as LoadedSchema) : parsed;
-    return { schema: deepFreeze(openExtensibleReportingDimensions(schema)), ...(content && { content }) };
+    return { schema: frozenStoredDocument(openExtensibleReportingDimensions(schema)), ...(content && { content }) };
   } catch (error) {
     return { error, ...(content && { content }) };
   }
@@ -1534,7 +1563,7 @@ function registerCoreDocuments(s: LoaderState): void {
       const isResponseTool = selected?.response ?? responseToolFiles.has(file);
       const schemaToRegister = isResponseTool ? acceptEnvelopeFromRelease(prepared, s.root, s.documents) : prepared;
       if (typeof schemaToRegister.$id === 'string' && !registeredIds.has(schemaToRegister.$id)) {
-        s.ajv.addSchema(schemaToRegister);
+        addPlainRegistryDocument(s.ajv, schemaToRegister);
         registeredIds.add(schemaToRegister.$id);
       }
     }
@@ -2189,10 +2218,28 @@ function compileSchemaReference(
   const file = path.join(root, normalized);
   if (!existsSync(file)) return undefined;
 
-  // Use an isolated AJV instance for arbitrary schema refs. Tool response
-  // validators widen closed pre-composition roots for SDK back-compat; webhook
-  // payload schemas need strict raw JSON Schema behavior without polluting the
-  // shared tool-validator registry with widened response schemas.
+  const documents = documentStore(bundleKey, root);
+  if (!keywords && !projection && isSchemaRefRegistryDocument(file)) {
+    const authored = identity33ReferenceSchema(readStoredDocument(documents, file), version);
+    if (typeof authored.$id === 'string') {
+      const registry = schemaRefRegistry(documents, root, version, allErrors);
+      if (registry.ids.has(authored.$id)) {
+        // A shallow copy compiles as the caller's own function, so no other
+        // validator's internal $ref call writes its `errors`; the sub-schemas it
+        // refers to compile once per registry.
+        const compiled = registry.ajv.compile({ ...authored });
+        cache.set(cacheKey, compiled);
+        return compiled;
+      }
+    }
+  }
+
+  // Keep an isolated AJV instance for custom keywords, projected roots and
+  // roots outside the documents a registry holds (bundled/, transport
+  // projections). Tool response validators widen closed pre-composition
+  // roots for SDK back-compat; webhook payload schemas need strict raw JSON
+  // Schema behavior without polluting the shared tool-validator registry
+  // with widened response schemas.
   const ajv = new Ajv({
     inlineRefs: false,
     strict: false,
@@ -2205,7 +2252,6 @@ function compileSchemaReference(
   });
   addFormats(ajv);
   for (const keyword of keywords ?? []) ajv.addKeyword(keyword);
-  const documents = documentStore(bundleKey, root);
   const authoredSchema = identity33ReferenceSchema(readStoredDocument(documents, file), version);
   const rawSchema = projection ? projection.project(authoredSchema) : authoredSchema;
   const dependencySchemas: LoadedSchema[] = [];
@@ -2235,12 +2281,90 @@ function compileSchemaReference(
       dependencySchemas.push(schema);
     }
   }
-  if (dependencySchemas.length > 0) {
-    ajv.addSchema(dependencySchemas);
+  if (keywords) {
+    // A keyword's metaSchema takes part in meta-validation here.
+    if (dependencySchemas.length > 0) ajv.addSchema(dependencySchemas);
+  } else {
+    for (const schema of dependencySchemas) addPlainRegistryDocument(ajv, schema);
   }
   const compiled = ajv.compile(rawSchema);
   cache.set(cacheKey, compiled);
   return compiled;
+}
+
+/** One Ajv holding a root's runtime documents for schema-ref validators with one option set. */
+interface SchemaRefRegistry {
+  ajv: Ajv;
+  /** The `$id`s registered in `ajv`. */
+  ids: Set<string>;
+}
+
+/**
+ * Schema-ref registries by the document store they were built from, so a
+ * registry is dropped with the store: when any bundle key that used the root
+ * is cleared, the next miss builds both again from the files.
+ */
+const schemaRefRegistries = new WeakMap<DocumentStore, Map<string, SchemaRefRegistry>>();
+
+/** Whether `file` is one of the runtime documents a schema-ref registry holds. */
+function isSchemaRefRegistryDocument(file: string): boolean {
+  if (file.includes(`${path.sep}bundled${path.sep}`)) return false;
+  return ![...TRANSPORT_PROJECTION_DIRECTORIES].some(directory => file.includes(`${path.sep}${directory}${path.sep}`));
+}
+
+/**
+ * The root's schema-ref registry for `allErrors` and the identity-3.3 scope in
+ * effect, built on first use: the documents a per-ref Ajv registered as
+ * dependencies (every runtime document with an `$id`, one per `$id`), added
+ * one at a time in walk order, with the same ambiguity check. Stored only once
+ * it is complete, so a failure is thrown again on the next call.
+ * `addUsedSchema: false` keeps compiled roots out of the registry.
+ */
+function schemaRefRegistry(
+  documents: DocumentStore,
+  root: string,
+  version: string,
+  allErrors: boolean
+): SchemaRefRegistry {
+  const identity33 = isIdentity33SchemaScope() && resolveBundleKey(version) === '3.3';
+  const key = `all-errors::${allErrors}\0identity33::${identity33}`;
+  let registries = schemaRefRegistries.get(documents);
+  if (!registries) {
+    registries = new Map();
+    schemaRefRegistries.set(documents, registries);
+  }
+  const existing = registries.get(key);
+  if (existing) return existing;
+
+  const byId = new Map<string, LoadedSchema>();
+  for (const schemaFile of walkJsonFiles(root)) {
+    if (!isSchemaRefRegistryDocument(schemaFile)) continue;
+    const schema = identity33ReferenceSchema(readStoredDocument(documents, schemaFile), version);
+    if (typeof schema.$id !== 'string') continue;
+    const previous = byId.get(schema.$id);
+    if (previous) {
+      // Bundles intentionally mirror async-response refs. Identical copies
+      // are harmless; conflicting definitions must not shadow audited files.
+      if (!isDeepStrictEqual(previous, schema)) {
+        throw new ConfigurationError('Schema validation requires unambiguous schema identities', 'schemaRoot');
+      }
+      continue;
+    }
+    byId.set(schema.$id, schema);
+  }
+  const ajv = new Ajv({
+    inlineRefs: false,
+    strict: false,
+    // See compileSchemaReference: first-violation by default for remote payloads.
+    allErrors,
+    allowUnionTypes: true,
+    addUsedSchema: false,
+  });
+  addFormats(ajv);
+  for (const schema of byId.values()) addPlainRegistryDocument(ajv, schema);
+  const registry = { ajv, ids: new Set(byId.keys()) };
+  registries.set(key, registry);
+  return registry;
 }
 
 /**
@@ -2301,7 +2425,7 @@ function ensureCanonicalAjv(state: LoaderState): Ajv {
     schemasById.set(schema.$id, schema);
   }
 
-  if (schemasById.size > 0) ajv.addSchema([...schemasById.values()]);
+  for (const schema of schemasById.values()) addPlainRegistryDocument(ajv, schema);
   state.canonicalAjv = ajv;
   return ajv;
 }
