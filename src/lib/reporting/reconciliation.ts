@@ -110,7 +110,12 @@ export type ExpectedReportingCoverage = Omit<ReportingCoverageEvidence, 'evaluat
 export type ExpectedReportingBuyCoverage = Omit<
   ExpectedReportingCoverage,
   'package_ids' | 'covered_package_ids' | 'unsupported_package_ids' | 'unknown_package_ids'
->;
+> & {
+  package_ids?: never;
+  covered_package_ids?: never;
+  unsupported_package_ids?: never;
+  unknown_package_ids?: never;
+};
 
 export type ReportingCanonicalDigestEvidence = ReportingCanonicalContentDigest & {
   canonicalization_uri: string;
@@ -356,7 +361,8 @@ interface ExpectedCanonicalization {
  *   definitive and the omitted buy must never be treated as reported.
  */
 export type ExpectedReportingMembership =
-  | { kind: 'media_buy_ids'; packageCoverage?: 'seller_frozen' }
+  | { kind: 'media_buy_ids'; packageCoverage?: never }
+  | { kind: 'media_buy_ids'; packageCoverage: 'seller_frozen' }
   | {
       kind: 'all_media_buys';
       /** Buys that unambiguously belong to the period; each one the seller omits is a blocking issue. */
