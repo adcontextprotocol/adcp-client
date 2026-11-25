@@ -25,6 +25,7 @@ import type {
 } from './SingleAgentClient';
 import { ADCP_VERSION, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
+import { extractAdcpErrorInfo } from '../utils/error-extraction';
 import { ConfigurationManager } from './ConfigurationManager';
 import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from './CreativeAgentClient';
 import type { LegacyCreativeFormat } from './CreativeAgentClient';
@@ -131,9 +132,15 @@ export class AgentCollection {
         reason instanceof ADCPError &&
         (!(reason instanceof NeedsAuthorizationError) ||
           hasValidatedMcpAuthorizationRequirements(reason.requirements, client.getAgent().agent_uri));
+      // A thrown transport error may carry the seller's structured error body,
+      // including `mutation_outcome` (adcp-client#3689).
+      const thrown = reason as { data?: unknown; response?: { data?: unknown } } | null | undefined;
+      const sellerData = thrown?.data ?? thrown?.response?.data;
+      const adcpError = extractAdcpErrorInfo(sellerData);
       return {
         success: false as const,
         status: 'failed' as const,
+        ...(adcpError && { data: sellerData as T, adcpError }),
         error: reason instanceof Error ? reason.message : String(reason),
         ...(surfaced && { errorInstance: reason }),
         metadata: {
