@@ -1,5 +1,44 @@
 # @adcp/reporting-storage
 
+## 0.3.0-rc.10
+
+### Patch Changes
+
+- 41c28e2: A `CONSUMER_STATUS_MISMATCH` now resolves when the seller's own record stops conflicting with the buyer's statement, not only when the buyer supersedes it (#3653). AdCP 3.3 allows both routes. Before, a seller restatement, or a seller marking the disputed revision unreadable, never cleared a `content_mismatch`, `revision_missing` or `unreadable` mismatch.
+
+  The spec doesn't say per status when the seller's projection "no longer conflicts". The SDK now applies the reading it shares with the Python SDK:
+
+  | Statement            | Conflicts while                                                   |
+  | -------------------- | ----------------------------------------------------------------- |
+  | `obligation_missing` | always                                                            |
+  | `revision_missing`   | the seller has a current required revision                        |
+  | `unreadable`         | no open `REVISION_UNREADABLE` marks the named revision unreadable |
+  | `content_mismatch`   | the named revision is still the current required one              |
+  | `received`           | the named revision is not the current required one                |
+  - `projectReportingConsumerStatusMismatchV1` takes the obligation's persisted issues as a new optional last argument; `get_reporting_status` passes them.
+  - An `unreadable` statement can conflict again after the seller retires its unreadable mark. That recurrence gets a new `issue_id` and `opened_at`, as the spec requires. Every other mismatch keeps its `issue_id`.
+  - Seller-health suppression is unchanged: while the seller's own projection is degraded the mismatch is not published, and it returns with the same `issue_id`.
+  - The issue observer follows the same rule. `reportingConsumerMismatchOccurrenceV1` takes optional `issues` and `at` arguments. The in-memory ledger and `@adcp/reporting-storage`'s PostgreSQL store pass them, and a `REVISION_UNREADABLE` write now settles the obligation's occurrences. Because a recurrence's identity and `opened_at` come from the seller's unreadable mark, both stores now record that mark's start and end as fixed facts. Neither the start nor the end is dated after the write. The start is fixed by the first write, and the end is never before it. The end, once set, never moves, including on a retried write. A custom store can do the same with the new experimental `normalizeReportingUnreadableMarkWriteV1`.
+
+- 4c6f99f: `createPostgresReliableReportingProductionService` accepts the core service's new `reportDefinitionVersions` and `undeclaredReportDefinitions` options and forwards `adcp33OnlyOfferings` on its platform, so a production seller's 1.2 report definitions are served to AdCP 3.3 callers only (adcp-client#3709).
+- Updated dependencies [544c155]
+- Updated dependencies [8449d2b]
+- Updated dependencies [41c28e2]
+- Updated dependencies [14a8330]
+- Updated dependencies [1c2ce71]
+- Updated dependencies [cdf4ba7]
+- Updated dependencies [b389cb5]
+- Updated dependencies [e097d81]
+- Updated dependencies [dfed8a9]
+- Updated dependencies [ea1345a]
+- Updated dependencies [e043993]
+- Updated dependencies [3b319b3]
+- Updated dependencies [039bb60]
+- Updated dependencies [4c6f99f]
+- Updated dependencies [d62de63]
+- Updated dependencies [7f67c51]
+  - @adcp/sdk@17.0.0-rc.0
+
 ## 0.3.0-beta.9
 
 ### Patch Changes
