@@ -1,6 +1,6 @@
 import { canonicalize } from '@adcp/sdk';
 import type { ReportingManagedDeliveryAdapterV1 } from '../managed/runtime';
-import type { ExpectedReportingCoverage, ExpectedReportingPeriod } from '@adcp/sdk/reporting/consumer';
+import type { ExpectedReportingPeriod } from '@adcp/sdk/reporting/consumer';
 import { ReportingGcsFenceError } from './errors';
 type DeliveryInput = Parameters<ReportingManagedDeliveryAdapterV1['deliver']>[0];
 
@@ -16,11 +16,16 @@ export function assertExpectedBinding(input: DeliveryInput, expected: ExpectedRe
     /^[a-fA-F0-9]{64}$/.test(b) &&
     a.toLowerCase() === b.toLowerCase();
   // The fence pins an exact buy set and coverage. An all_media_buys expectation
-  // has neither, so it cannot bind a delivery here.
+  // lacks buy pins, and seller-frozen package membership lacks package pins.
   const pinnedMediaBuyIds = expected.mediaBuyIds;
-  const pinnedCoverage = expected.coverage;
-  if (expected.membership?.kind === 'all_media_buys' || !pinnedMediaBuyIds || !pinnedCoverage)
+  if (
+    expected.membership?.kind === 'all_media_buys' ||
+    expected.membership?.packageCoverage === 'seller_frozen' ||
+    !pinnedMediaBuyIds ||
+    !expected.coverage
+  )
     throw new ReportingGcsFenceError('CONTENT_CONFLICT');
+  const pinnedCoverage = expected.coverage;
   if (
     expected.verificationProfile !== binding.verification_profile ||
     expected.destinationRef !== binding.destination_ref ||
@@ -48,7 +53,7 @@ export function assertExpectedBinding(input: DeliveryInput, expected: ExpectedRe
         expected.officialFinality.basis !== r.finality_basis))
   )
     throw new ReportingGcsFenceError('CONTENT_CONFLICT');
-  const coverage = (value: ExpectedReportingCoverage) =>
+  const coverage = (value: NonNullable<ExpectedReportingPeriod['coverage']>) =>
     Object.fromEntries(
       Object.entries(value)
         .filter(([key]) => !['evaluated_at', 'limitations'].includes(key))

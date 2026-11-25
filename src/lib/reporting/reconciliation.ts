@@ -107,6 +107,16 @@ export interface ReportingCoverageEvidence {
 
 export type ExpectedReportingCoverage = Omit<ReportingCoverageEvidence, 'evaluated_at' | 'limitations'>;
 
+export type ExpectedReportingBuyCoverage = Omit<
+  ExpectedReportingCoverage,
+  'package_ids' | 'covered_package_ids' | 'unsupported_package_ids' | 'unknown_package_ids'
+> & {
+  package_ids?: never;
+  covered_package_ids?: never;
+  unsupported_package_ids?: never;
+  unknown_package_ids?: never;
+};
+
 export type ReportingCanonicalDigestEvidence = ReportingCanonicalContentDigest & {
   canonicalization_uri: string;
 };
@@ -331,7 +341,10 @@ interface ExpectedCanonicalization {
  * - `media_buy_ids` (the default when `membership` is omitted): the buyer
  *   registered an exact buy set (`scope: { media_buy_ids }`), so the
  *   obligation must carry exactly `mediaBuyIds`, and its coverage must equal
- *   the expected `coverage`.
+ *   the expected `coverage`. Set `packageCoverage: 'seller_frozen'` when the
+ *   buyer can pin the buy set but package membership is resolved by the seller
+ *   at the period boundary. In that mode `coverage` contains only buy fields;
+ *   the obligation and revision must agree on valid package coverage.
  * - `all_media_buys`: the buyer registered `scope: { all_media_buys: true }`,
  *   so the seller freezes the set at `period.end`. The buyer cannot pin it in
  *   advance, so the period matches on its identity alone and pinning
@@ -355,11 +368,19 @@ export type ExpectedReportingMembership =
       requiredMediaBuyIds?: string[];
     };
 
+/** Pin the buy set while the seller resolves package coverage at the period boundary. */
+export type ExpectedReportingSellerPackageMembership = { kind: 'media_buy_ids'; packageCoverage: 'seller_frozen' };
+
 type ExpectedReportingMembershipPins =
   | {
-      membership?: { kind: 'media_buy_ids' };
+      membership?: { kind: 'media_buy_ids'; packageCoverage?: never };
       mediaBuyIds: string[];
       coverage: ExpectedReportingCoverage;
+    }
+  | {
+      membership: ExpectedReportingSellerPackageMembership;
+      mediaBuyIds: string[];
+      coverage: ExpectedReportingBuyCoverage;
     }
   | {
       membership: Extract<ExpectedReportingMembership, { kind: 'all_media_buys' }>;
@@ -393,16 +414,65 @@ export interface ReportingMembershipIssueV1 {
   message: string;
 }
 
-/** The exact buy set and coverage the buyer pinned, or `undefined` when the seller chooses them. */
-function pinnedMembership(
-  expected: ExpectedReportingPeriod
-): { mediaBuyIds: string[]; coverage: ExpectedReportingCoverage } | undefined {
+/** The pinned buy set and buyer-known coverage, or `undefined` when the seller chooses them. */
+function pinnedMembership(expected: ExpectedReportingPeriod):
+  | {
+      mediaBuyIds: string[];
+      coverage: ExpectedReportingCoverage | ExpectedReportingBuyCoverage;
+      packageCoverage?: 'seller_frozen';
+    }
+  | undefined {
   if (expected.membership?.kind === 'all_media_buys') return undefined;
-  return { mediaBuyIds: expected.mediaBuyIds!, coverage: expected.coverage! };
+  return {
+    mediaBuyIds: expected.mediaBuyIds!,
+    coverage: expected.coverage!,
+    packageCoverage: expected.membership?.packageCoverage,
+  };
+}
+
+function isExpectedBuyCoverage(value: unknown): value is ExpectedReportingBuyCoverage {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const coverage = value as ExpectedReportingBuyCoverage;
+  const buyKeys = new Set([
+    'status',
+    'media_buy_ids',
+    'fully_covered_media_buy_ids',
+    'partially_covered_media_buy_ids',
+    'unsupported_media_buy_ids',
+    'unknown_media_buy_ids',
+  ]);
+  if (Object.keys(coverage).some(key => !buyKeys.has(key))) return false;
+  if (!['full', 'partial', 'none', 'unknown'].includes(coverage.status)) return false;
+  const arrays = [
+    coverage.media_buy_ids,
+    coverage.fully_covered_media_buy_ids,
+    coverage.partially_covered_media_buy_ids,
+    coverage.unsupported_media_buy_ids,
+    coverage.unknown_media_buy_ids,
+  ];
+  if (!arrays.every(uniqueStrings)) return false;
+  const parts = [
+    ...coverage.fully_covered_media_buy_ids,
+    ...coverage.partially_covered_media_buy_ids,
+    ...coverage.unsupported_media_buy_ids,
+    ...coverage.unknown_media_buy_ids,
+  ];
+  return (
+    new Set(parts).size === parts.length &&
+    sameStringSet(parts, coverage.media_buy_ids) &&
+    (coverage.status !== 'full' || sameStringSet(coverage.fully_covered_media_buy_ids, coverage.media_buy_ids)) &&
+    (coverage.status !== 'none' ||
+      (coverage.fully_covered_media_buy_ids.length === 0 &&
+        coverage.partially_covered_media_buy_ids.length === 0 &&
+        coverage.unknown_media_buy_ids.length === 0)) &&
+    (coverage.status !== 'unknown' ||
+      (coverage.fully_covered_media_buy_ids.length === 0 && coverage.partially_covered_media_buy_ids.length === 0))
+  );
 }
 
 /**
  * Refuse a membership the reconciler would otherwise have to guess about:
+ * a seller-frozen package roster with package pins,
  * an `all_media_buys` expectation that also pins a buy set or coverage
  * (silently dropping the pins would weaken the check the caller asked for),
  * an unknown kind, or a malformed `requiredMediaBuyIds`.
@@ -420,9 +490,26 @@ function assertExpectedMemberships(expectedPeriods: readonly ExpectedReportingPe
     if (!membership || typeof membership !== 'object' || Array.isArray(membership)) {
       refuse('membership must be an object');
     }
-    const { kind, requiredMediaBuyIds } = membership as { kind?: unknown; requiredMediaBuyIds?: unknown };
-    if (kind === 'media_buy_ids') continue;
+    const { kind, packageCoverage, requiredMediaBuyIds } = membership as {
+      kind?: unknown;
+      packageCoverage?: unknown;
+      requiredMediaBuyIds?: unknown;
+    };
+    if (kind === 'media_buy_ids') {
+      if (packageCoverage === undefined) continue;
+      if (packageCoverage !== 'seller_frozen') refuse("membership.packageCoverage must be 'seller_frozen'");
+      const { coverage, mediaBuyIds } = expected as { coverage?: unknown; mediaBuyIds?: unknown };
+      if (
+        !uniqueStrings(mediaBuyIds) ||
+        !isExpectedBuyCoverage(coverage) ||
+        !sameStringSet(coverage.media_buy_ids, mediaBuyIds)
+      ) {
+        refuse('seller-frozen package coverage requires valid buy coverage without package fields');
+      }
+      continue;
+    }
     if (kind !== 'all_media_buys') refuse("membership.kind must be 'media_buy_ids' or 'all_media_buys'");
+    if (packageCoverage !== undefined) refuse('all_media_buys cannot set packageCoverage');
     const pins = expected as { mediaBuyIds?: unknown; coverage?: unknown };
     if (pins.mediaBuyIds !== undefined || pins.coverage !== undefined) {
       refuse('an all_media_buys expectation cannot also pin mediaBuyIds or coverage');
@@ -439,7 +526,19 @@ function assertExpectedMemberships(expectedPeriods: readonly ExpectedReportingPe
 /** Two RFC 3339 instants that name the same moment, whatever their formatting. */
 function sameInstant(left: unknown, right: unknown): boolean {
   const normalized = normalizedInstant(left);
-  return normalized !== undefined && normalized === normalizedInstant(right);
+  if (normalized === undefined || normalized !== normalizedInstant(right)) return false;
+  const fraction = (value: unknown): string => {
+    if (typeof value !== 'string') return '';
+    const separator = value.indexOf('.');
+    if (separator < 0) return '';
+    let end = separator + 1;
+    while (end < value.length && value.charCodeAt(end) >= 48 && value.charCodeAt(end) <= 57) end++;
+    while (end > separator + 1 && value.charCodeAt(end - 1) === 48) end--;
+    return value.slice(separator + 1, end);
+  };
+  const leapSecond = (value: unknown): boolean =>
+    typeof value === 'string' && RFC3339_INSTANT.exec(value)?.[6] === '60';
+  return fraction(left) === fraction(right) && leapSecond(left) === leapSecond(right);
 }
 
 function membershipIssues(
@@ -1049,9 +1148,32 @@ export function isReportingCoverageEvidence(value: unknown): value is ReportingC
 }
 
 function coverageMatchesExpected(
-  coverage: ReportingCoverageEvidence,
-  expected: ExpectedReportingPeriod['coverage']
+  coverage: unknown,
+  expected: ExpectedReportingCoverage | ExpectedReportingBuyCoverage,
+  packageCoverage?: 'seller_frozen'
 ): boolean {
+  if (packageCoverage === 'seller_frozen') {
+    if (!coverage || typeof coverage !== 'object' || Array.isArray(coverage)) return false;
+    const buyCoverage = coverage as Partial<ReportingCoverageEvidence>;
+    if (
+      !uniqueStrings(buyCoverage.media_buy_ids) ||
+      !uniqueStrings(buyCoverage.fully_covered_media_buy_ids) ||
+      !uniqueStrings(buyCoverage.partially_covered_media_buy_ids) ||
+      !uniqueStrings(buyCoverage.unsupported_media_buy_ids) ||
+      !uniqueStrings(buyCoverage.unknown_media_buy_ids)
+    ) {
+      return false;
+    }
+    return (
+      buyCoverage.status === expected.status &&
+      sameStringSet(buyCoverage.media_buy_ids, expected.media_buy_ids) &&
+      sameStringSet(buyCoverage.fully_covered_media_buy_ids, expected.fully_covered_media_buy_ids) &&
+      sameStringSet(buyCoverage.partially_covered_media_buy_ids, expected.partially_covered_media_buy_ids) &&
+      sameStringSet(buyCoverage.unsupported_media_buy_ids, expected.unsupported_media_buy_ids) &&
+      sameStringSet(buyCoverage.unknown_media_buy_ids, expected.unknown_media_buy_ids)
+    );
+  }
+  if (!isReportingCoverageEvidence(coverage)) return false;
   const comparable = {
     status: coverage.status,
     media_buy_ids: coverage.media_buy_ids,
@@ -1786,11 +1908,13 @@ function selectCurrent(
   ) {
     reasons.push('REVISION_SCOPE_MISMATCH');
   }
-  // Under all_media_buys these are the only checks on the seller's frozen
-  // set, so they compare instants rather than spellings: `…00.000Z` and
-  // `…00Z` are the same cutoff. The default path keeps its exact comparison.
-  const allMediaBuys = expected?.membership?.kind === 'all_media_buys';
-  const sameCutoff = (left: unknown, right: unknown) => (allMediaBuys ? sameInstant(left, right) : left === right);
+  // Seller-frozen membership is evaluated at the period boundary, so its
+  // cutoff is compared by instant rather than by timestamp spelling.
+  const sellerFrozenMembership =
+    expected?.membership?.kind === 'all_media_buys' ||
+    (expected?.membership?.kind === 'media_buy_ids' && expected.membership.packageCoverage === 'seller_frozen');
+  const sameCutoff = (left: unknown, right: unknown) =>
+    sellerFrozenMembership ? sameInstant(left, right) : left === right;
   if (!sameCutoff(obligation.scope_resolved_at, obligation.period?.end)) reasons.push('SCOPE_CUTOFF_MISMATCH');
   if (
     !isReportingCoverageEvidence(obligation.coverage) ||
@@ -1819,11 +1943,7 @@ function selectCurrent(
     // Under all_media_buys the seller chooses the set, so there is no pinned
     // coverage to compare; its own evidence is checked above.
     const pinned = pinnedMembership(expected);
-    if (
-      pinned &&
-      (!isReportingCoverageEvidence(obligation.coverage) ||
-        !coverageMatchesExpected(obligation.coverage, pinned.coverage))
-    ) {
+    if (pinned && !coverageMatchesExpected(obligation.coverage, pinned.coverage, pinned.packageCoverage)) {
       reasons.push('EXPECTED_COVERAGE_MISMATCH');
     }
     if (expected.coverageRequirement === 'full' && obligation.coverage?.status !== 'full') {
@@ -3058,9 +3178,7 @@ function expectedPeriodMatches(
     (pinned && expected.coverageRequirement === 'full' && obligation.coverage?.status !== 'full') ||
     obligation.period.start !== expected.periodStart ||
     obligation.period.end !== expected.periodEnd ||
-    (pinned &&
-      (!isReportingCoverageEvidence(obligation.coverage) ||
-        !coverageMatchesExpected(obligation.coverage, pinned.coverage)))
+    (pinned && !coverageMatchesExpected(obligation.coverage, pinned.coverage, pinned.packageCoverage))
   ) {
     return false;
   }

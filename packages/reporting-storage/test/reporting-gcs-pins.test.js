@@ -112,3 +112,14 @@ test('the fence refuses an all_media_buys expectation even when it also carries 
   }
   assert.doesNotThrow(() => assertExpectedBinding(input, { ...expected, membership: { kind: 'media_buy_ids' } }));
 });
+
+test('the GCS fence requires exact package coverage even when seller-frozen membership carries package fields', () => {
+  assert.throws(
+    () =>
+      assertExpectedBinding(input, {
+        ...expected,
+        membership: { kind: 'media_buy_ids', packageCoverage: 'seller_frozen' },
+      }),
+    { code: 'CONTENT_CONFLICT' }
+  );
+});
