@@ -3973,10 +3973,9 @@ test('media_buy_ids seller-frozen package coverage still rejects buy and package
     reportingNow
   );
   assert.equal(invalidPackagePartition.definitive, false);
-  assert.ok(
-    invalidPackagePartition.missingExpectedPeriods.length > 0 ||
-      invalidPackagePartition.obligations[0].reasons.includes('COVERAGE_SCOPE_MISMATCH')
-  );
+  assert.deepEqual(invalidPackagePartition.missingExpectedPeriods, []);
+  assert.ok(invalidPackagePartition.obligations[0].reasons.includes('COVERAGE_SCOPE_MISMATCH'));
+  assert.ok(!invalidPackagePartition.obligations[0].reasons.includes('EXPECTED_COVERAGE_MISMATCH'));
 
   const divergentRevision = withFrozenMembership(response([]), ['buy-1', 'buy-2']);
   divergentRevision.revisions[0].coverage.package_ids = ['different-package'];
@@ -3992,6 +3991,33 @@ test('media_buy_ids seller-frozen package coverage rejects caller package pins',
     () => evaluateReportingLedger(asLedger(response([])), [invalid], reportingNow),
     error => error.code === 'INVALID_EXPECTED_MEMBERSHIP'
   );
+});
+
+test('media_buy_ids seller-frozen package coverage rejects impossible buy classifications', () => {
+  for (const [status, changes] of [
+    ['none', { fully_covered_media_buy_ids: ['buy-1'], unsupported_media_buy_ids: ['buy-2'] }],
+    ['none', { partially_covered_media_buy_ids: ['buy-1'], unsupported_media_buy_ids: ['buy-2'] }],
+    ['none', { unknown_media_buy_ids: ['buy-1'], unsupported_media_buy_ids: ['buy-2'] }],
+    ['unknown', { fully_covered_media_buy_ids: ['buy-1'], unknown_media_buy_ids: ['buy-2'] }],
+    ['unknown', { partially_covered_media_buy_ids: ['buy-1'], unknown_media_buy_ids: ['buy-2'] }],
+  ]) {
+    const expected = expectedWithSellerPackageCoverage({
+      coverage: {
+        ...expectedWithSellerPackageCoverage().coverage,
+        fully_covered_media_buy_ids: [],
+        partially_covered_media_buy_ids: [],
+        unsupported_media_buy_ids: [],
+        unknown_media_buy_ids: [],
+        status,
+        ...changes,
+      },
+    });
+    assert.throws(
+      () => evaluateReportingLedger(asLedger(response([])), [expected], reportingNow),
+      error => error.code === 'INVALID_EXPECTED_MEMBERSHIP',
+      status
+    );
+  }
 });
 
 test('media_buy_ids accepts a partial buy expectation when covered packages establish partial coverage', () => {
@@ -4038,6 +4064,15 @@ test('media_buy_ids seller-frozen package coverage rejects a sub-millisecond lat
     for (const item of [...raw.periods, ...raw.revisions]) {
       item.coverage.evaluated_at = late;
     }
+    return raw;
+  });
+  assertMatchedButBlocked(result, 'SCOPE_CUTOFF_MISMATCH');
+  assert.deepEqual(result.submittedReceipts, []);
+});
+
+test('media_buy_ids seller-frozen package coverage distinguishes leap second from midnight', async () => {
+  const { result } = await reconcileAllMediaBuys(['buy-1', 'buy-2'], expectedWithSellerPackageCoverage(), raw => {
+    raw.periods[0].scope_resolved_at = '2026-08-31T23:59:60Z';
     return raw;
   });
   assertMatchedButBlocked(result, 'SCOPE_CUTOFF_MISMATCH');

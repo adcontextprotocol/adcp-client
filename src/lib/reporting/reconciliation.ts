@@ -460,7 +460,13 @@ function isExpectedBuyCoverage(value: unknown): value is ExpectedReportingBuyCov
   return (
     new Set(parts).size === parts.length &&
     sameStringSet(parts, coverage.media_buy_ids) &&
-    (coverage.status !== 'full' || sameStringSet(coverage.fully_covered_media_buy_ids, coverage.media_buy_ids))
+    (coverage.status !== 'full' || sameStringSet(coverage.fully_covered_media_buy_ids, coverage.media_buy_ids)) &&
+    (coverage.status !== 'none' ||
+      (coverage.fully_covered_media_buy_ids.length === 0 &&
+        coverage.partially_covered_media_buy_ids.length === 0 &&
+        coverage.unknown_media_buy_ids.length === 0)) &&
+    (coverage.status !== 'unknown' ||
+      (coverage.fully_covered_media_buy_ids.length === 0 && coverage.partially_covered_media_buy_ids.length === 0))
   );
 }
 
@@ -526,7 +532,9 @@ function sameInstant(left: unknown, right: unknown): boolean {
     const match = /:\d{2}\.(\d+)(?:[Zz]|[+-]\d{2}(?::?\d{2})?)$/.exec(value);
     return match?.[1]?.replace(/0+$/, '') ?? '';
   };
-  return fraction(left) === fraction(right);
+  const leapSecond = (value: unknown): boolean =>
+    typeof value === 'string' && RFC3339_INSTANT.exec(value)?.[6] === '60';
+  return fraction(left) === fraction(right) && leapSecond(left) === leapSecond(right);
 }
 
 function membershipIssues(
@@ -1136,30 +1144,39 @@ export function isReportingCoverageEvidence(value: unknown): value is ReportingC
 }
 
 function coverageMatchesExpected(
-  coverage: ReportingCoverageEvidence,
+  coverage: unknown,
   expected: ExpectedReportingCoverage | ExpectedReportingBuyCoverage,
   packageCoverage?: 'seller_frozen'
 ): boolean {
-  const buyComparable = {
+  if (packageCoverage === 'seller_frozen') {
+    if (!coverage || typeof coverage !== 'object' || Array.isArray(coverage)) return false;
+    const buyCoverage = coverage as Partial<ReportingCoverageEvidence>;
+    if (
+      !uniqueStrings(buyCoverage.media_buy_ids) ||
+      !uniqueStrings(buyCoverage.fully_covered_media_buy_ids) ||
+      !uniqueStrings(buyCoverage.partially_covered_media_buy_ids) ||
+      !uniqueStrings(buyCoverage.unsupported_media_buy_ids) ||
+      !uniqueStrings(buyCoverage.unknown_media_buy_ids)
+    ) {
+      return false;
+    }
+    return (
+      buyCoverage.status === expected.status &&
+      sameStringSet(buyCoverage.media_buy_ids, expected.media_buy_ids) &&
+      sameStringSet(buyCoverage.fully_covered_media_buy_ids, expected.fully_covered_media_buy_ids) &&
+      sameStringSet(buyCoverage.partially_covered_media_buy_ids, expected.partially_covered_media_buy_ids) &&
+      sameStringSet(buyCoverage.unsupported_media_buy_ids, expected.unsupported_media_buy_ids) &&
+      sameStringSet(buyCoverage.unknown_media_buy_ids, expected.unknown_media_buy_ids)
+    );
+  }
+  if (!isReportingCoverageEvidence(coverage)) return false;
+  const comparable = {
     status: coverage.status,
     media_buy_ids: coverage.media_buy_ids,
     fully_covered_media_buy_ids: coverage.fully_covered_media_buy_ids,
     partially_covered_media_buy_ids: coverage.partially_covered_media_buy_ids,
     unsupported_media_buy_ids: coverage.unsupported_media_buy_ids,
     unknown_media_buy_ids: coverage.unknown_media_buy_ids,
-  };
-  if (packageCoverage === 'seller_frozen') {
-    return (
-      coverage.status === expected.status &&
-      sameStringSet(coverage.media_buy_ids, expected.media_buy_ids) &&
-      sameStringSet(coverage.fully_covered_media_buy_ids, expected.fully_covered_media_buy_ids) &&
-      sameStringSet(coverage.partially_covered_media_buy_ids, expected.partially_covered_media_buy_ids) &&
-      sameStringSet(coverage.unsupported_media_buy_ids, expected.unsupported_media_buy_ids) &&
-      sameStringSet(coverage.unknown_media_buy_ids, expected.unknown_media_buy_ids)
-    );
-  }
-  const comparable = {
-    ...buyComparable,
     package_ids: coverage.package_ids,
     covered_package_ids: coverage.covered_package_ids,
     unsupported_package_ids: coverage.unsupported_package_ids,
@@ -1922,11 +1939,7 @@ function selectCurrent(
     // Under all_media_buys the seller chooses the set, so there is no pinned
     // coverage to compare; its own evidence is checked above.
     const pinned = pinnedMembership(expected);
-    if (
-      pinned &&
-      (!isReportingCoverageEvidence(obligation.coverage) ||
-        !coverageMatchesExpected(obligation.coverage, pinned.coverage, pinned.packageCoverage))
-    ) {
+    if (pinned && !coverageMatchesExpected(obligation.coverage, pinned.coverage, pinned.packageCoverage)) {
       reasons.push('EXPECTED_COVERAGE_MISMATCH');
     }
     if (expected.coverageRequirement === 'full' && obligation.coverage?.status !== 'full') {
@@ -3161,9 +3174,7 @@ function expectedPeriodMatches(
     (pinned && expected.coverageRequirement === 'full' && obligation.coverage?.status !== 'full') ||
     obligation.period.start !== expected.periodStart ||
     obligation.period.end !== expected.periodEnd ||
-    (pinned &&
-      (!isReportingCoverageEvidence(obligation.coverage) ||
-        !coverageMatchesExpected(obligation.coverage, pinned.coverage, pinned.packageCoverage)))
+    (pinned && !coverageMatchesExpected(obligation.coverage, pinned.coverage, pinned.packageCoverage))
   ) {
     return false;
   }
