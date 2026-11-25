@@ -590,6 +590,7 @@ function generateLlmsTxt(
   const installVersion = version.includes('-')
     ? version.split('-')[1].split('.')[0]
     : version.split('.').slice(0, 2).join('.');
+  const previewTag = version.includes('-') ? installVersion : 'beta';
   const now = new Date().toISOString().split('T')[0];
 
   const lines: string[] = [];
@@ -621,7 +622,7 @@ function generateLlmsTxt(
   ln(`## Start here: AdCP ${protocolVersion}`);
   ln();
   ln(
-    `The SDK requires Node.js \`^20.19.0 || >=22.12.0\`. Install this reference's release train with \`npm install @adcp/sdk@${installVersion}\`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, \`node -p "require('@adcp/sdk').ADCP_VERSION"\` reports its protocol pin; \`ls node_modules/@adcp/sdk/compliance/cache\` lists its packaged compliance versions. The \`adcp-3.2\` npm tag selects the maintained SDK 16 line. SDK 17 previews use \`beta\` and are intended for development and staging.`
+    `The SDK requires Node.js \`^20.19.0 || >=22.12.0\`. Install this reference's release train with \`npm install @adcp/sdk@${installVersion}\`; use the documentation from the exact published SDK version you install. For reproducible CLI runs, pin that exact SDK version. After installation, \`node -p "require('@adcp/sdk').ADCP_VERSION"\` reports its protocol pin; \`ls node_modules/@adcp/sdk/compliance/cache\` lists its packaged compliance versions. The \`adcp-3.2\` npm tag selects the maintained SDK 16 line. SDK 17 previews use \`${previewTag}\` and are intended for development and staging.`
   );
   ln();
   ln(
