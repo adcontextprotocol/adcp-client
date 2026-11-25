@@ -4008,3 +4008,25 @@ test('media_buy_ids accepts a partial buy expectation when covered packages esta
   });
   assert.doesNotThrow(() => evaluateReportingLedger(asLedger(response([])), [expected], reportingNow));
 });
+
+test('media_buy_ids seller-frozen package coverage treats reordered buy classifications as the same sets', () => {
+  const raw = withFrozenMembership(response([]), ['buy-1', 'buy-2']);
+  for (const item of [...raw.periods, ...raw.revisions]) {
+    item.coverage.media_buy_ids.reverse();
+    item.coverage.fully_covered_media_buy_ids.reverse();
+  }
+  const result = evaluateReportingLedger(asLedger(raw), [expectedWithSellerPackageCoverage()], reportingNow);
+  assert.deepEqual(result.missingExpectedPeriods, []);
+  assert.ok(!result.obligations[0].reasons.includes('EXPECTED_COVERAGE_MISMATCH'));
+});
+
+test('media_buy_ids seller-frozen package coverage compares cutoff instants by value', () => {
+  const raw = withFrozenMembership(response([]), ['buy-1', 'buy-2']);
+  raw.periods[0].scope_resolved_at = '2026-09-01T00:00:00.000Z';
+  for (const item of [...raw.periods, ...raw.revisions]) {
+    item.coverage.evaluated_at = '2026-09-01T00:00:00.000Z';
+  }
+  const result = evaluateReportingLedger(asLedger(raw), [expectedWithSellerPackageCoverage()], reportingNow);
+  assert.deepEqual(result.missingExpectedPeriods, []);
+  assert.ok(!result.obligations[0].reasons.includes('SCOPE_CUTOFF_MISMATCH'));
+});

@@ -28,3 +28,15 @@ export const explicitMembershipPeriod: ExpectedReportingPeriod = {
   coverage: fullCoverage,
   verificationProfile: 'native_commit',
 };
+
+export function fixedBuyPeriod(
+  membership: Extract<ExpectedReportingMembership, { kind: 'media_buy_ids' }>
+): ExpectedReportingPeriod {
+  return {
+    ...base,
+    membership,
+    mediaBuyIds: ['buy-1'],
+    coverage: fullCoverage,
+    verificationProfile: 'native_commit',
+  };
+}

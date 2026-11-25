@@ -67,6 +67,7 @@ export type {
   ExpectedReportingCoverage,
   ExpectedReportingBuyCoverage,
   ExpectedReportingMembership,
+  ExpectedReportingSellerPackageMembership,
   ObligationReconciliation,
   ReportingMembershipIssueV1,
   ReconcileReportingOptions,

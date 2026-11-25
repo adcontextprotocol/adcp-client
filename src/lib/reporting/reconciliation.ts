@@ -362,12 +362,14 @@ interface ExpectedCanonicalization {
  */
 export type ExpectedReportingMembership =
   | { kind: 'media_buy_ids'; packageCoverage?: never }
-  | { kind: 'media_buy_ids'; packageCoverage: 'seller_frozen' }
   | {
       kind: 'all_media_buys';
       /** Buys that unambiguously belong to the period; each one the seller omits is a blocking issue. */
       requiredMediaBuyIds?: string[];
     };
+
+/** Pin the buy set while the seller resolves package coverage at the period boundary. */
+export type ExpectedReportingSellerPackageMembership = { kind: 'media_buy_ids'; packageCoverage: 'seller_frozen' };
 
 type ExpectedReportingMembershipPins =
   | {
@@ -376,7 +378,7 @@ type ExpectedReportingMembershipPins =
       coverage: ExpectedReportingCoverage;
     }
   | {
-      membership: { kind: 'media_buy_ids'; packageCoverage: 'seller_frozen' };
+      membership: ExpectedReportingSellerPackageMembership;
       mediaBuyIds: string[];
       coverage: ExpectedReportingBuyCoverage;
     }
@@ -1140,7 +1142,16 @@ function coverageMatchesExpected(
     unsupported_media_buy_ids: coverage.unsupported_media_buy_ids,
     unknown_media_buy_ids: coverage.unknown_media_buy_ids,
   };
-  if (packageCoverage === 'seller_frozen') return same(buyComparable, expected);
+  if (packageCoverage === 'seller_frozen') {
+    return (
+      coverage.status === expected.status &&
+      sameStringSet(coverage.media_buy_ids, expected.media_buy_ids) &&
+      sameStringSet(coverage.fully_covered_media_buy_ids, expected.fully_covered_media_buy_ids) &&
+      sameStringSet(coverage.partially_covered_media_buy_ids, expected.partially_covered_media_buy_ids) &&
+      sameStringSet(coverage.unsupported_media_buy_ids, expected.unsupported_media_buy_ids) &&
+      sameStringSet(coverage.unknown_media_buy_ids, expected.unknown_media_buy_ids)
+    );
+  }
   const comparable = {
     ...buyComparable,
     package_ids: coverage.package_ids,
@@ -1870,11 +1881,13 @@ function selectCurrent(
   ) {
     reasons.push('REVISION_SCOPE_MISMATCH');
   }
-  // Under all_media_buys these are the only checks on the seller's frozen
-  // set, so they compare instants rather than spellings: `…00.000Z` and
-  // `…00Z` are the same cutoff. The default path keeps its exact comparison.
-  const allMediaBuys = expected?.membership?.kind === 'all_media_buys';
-  const sameCutoff = (left: unknown, right: unknown) => (allMediaBuys ? sameInstant(left, right) : left === right);
+  // Seller-frozen membership is evaluated at the period boundary, so its
+  // cutoff is compared by instant rather than by timestamp spelling.
+  const sellerFrozenMembership =
+    expected?.membership?.kind === 'all_media_buys' ||
+    (expected?.membership?.kind === 'media_buy_ids' && expected.membership.packageCoverage === 'seller_frozen');
+  const sameCutoff = (left: unknown, right: unknown) =>
+    sellerFrozenMembership ? sameInstant(left, right) : left === right;
   if (!sameCutoff(obligation.scope_resolved_at, obligation.period?.end)) reasons.push('SCOPE_CUTOFF_MISMATCH');
   if (
     !isReportingCoverageEvidence(obligation.coverage) ||
