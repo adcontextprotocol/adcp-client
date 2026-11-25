@@ -419,6 +419,15 @@ interface LoaderState {
   canonicalSources?: CompiledSources;
   /** With the cache enabled: the canonical validator this state returned for each root $id. */
   canonicalById?: Map<string, ValidateFunction>;
+  /**
+   * With the cache enabled: the documents core registration adds, in order,
+   * selected without adding them (see {@link planCoreRegistration}).
+   */
+  corePlan?: LoadedSchema[];
+  /** {@link corePlan} by registry key. */
+  corePlanByKey?: Map<string, LoadedSchema>;
+  /** A modular validator needed registration and the state planned it instead (see {@link planCoreRegistration}). */
+  coreRegistrationDeferred?: boolean;
   /** With the cache enabled: each registry's functions in the cache, by kind and options. */
   cachedFunctions?: Map<string, CachedFunctions>;
   /** {@link registrationInputsDigest}, once computed. */
@@ -2113,12 +2122,18 @@ function ensureInit(version: string): LoaderState {
  */
 function ensureCoreLoaded(s: LoaderState): void {
   if (s.coreLoaded) return;
+  s.coreRegistrationDeferred = false;
   try {
     registerCoreDocuments(s);
   } catch (error) {
     if (s.modularSources) drainCompiledSources(s.modularSources);
     // Ajv keeps a document it then rejects, so a later attempt can succeed
     // where this one failed: outcomes in this state depend on call order.
+    // A retry selects again from what the registry now holds, as without a
+    // plan (no hit precedes a failed registration: entries come only from
+    // states whose registration succeeded).
+    s.corePlan = undefined;
+    s.corePlanByKey = undefined;
     s.coreLoadFailed = true;
     throw error;
   }
@@ -2128,6 +2143,42 @@ function ensureCoreLoaded(s: LoaderState): void {
 }
 
 function registerCoreDocuments(s: LoaderState): void {
+  // A planned registration adds the planned objects, so what a cache hit
+  // handed out (`schema`, origin documents) is what the registry holds.
+  if (s.corePlan) {
+    for (const schema of s.corePlan) addPlainRegistryDocument(s.ajv, schema);
+    return;
+  }
+  selectCoreDocuments(s, schema => addPlainRegistryDocument(s.ajv, schema));
+}
+
+/**
+ * With the cache enabled, select the documents core registration adds
+ * without adding them, so a state whose modular validators are all cache
+ * hits never registers them. A selection that throws leaves no plan, and
+ * registration then fails as it does without the cache.
+ */
+function planCoreRegistration(s: LoaderState): boolean {
+  if (s.coreLoaded || s.coreLoadFailed) return false;
+  if (!s.corePlan) {
+    const plan: LoadedSchema[] = [];
+    try {
+      selectCoreDocuments(s, schema => plan.push(schema));
+    } catch {
+      return false;
+    }
+    s.corePlan = plan;
+    s.corePlanByKey = new Map();
+    for (const schema of plan) {
+      const key = (schema.$id as string).replace(/#\/?$/, '');
+      if (!s.corePlanByKey.has(key)) s.corePlanByKey.set(key, schema);
+    }
+  }
+  return true;
+}
+
+/** The documents core registration adds, in order, each passed to `add` as it is selected. */
+function selectCoreDocuments(s: LoaderState, add: (schema: LoadedSchema) => void): void {
   // Tool response files are pre-registered with the same response-root
   // envelope handling `getValidator` would apply. This matters for the async response
   // union: `core/async-response-data.json` can `$ref` both async variants and
@@ -2171,7 +2222,7 @@ function registerCoreDocuments(s: LoaderState): void {
       const isResponseTool = selected?.response ?? responseToolFiles.has(file);
       const schemaToRegister = isResponseTool ? acceptEnvelopeFromRelease(prepared, s.root, s.documents) : prepared;
       if (typeof schemaToRegister.$id === 'string' && !registeredIds.has(schemaToRegister.$id)) {
-        addPlainRegistryDocument(s.ajv, schemaToRegister);
+        add(schemaToRegister);
         registeredIds.add(schemaToRegister.$id);
       }
     }
@@ -2215,7 +2266,11 @@ function validatorForState(s: LoaderState, toolName: string, direction: Directio
   // The root's content keys cached modular validators; like definesToolRequest,
   // take it before the documents are registered.
   const digest = !fromBundled && s.modularSources ? cacheContentDigest(s) : undefined;
-  if (!fromBundled) ensureCoreLoaded(s);
+  if (!fromBundled) {
+    // With the cache, registration waits for the first validator that is not a hit.
+    if (s.modularSources && !s.coreLoaded && planCoreRegistration(s)) s.coreRegistrationDeferred = true;
+    else ensureCoreLoaded(s);
+  }
 
   const rawSchema = readStoredDocument(s.documents, file);
   // Bundled files inline every referenced subschema with the original
@@ -2753,12 +2808,23 @@ function resolveModularValidatorWithCache(
   const id = typeof schema.$id === 'string' ? schema.$id : undefined;
   const known = id !== undefined ? s.modularById?.get(id) : undefined;
   if (known) return known;
-  const registered = id !== undefined ? registeredSchemaEnv(s.ajv, id) : undefined;
+  // Before a deferred registration, the plan holds the documents (and their
+  // keys and base URIs) registration will add.
+  const planned = !s.coreLoaded ? s.corePlanByKey : undefined;
+  const registered =
+    id === undefined
+      ? undefined
+      : planned
+        ? planned.has(id)
+          ? { schema: planned.get(id)!, baseId: id.replace(/#\/?$/, ''), validate: undefined }
+          : undefined
+        : registeredSchemaEnv(s.ajv, id);
   const cf =
     id !== undefined && registered && !registered.validate && digest !== undefined && !s.coreLoadFailed
       ? cachedFunctionsFor(s, bc, 'modular-tool-validator', digest)
       : undefined;
   if (id === undefined || !registered || !cf || typeof registered.baseId !== 'string') {
+    ensureCoreLoaded(s);
     try {
       return (id !== undefined ? s.ajv.getSchema(id) : undefined) ?? s.ajv.compile(schema);
     } finally {
@@ -2767,7 +2833,7 @@ function resolveModularValidatorWithCache(
   }
 
   const documentFor = (key: string): object | undefined => {
-    const document = registeredSchemaEnv(s.ajv, key)?.schema;
+    const document = planned ? planned.get(key) : registeredSchemaEnv(s.ajv, key)?.schema;
     return document && typeof document === 'object' ? document : undefined;
   };
   const hit = loadCachedFunctions(cf, documentRootFunctionId(id, registered.baseId), documentFor, true);
@@ -2775,6 +2841,7 @@ function resolveModularValidatorWithCache(
     for (const [prefix, originSchema, schemaId] of hit.origins)
       s.diagnosticOrigins.replay(prefix, originSchema, schemaId);
     const fn = adoptCachedValidator(hit.fn, registered.schema, () => {
+      ensureCoreLoaded(s);
       try {
         return s.ajv.getSchema(id)?.schemaEnv;
       } finally {
@@ -2785,13 +2852,14 @@ function resolveModularValidatorWithCache(
     return fn;
   }
 
+  ensureCoreLoaded(s);
   let compiled: ValidateFunction;
   try {
     compiled = s.ajv.getSchema(id) ?? s.ajv.compile(schema);
   } finally {
     drainCompiledSources(sources);
   }
-  if (compiled.schemaEnv === registered) {
+  if (compiled.schemaEnv === registeredSchemaEnv(s.ajv, id)) {
     storeCompiledFunctions(
       cf,
       s.ajv,
@@ -3550,7 +3618,15 @@ export function getRegisteredSchemaIds(version: string = ADCP_VERSION): readonly
   // the keys is enough for prefix matching; we don't expose the SchemaEnv values.
   const registry = (s.ajv as unknown as { schemas?: Record<string, unknown> }).schemas;
   const bundledRegistry = (s.bundledAjv as unknown as { schemas?: Record<string, unknown> }).schemas;
-  return [...new Set([...Object.keys(registry ?? {}), ...Object.keys(bundledRegistry ?? {})])];
+  // A deferred registration reports the keys it will add, after the meta-schemas, in order.
+  const planned = s.coreRegistrationDeferred && !s.coreLoaded && s.corePlan ? s.corePlan : [];
+  return [
+    ...new Set([
+      ...Object.keys(registry ?? {}),
+      ...planned.map(schema => (schema.$id as string).replace(/#\/?$/, '')),
+      ...Object.keys(bundledRegistry ?? {}),
+    ]),
+  ];
 }
 
 /** Keep new invalidation reasons isolated to explicitly enabled draft references. */

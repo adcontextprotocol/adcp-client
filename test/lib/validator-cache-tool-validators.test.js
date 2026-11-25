@@ -432,6 +432,18 @@ test('warm runs build no schema-ref registry: schema-ref validators register and
   }
 });
 
+test('warm runs register no release documents: core registration waits for a validator that is not a hit', async () => {
+  const { off, warm, warmReverse } = await scenario.main;
+  const registering = run =>
+    run.results
+      .filter(r => !r.label.endsWith('|delivery-envelope') && r.addSchema > 0)
+      .map(r => `${r.label}: ${r.addSchema}`);
+  assert.ok(registering(off).length >= VERSIONS.length, 'cache off, each release registers its documents');
+  // The delivery-envelope projection keeps its own uncached Ajv (one per release).
+  for (const run of [warm, warmReverse])
+    assert.deepEqual(registering(run), [], 'steps that registered documents in a warm run');
+});
+
 test('every entry lookup of a warm run is a hit, and the warm runs store nothing new', async () => {
   const { warm, warmReverse, dir, entriesAfterCold, entriesAfterWarm } = await scenario.main;
   assert.ok(entriesAfterCold > 0, `the cold run stored nothing in ${dir}`);
@@ -484,6 +496,46 @@ test('each validator served from the cache is its own function: calling one leav
 });
 
 // ---------------------------------------------------------------- key coverage and damage
+
+test("a hit's schema is the object registration adds later: schemaEnv.schema is the validator's schema", async () => {
+  // 3.0.25 responses are modular, and their registered roots are envelope-widened copies.
+  const plan = { versions: ['3.0.25'], tools: ['get_products', 'create_media_buy'], only: 'modular' };
+  const dir = privateDir('schema-env');
+  await runChild({ ...plan, cacheDir: dir });
+  const CHECK = String.raw`
+    const path = require('node:path');
+    const { sdkRoot } = JSON.parse(process.env.PLAN);
+    const loader = require(path.join(sdkRoot, 'dist/lib/validation/schema-loader.js'));
+    const out = {};
+    const hits = [['get_products', 'sync'], ['create_media_buy', 'sync'], ['create_media_buy', 'request']].map(([t, d]) => [t + ':' + d, loader.getValidator(t, d, '3.0.25')]);
+    // Reading schemaEnv registers the release, then compiles live.
+    for (const [label, fn] of hits) out[label] = { same: fn.schemaEnv.schema === fn.schema, compiled: typeof fn.schemaEnv.validate === 'function' };
+    process.stdout.write('\n@@RESULT@@' + JSON.stringify(out) + '\n');
+  `;
+  const run = cacheDir =>
+    new Promise((resolve, reject) => {
+      const env = { ...process.env, PLAN: JSON.stringify({ sdkRoot: SDK_ROOT }) };
+      delete env.ADCP_VALIDATOR_CACHE_DIR;
+      if (cacheDir) env.ADCP_VALIDATOR_CACHE_DIR = cacheDir;
+      const child = spawn(process.execPath, ['-e', CHECK], { cwd: SDK_ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', chunk => (stdout += chunk));
+      child.stderr.on('data', chunk => (stderr += chunk));
+      child.on('close', status => {
+        const line = stdout.split('\n').find(l => l.startsWith('@@RESULT@@'));
+        if (status !== 0 || !line) return reject(new Error(`child exited ${status}: ${stderr}`));
+        resolve(JSON.parse(line.slice('@@RESULT@@'.length)));
+      });
+    });
+  const expected = {
+    'get_products:sync': { same: true, compiled: true },
+    'create_media_buy:sync': { same: true, compiled: true },
+    'create_media_buy:request': { same: true, compiled: true },
+  };
+  assert.deepEqual(await run(undefined), expected, 'cache off');
+  assert.deepEqual(await run(dir), expected, 'warm');
+});
 
 test('schema-ref validators of two files that mirror one $id stay two functions, warm too', async () => {
   // Releases mirror async-response documents under the same $id in two files.
@@ -888,6 +940,20 @@ test('an entry whose origin data no longer matches the release compiles live, wi
   const run = await runChild({ cacheDir: damaged });
   assertSameOutcomes(run, off, 'unlocatable origin data');
   assert.ok(run.counts.compileSchemaEnv > 0, 'the damaged entries were compiled live');
+});
+
+test('a registration that throws and a retry behave as without the cache', async () => {
+  // Ajv keeps a document it rejects, so the next call's registration skips it
+  // and can succeed: outcomes depend on the call that failed first.
+  const version = '3.0.25';
+  const root = copyRoot(version, 'bad-document');
+  const file = path.join(root, 'core/pagination-response.json');
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), type: 5 }));
+  const plan = { versions: [version], tools: ['get_products'], only: 'modular', externalRoots: [[version, root]] };
+  const off = await runChild(plan);
+  const cold = await runChild({ ...plan, cacheDir: privateDir('bad-document-cache') });
+  assert.match(String(stepValue(off, `${version}|get_products|request|get`).threw), /schema is invalid/);
+  assertSameOutcomes(cold, off, 'cold');
 });
 
 test('a release whose documents have ambiguous identities still throws on the canonical getter, warm too', async () => {
