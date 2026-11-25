@@ -14,7 +14,12 @@
  * mismatch, truncation, evaluation error) means the caller compiles live.
  *
  * The same directory also holds JSON data entries under the same rules
- * (schema-root document identities, see schema-loader's persistRootCheck).
+ * (schema-root document identities, see schema-loader's persistRootCheck),
+ * and, beside each validator entry, V8's code cache for its module: written by
+ * the first process that evaluates the entry, passed to V8 by later ones only
+ * when its header names the entry's verified body and this runtime and its
+ * data matches its digest, so a process evaluates the module without parsing
+ * it again. Anything else compiles the module from source and replaces it.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -35,12 +40,13 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { runInThisContext } from 'node:vm';
+import { Script } from 'node:vm';
 
 const FORMAT = 1;
 const HEADER_PREFIX = '// adcp-validator-cache ';
 const ENTRY_SUFFIX = '.js';
 const DATA_SUFFIX = '.json';
+const CODE_CACHE_SUFFIX = '.v8';
 const TMP_SUFFIX = '.tmp';
 const ORPHAN_TMP_AGE_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
@@ -65,6 +71,24 @@ interface EntryHeader {
   format: number;
   sha256: string;
   rootSchemaId: string | null;
+  /** Code cache only: {@link moduleSourceDigest} of the module it was produced from. */
+  source?: string;
+  /** Code cache only: {@link CODE_CACHE_RUNTIME} of the process that produced it. */
+  runtime?: string;
+}
+
+const MODULE_HEAD = '(function (require, module, exports) {';
+const MODULE_TAIL = '\n})';
+
+/** The runtime V8's code cache is valid for. V8 also refuses data built under other flags. */
+const CODE_CACHE_RUNTIME = `${process.version} ${process.arch} ${process.versions.v8}`;
+
+/**
+ * Digest of the exact string an entry's module compiles from, by the entry's
+ * verified body digest: V8 itself compares only the source's length.
+ */
+function moduleSourceDigest(bodySha256: string): string {
+  return sha256(`${MODULE_HEAD}\0${MODULE_TAIL}\0${bodySha256}`);
 }
 
 function sha256(value: string | Buffer): string {
@@ -213,6 +237,24 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
     }
   };
 
+  /** Store V8's code cache for an evaluated entry module; a failure only costs the next process a parse. */
+  const writeCodeCache = (key: string, codeFile: string, script: Script, source: string): void => {
+    let body: string;
+    try {
+      body = script.createCachedData().toString('base64');
+    } catch {
+      return;
+    }
+    const header: EntryHeader = {
+      format: FORMAT,
+      sha256: sha256(body),
+      rootSchemaId: null,
+      source,
+      runtime: CODE_CACHE_RUNTIME,
+    };
+    if (writeAtomic(`${key}${CODE_CACHE_SUFFIX}`, codeFile, header, body)) prune();
+  };
+
   const touch = (file: string): void => {
     try {
       const now = new Date();
@@ -228,11 +270,25 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
       const entry = readVerified(file);
       if (!entry) return undefined;
       const { header, body } = entry;
+      const source = moduleSourceDigest(header.sha256);
+      const codeFile = path.join(entries, `${key}${CODE_CACHE_SUFFIX}`);
+      const code = readVerified(codeFile);
+      const cachedData =
+        code && code.header.source === source && code.header.runtime === CODE_CACHE_RUNTIME
+          ? Buffer.from(code.body, 'base64')
+          : undefined;
       let validate: CachedValidatorEntry['validate'];
+      let script: Script;
       try {
-        const factory = runInThisContext(`(function (require, module, exports) {${body}\n})`, {
+        script = new Script(`${MODULE_HEAD}${body}${MODULE_TAIL}`, {
           filename: file,
-        }) as (req: NodeRequire, mod: { exports: unknown }, exp: unknown) => void;
+          ...(cachedData && { cachedData }),
+        });
+        const factory = script.runInThisContext() as (
+          req: NodeRequire,
+          mod: { exports: unknown },
+          exp: unknown
+        ) => void;
         const mod: { exports: unknown } = { exports: {} };
         factory(moduleRequire, mod, mod.exports);
         validate = mod.exports as CachedValidatorEntry['validate'];
@@ -247,6 +303,11 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
       delete (validate as { default?: unknown }).default;
       validate.errors = null;
       touch(file);
+      if (cachedData && !script.cachedDataRejected) {
+        touch(codeFile);
+      } else {
+        writeCodeCache(key, codeFile, script, source);
+      }
       return { validate, rootSchemaId: typeof header.rootSchemaId === 'string' ? header.rootSchemaId : undefined };
     },
 
