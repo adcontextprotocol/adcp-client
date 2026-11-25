@@ -106,6 +106,7 @@ async function viaPlatform() {
         pricingModels: ['cpm'],
         config: {},
         compliance_testing: {},
+        supported_versions: SERVED,
       },
       statusMappers: {},
       accounts: {
@@ -132,7 +133,6 @@ async function viaPlatform() {
       name: 'served-release-platform',
       version: '1.0.0',
       validation: { requests: 'off', responses: 'off' },
-      capabilities: { supported_versions: SERVED },
       complyTest: { force },
     }
   );
@@ -247,6 +247,7 @@ describe('comply_test_controller served release — platform visibility gate', (
           pricingModels: ['cpm'],
           config: {},
           compliance_testing: {},
+          supported_versions: SERVED,
         },
         statusMappers: {},
         accounts: {
@@ -273,7 +274,6 @@ describe('comply_test_controller served release — platform visibility gate', (
         name: 'hidden',
         version: '1.0.0',
         validation: { requests: 'off', responses: 'off' },
-        capabilities: { supported_versions: SERVED },
         complyTest: { force },
       }
     );
@@ -379,6 +379,7 @@ describe('comply_test_controller served release — platform sandbox denial', ()
         pricingModels: ['cpm'],
         config: {},
         compliance_testing: {},
+        supported_versions: SERVED,
       },
       statusMappers: {},
       accounts: {
@@ -407,7 +408,6 @@ describe('comply_test_controller served release — platform sandbox denial', ()
       name: 'denial',
       version: '1.0.0',
       validation: { requests: 'off', responses: 'off' },
-      capabilities: { supported_versions: SERVED },
       complyTest: { force },
     });
     return { client: await connect(server), force };
