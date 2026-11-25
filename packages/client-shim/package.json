@@ -106,7 +106,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@adcp/sdk": "^17.0.0-beta.40"
+    "@adcp/sdk": "^17.0.0-rc.0"
   },
   "keywords": [
     "adcp",

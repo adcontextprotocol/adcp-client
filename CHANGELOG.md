@@ -1,5 +1,122 @@
 # Changelog
 
+## 17.0.0-rc.0
+
+### Minor Changes
+
+- 1c2ce71: Deprecate the server and testing names that the package root (`@adcp/sdk`) and `@adcp/sdk/client` re-export (#3664). Each of the 275 names re-exported from `./server` and `./testing` (for example `serve`, `createTaskCapableServer`, `adcpError`, the `legacy*Response` builders, the idempotency and state stores, `ServeContext`, `mediaBuyActionResolver`, `testAgent` and `createTestAgent`) now carries `@deprecated` pointing at `@adcp/sdk/server` or `@adcp/sdk/testing`. Runtime behavior is unchanged in 17.x. SDK 18.0 removes these re-exports so that `.` and `./client` stop loading the server and testing modules. The root aliases `StateListOptions` and `StateListResult` map to `ListOptions` and `ListResult` on `@adcp/sdk/server`. Repo docs, skills and examples now import these names from the subpaths. See "Server and testing names on the root entry are deprecated" in `docs/migration-16-to-17.md`.
+- cdf4ba7: Remove the AdCP 3.1.0-beta.3 `capability_ids` helpers from `@adcp/sdk/v2/projection` before 17.0 freezes them (#1899): `packageRefsForCapabilities`, `legacyFormatIdsForCapability`, `CapabilityIdsLookupError`, `CapabilityIdsLookupErrorCode` and `PackageCapabilityRefs`. They have been deprecated since SDK 8.1 and emit a `capability_ids` package field that beta.5 and later sellers reject. Use `packageRefsForFormatOptions` and `legacyFormatIdsForFormatOption`, which select by `format_option_id`. The migration guide maps each removed name.
+- 3b319b3: Emit AdCP 3.3 platform identifiers under both names on `sync_event_sources` and `sync_audiences` rows. AdCP 3.3 renames the row's `seller_id` to `platform_id` and keeps `seller_id` as a deprecated alias; a 3.3 response that reports the identifier MUST carry both with identical values.
+  - **Seller:** whichever name a handler returns, the server sends both to callers served 3.3 or later and `seller_id` alone below 3.3, for `createAdcpServer` and `createAdcpServerFromPlatform`, including idempotent replays of responses cached before this change. Task results are stored as the seller wrote them, and every reader gets the names its release defines: `get_task_status`, `tasks_get`, completion webhooks and push settlement (bound or application-managed). That covers results an adopter completes directly through `TaskRegistry.complete()` and rows stored before this change. A new 3.3→3.2 response adapter carries `platform_id` as `seller_id`. Two different values are refused: the sync response is `INTERNAL_ERROR`, a handed-off task fails with `INTERNAL_ERROR`, `TaskRegistry.complete()` throws without storing, and push settlement rejects the result. Settlement intent fingerprints and other task types are unchanged.
+  - **Buyer:** new `platformIdOf(row)` (from `@adcp/sdk` and `@adcp/sdk/utils`) returns `platform_id`, else `seller_id`, so it also reads 3.2 sellers' rows.
+
+### Patch Changes
+
+- 544c155: At AdCP 3.3 and later, the buyer client now references a provisioned account by the seller's `account_id` without first requiring `account.stable_account_id`.
+
+  AdCP 3.3 (adcontextprotocol/adcp#8474) makes the seller's `account_id` the account's identity. Every seller MUST return it from `sync_accounts`, accept it on every account-scoped task, and never change it. Buyers MUST NOT require the flag before sending it, and the flag is deprecated. `accountReferenceMode: 'auto'` swapped a provisioned natural key for `{ account_id }` only when the seller declared `stable_account_id: true` or both sides were on AdCP 4. The Python SDK already follows the 3.3 rule.
+
+  `auto` now sends `{ account_id }` on account-scoped tasks whose negotiated (or pinned) release is 3.3 or later. This covers `get_products`, `sync_creatives`, `create_media_buy` and the rest, and `resolveAccount()` returns the ID reference at those releases. These keep their natural key:
+  - `sync_accounts` entries and `list_accounts` filters;
+  - sellers negotiated below 3.3, unless they declare the flag;
+  - a 3.3 account the seller returned no ID for;
+  - `accountReferenceMode: 'natural-key'`.
+
+  When the natural key is replaced, its brand moves to the top-level `brand` on tasks that take one, unless the caller set a `brand` or a `brand_manifest`. `request_proposals` and `buy_products` need a brand source. A request carrying a `governance_context` keeps its authored account, because the authorization's payload hash covers it. Format routes learned by `getProducts` stay keyed by the caller's authored account, so `createMediaBuy` and `syncCreatives` still find them. Strict account policy's `get_products` gate is unchanged and still keys off the seller's declaration.
+
+- 8449d2b: `comply_test_controller` now answers at the caller's served AdCP release, as spec tools do (DR-0024, #3769). It's registered after `createAdcpServer` returns, through `registerTestController`, `createComplyController().register` or `createAdcpServerFromPlatform`, so it never selected a release and always answered in the server's own. For example, a 3.2-pinned storyboard runner calling a 3.3 seller received 3.3-only fields such as `forced.proposal_id`.
+
+  On an `AdcpServer`, the controller now:
+  - selects the served release from the request's `adcp_version` / `adcp_major_version`, as the dispatcher does;
+  - refuses a pin the server can't serve with `VERSION_UNSUPPORTED`, before the controller runs;
+  - converts its response down to the served release, and refuses with `VERSION_UNSUPPORTED` when the result holds a value that release can't express, such as a 3.3-only `forced.arm`;
+  - echoes `adcp_version`.
+
+  `TOOL_INPUT_SHAPE` gains optional `adcp_version` and `adcp_major_version`, the request's version envelope, so they survive input parsing. On a platform server, the release is selected only after the visibility gate, so a principal that can't see the controller still gets `MethodNotFound`. A controller on a raw SDK `McpServer` behaves as before.
+
+- 41c28e2: A `CONSUMER_STATUS_MISMATCH` now resolves when the seller's own record stops conflicting with the buyer's statement, not only when the buyer supersedes it (#3653). AdCP 3.3 allows both routes. Before, a seller restatement, or a seller marking the disputed revision unreadable, never cleared a `content_mismatch`, `revision_missing` or `unreadable` mismatch.
+
+  The spec doesn't say per status when the seller's projection "no longer conflicts". The SDK now applies the reading it shares with the Python SDK:
+
+  | Statement            | Conflicts while                                                   |
+  | -------------------- | ----------------------------------------------------------------- |
+  | `obligation_missing` | always                                                            |
+  | `revision_missing`   | the seller has a current required revision                        |
+  | `unreadable`         | no open `REVISION_UNREADABLE` marks the named revision unreadable |
+  | `content_mismatch`   | the named revision is still the current required one              |
+  | `received`           | the named revision is not the current required one                |
+  - `projectReportingConsumerStatusMismatchV1` takes the obligation's persisted issues as a new optional last argument; `get_reporting_status` passes them.
+  - An `unreadable` statement can conflict again after the seller retires its unreadable mark. That recurrence gets a new `issue_id` and `opened_at`, as the spec requires. Every other mismatch keeps its `issue_id`.
+  - Seller-health suppression is unchanged: while the seller's own projection is degraded the mismatch is not published, and it returns with the same `issue_id`.
+  - The issue observer follows the same rule. `reportingConsumerMismatchOccurrenceV1` takes optional `issues` and `at` arguments. The in-memory ledger and `@adcp/reporting-storage`'s PostgreSQL store pass them, and a `REVISION_UNREADABLE` write now settles the obligation's occurrences. Because a recurrence's identity and `opened_at` come from the seller's unreadable mark, both stores now record that mark's start and end as fixed facts. Neither the start nor the end is dated after the write. The start is fixed by the first write, and the end is never before it. The end, once set, never moves, including on a retried write. A custom store can do the same with the new experimental `normalizeReportingUnreadableMarkWriteV1`.
+
+- 14a8330: `creative_approval` webhook responses no longer put an AdCP 3.0 decision in `status` (#3777).
+  - `legacyCreativeApprovalApproved` / `legacyCreativeApprovalRejected` / `legacyCreativeApprovalPendingReview` (and the same builders in `@adcp/sdk/server/legacy/v5`) added `status: 'approved' | 'rejected' | 'pending_review'` on top of `approval_status`. That payload is invalid on AdCP 3.1 and later, and a `rejected` creative read as a rejected task. They now emit `approval_status` and `status: 'completed'`. `approval_status` is now optional in their input, since each builder sets it.
+  - `projectResponseForRelease('creative_approval', body, release)` from `@adcp/sdk/adapters/version` now gives an AdCP 3.0 buyer the decision in `status`. Before, it returned the task status `completed` and dropped the decision. A body without a decision, such as the error arm, loses `status` at 3.0, where that arm forbids it. Take `release` from the request's `adcp_version`. A 3.0 buyer sends none, so fall back to `ctx.servedAdcpVersion` recorded with the rights grant at `acquire_rights`.
+  - The brand-rights docs now name the exported builders.
+
+- b389cb5: A failed task now tells the buyer whether the seller applied the failed mutation (#3689). Without that, a buyer must treat every failure as unknown, or risk double-booking after a retry and reporting a refusal for an order that is actually live.
+  - `result.adcpError.mutation_outcome` carries AdCP 3.3 `error.mutation_outcome` (`applied`, `not_applied` or `unknown`). It is read from `adcp_error` and falls back to the first `errors[]` entry. Before, the projection dropped it, although the raw body kept it.
+  - A thrown transport error that carries the seller's structured error body (`error.data` or `error.response.data` with `adcp_error` or `errors[]`) now returns that body as `result.data`, as a returned failure does. Before, both the body and the outcome were lost. This also applies to the per-agent failures of the multi-agent client's parallel operations.
+  - An A2A JSON-RPC error now keeps its structured `data` on the thrown error, instead of being replaced with a plain message.
+  - `is401Error` no longer classifies an error as HTTP 401 from its message text, such as "Unauthorized upstream", when the error carries a structured AdCP error body. Such an error is the seller's application error with its own code. Treating it as an auth failure replaced it with `AuthenticationRequiredError` and lost the body. Real 401 status codes are unchanged.
+  - The exported `extractAdcpErrorFromMcp` and `extractAdcpErrorFromTransport` read the same `errors[]` fallback for `mutation_outcome`, and a malformed `errors[]` entry no longer throws during extraction.
+
+- e097d81: **`AuthenticationRequiredError` keeps only its declared, sanitized fields.** This applies to every subclass, whether the error is thrown or carried on `result.errorInstance`. Seller-supplied text outside the declared interfaces no longer reaches thrown errors, `details`, or serialized results.
+  - **`agentUrl`.** Userinfo, query and fragment are stripped from `agentUrl`, `details.agentUrl` and the default message. On `NeedsAuthorizationError` they are also stripped from its message, `requirements.agentUrl` and `details.requirements.agentUrl`. A URL with none of them is unchanged.
+  - **`challenge` and `details.challenge`.** Only the `AuthChallengeInfo` fields remain: `scheme`, plus `realm`, `scope`, `error` and `error_description` when they are strings. This drops:
+    - `params`, the map of every auth-param, including unrecognized ones;
+    - `resource_metadata`;
+    - any other undeclared field.
+  - **`oauthMetadata` and `details.oauthMetadata`.** Only the `OAuthMetadataInfo` string fields remain: `authorization_endpoint`, `token_endpoint`, `registration_endpoint` and `issuer`. This drops the rest of the seller's RFC 8414 document, including `code_challenge_methods_supported`, `response_types_supported`, `grant_types_supported`, `token_endpoint_auth_methods_supported` and `scopes_supported`.
+
+  The declared TypeScript types are unchanged, so access to declared fields still type-checks. `challenge`, `oauthMetadata` and `NeedsAuthorizationError.requirements` are now copies of the objects passed in, not the same objects. Changing a passed object afterwards no longer changes the error. `requirements` keeps every other field, including its bounded `challenge`. Code that read the dropped fields can get the full parsed values from `probeAuthChallenge()`, `discoverOAuthMetadata()` or `discoverAuthorizationRequirements()`. This is a field allowlist, not a content scrub: the declared strings, such as `realm`, `error_description` and the OAuth endpoints, are still seller-supplied and untrusted.
+
+  **Durable deferred-settlement checkpoints no longer store `errorInstance`.** It used to be persisted as a plain-object copy, so a replayed result carried a value that was not an `Error`, with no `message` or `idempotencyKey`. Replay now rebuilds the typed error from the stored `adcpError` and the request's idempotency key. For example, `IDEMPOTENCY_CONFLICT` replays as an `IdempotencyConflictError`. A copy stored by an older checkpoint is dropped on replay. Errors without a seller error code, such as authentication errors, are not restored on replay.
+
+- dfed8a9: `getAgentInfo()` and capability discovery now read every page of an MCP agent's `tools/list`. AdCP asks sellers to paginate the tool catalog, and clients that need all of it must follow `nextCursor`. The legacy MCP client paths read only the first page: in-process, the shared scoped session, and the one-shot connection. So a seller with `get_adcp_capabilities` on a later page was treated as not supporting AdCP 3, and tools on later pages were missing from `getAgentInfo().tools` and from request validation.
+  - Reads stop at a repeated cursor and fail after 64 pages.
+  - `transport.maxResponseBytes` applies to each page, and each page has its own streamed-response allowance.
+  - After a multi-page read, the legacy MCP client's cached tool metadata covers the whole catalog, as it does for a single-page server. That metadata is the output-schema validators and MCP Tasks support. The MCP Tasks path reads the whole catalog the same way.
+
+- ea1345a: Keep the typed authentication error on `result.errorInstance` in two places that dropped it.
+  - **Failed task results.** A failed task now carries `AuthenticationCredentialsRejectedError` when the agent rejects a configured static credential. It also carries the `AuthenticationRequiredError` an unsigned A2A call raises on HTTP 401. Before, the executor kept only signed-request rejections and validated `NeedsAuthorizationError`, and `errorInstance` was left undefined.
+  - **Multi-agent collections.** Results from `ADCPMultiAgentClient` collections (`client.allAgents()`/`client.agents([...])`) now carry the `ADCPError` an agent's call threw as `errorInstance`, instead of a message-only failure.
+
+  In both places a `NeedsAuthorizationError` is kept only when its MCP OAuth requirements are validated. Seller-supplied fields on these errors, such as `challenge` and `oauthMetadata`, are untrusted.
+
+- e043993: Keep `z.infer` of the exported Zod schemas within TypeScript's instantiation depth (#3472). Slicing, mapping or spreading arrays of `z.infer<typeof GetMediaBuyDeliveryResponseSchema>`, and inferring `InstallmentDeliveryMetricsSchema`, failed with TS2589 since 17.0.0-beta.2.
+  - `NonemptyArraySchema<T>` is now a `z.ZodArray<T>` whose internals carry the `[T, ...T[]]` input and output, instead of a `z.ZodType` of the tuple that instantiated every ZodType member with the full element type. `z.infer` and `z.input` results are unchanged, the schema still assigns to `z.ZodType<[T, ...T[]]>`, and it is now also assignable wherever a `z.ZodArray<T>` is expected. Its internals type, `NonemptyArrayInternals<T>`, is exported next to it.
+  - `PublishedPostAssetSchema` carried nine identical copies of its object and union operands, which pushed `z.infer` of `CollectionSchema`, `CollectionPayloadSchema`, `ListCollectionsResponseSchema`, `ListProductsResponseSchema`, `RegistryFeedResponseSchema` and `ResponseCollectionSchema` past the depth limit. The generator now collapses them; validation is unchanged.
+
+  Exporting `.meta()` or `.describe()` of the largest schemas without a type annotation can still hit TS7056 in declaration emit; annotate it as `typeof TheSchema` (see `docs/ZOD-SCHEMAS.md`).
+
+- 039bb60: `createAdcpServerFromPlatform` now throws a `PlatformConfigError` when its options carry `capabilities`. The options type already omits `capabilities`, but JavaScript callers and casts could pass it, and the server silently ignored it, advertising the platform's own capabilities instead: `opts.capabilities.supported_versions` and `opts.capabilities.overrides` (for example `request_signing`) never reached `get_adcp_capabilities`. **JS callers that pass `capabilities` in the options must move it to the platform declaration** (`platform.capabilities.supported_versions`, `platform.capabilities.overrides`, …). The build-an-agent, signing and media-buy 3.2 compatibility guides showed the options form and now declare it on the platform. `createAdcpServer` still accepts `capabilities` in its config.
+- 4c6f99f: Reliable Reporting serves 1.2 report definitions to AdCP 3.3 callers only (adcp-client#3709, adcontextprotocol/adcp#8983).
+
+  AdCP 3.3 adds report-definition `contract_version` 1.2, and callers pinned below 3.3 accept only 1.0 and 1.1 (`core/reporting-report-definition.json` `x-adcp-validation.package_dimension`). An offering pins its definition by URI and SHA-256 only, so `createReliableReportingService` takes a new option, `reportDefinitionVersions`, mapping each hex `report_definition_sha256` (matched case-insensitively) to `'1.0'`, `'1.1'` or `'1.2'`. The 3.3-only offerings are published as `platform.reporting.adcp33OnlyOfferings` (offering id to `'1.2'` or `'undeclared'`), and `createAdcpServerFromPlatform` then:
+  - drops them from `get_adcp_capabilities` for callers pinned below 3.3, and drops `media_buy.reporting_delivery` and its experimental feature id when no offering is left;
+  - fails a `sync_accounts` request from those callers whose `reporting_delivery_configs` name one, as a whole and before `accounts.upsert` runs, with `UNSUPPORTED_FEATURE` (`field: "reporting_delivery_configs"`, `recovery: "correctable"`, `details: { offering_id }` for the first offending config, the seller's own id and no request text). No entry is applied, so a `delete_missing` roster is never shortened;
+  - refuses to start a server pinned below 3.3 that has one.
+
+  "Pinned below 3.3" compares `MAJOR.MINOR`, so every 3.3 prerelease counts as 3.3. A request with no served release is the SDK's pinned release, and an unparseable one is treated as older.
+
+  An offering the map does not declare keeps today's behavior: it is served to every caller as a 1.0 or 1.1 definition, and the service warns once at construction with the entry to add. Set `undeclaredReportDefinitions: 'withhold_from_pre_3_3'` to serve undeclared offerings to 3.3 callers only; their refusal says the definition's `contract_version` is undeclared. `installConfiguration` accepts an optional `servedAdcpVersion` (pass `ctx.servedAdcpVersion`) so a `sync_accounts` handler supplied outside `accounts.upsert` gets the same refusal. `createAdcpServer` takes the matching `capabilities.reportingAdcp33OnlyOfferingIds`. `get_reporting_status` and the account readback are unchanged. Products are the seller's own catalog: filter 1.2 offering ids out of `reporting_delivery_offering_ids` in products served to pre-3.3 callers. The Python SDK applies the same rule (adcp-client-python#1959).
+
+- d62de63: A retry under the same `idempotency_key` now sends the same `push_notification_config`, so an AdCP 3.1+ seller replays the first response instead of answering `IDEMPOTENCY_CONFLICT` (#3693).
+
+  Sellers hash the whole request under its idempotency key, webhook registration included. The SDK minted a random operation id per call, and that id fills both `push_notification_config.operation_id` and the `{operation_id}` macro of the webhook URL, so every retry changed the hashed payload. This happened only when a webhook URL template applied to the call.
+
+  **Visible changes**
+  - **Deterministic operation ids for mutating calls.** When you don't pass `operationId` and the request carries an idempotency key (every mutating request; the SDK generates one when you don't), the default operation id is now `idem-` followed by 40 hex characters derived from the agent id, the task name and the key. The key itself never appears in the id or in a URL. Requests without a key keep a random UUID.
+  - **Deterministic webhook URLs and registrations.** The `{operation_id}` webhook URL macro, `push_notification_config.operation_id`, `onWebhookRegistration`'s `operationId`, `TaskTimeoutError.taskId` and the `operation_id` on results and `onActivity` events all carry that id. A retry under the same key reproduces them.
+  - **An operation id can be reused once its dispatch has finished.** Before, reusing an `operationId` within 30 seconds of the earlier task ending threw `ConfigurationError`, even for the documented retry. A same-key call while the first one is still in flight or awaiting completion on the same client still throws `ConfigurationError`; track the existing task instead. Operations held by durable settlement are still refused.
+  - **The `TaskOptions.operationId` docs are reversed.** They said retries should use a new id and the same `idempotency_key`. On AdCP 3.1+ that produced the conflict above. Retry with the same key, and, if you pass `operationId`, pass the same one.
+
+  `skipIdempotencyAutoInject` and `preserveGovernedPayload` calls keep a random default id.
+
+- 7f67c51: Document the 17.x policy for exported Zod schemas of objects that AdCP 3.3 keeps closed (#3679). Most of them are `.passthrough()` in 17.0, so they accept unknown keys that the published schema rejects; the SDK's JSON Schema validation already rejects those keys. A 17.x minor may make these schemas `.strict()` wherever AdCP 3.3 keeps the object closed, which also removes the `[k: string]: unknown` index signature from their `z.infer`/`z.input` types, while objects AdCP leaves open stay `.passthrough()`. Don't rely on Zod accepting a vendor key in a closed object such as `commercial_terms` or a metric `qualifier`: put extensions in `ext`. See "Unknown keys and closed objects" in `docs/ZOD-SCHEMAS.md`. No code changes.
+
 ## 17.0.0-rc
 
 Switches the SDK 17 prerelease line from `beta` to `rc`. No package is published at this version; the first release candidate is `17.0.0-rc.0`.
