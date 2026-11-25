@@ -281,6 +281,16 @@ describe('ReliableReportingService', () => {
     assert.throws(() => serviceFixture({ adapters: badSla }), /shorter than the source can finalize/);
   });
 
+  test('rejects a configuration requesting a finality the offering does not advertise', async () => {
+    const { service } = serviceFixture();
+    await assert.rejects(
+      service.installConfiguration(configuration({ requiredFinality: 'official' }), {
+        account: { id: 'account-a', ctx_metadata: {} },
+      }),
+      /finality is not supported/
+    );
+  });
+
   test('applies the advertised report definition version gate to each source', async () => {
     const adapters = sharedAdapters();
     const { service } = serviceFixture({
@@ -333,7 +343,12 @@ describe('ReliableReportingService', () => {
       const installed = await service.installConfiguration(input, context);
       store.configurations.get(installed.configurationId).installedAt = anchor;
     }
-    const cycle = await service.runCycle({ accountId: 'account-a', maxObligations: 4, maxWorkerIterations: 4 });
+    const cycle = await service.runCycle({
+      accountId: 'account-a',
+      now: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12)),
+      maxObligations: 4,
+      maxWorkerIterations: 4,
+    });
     assert.equal(cycle.revisionsCommitted, 4, JSON.stringify(cycle));
     const obligations = await store.listObligations('account-a');
     const kinds = [];

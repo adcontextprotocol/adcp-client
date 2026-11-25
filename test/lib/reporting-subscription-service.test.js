@@ -358,6 +358,38 @@ describe('reliable reporting service with subscription obligations', () => {
     });
   }
 
+  test('service producer refuses a source ID masquerading as a delivery offering', async () => {
+    const { clock, engine, service, store } = await world({ dual: true });
+    clock.now = new Date(day(8));
+    await engine.reconcile(A);
+    await service.runCycle({ accountId: ACCOUNT, now: clock.now });
+    const [stored] = await store.listConfigurations(ACCOUNT);
+    const {
+      configurationId,
+      installedAt,
+      semanticFingerprint,
+      calendarRules,
+      owedSet,
+      constituents,
+      mediaBuyIds,
+      packageBindings,
+      ...input
+    } = stored;
+    input.subscription.offeringId = input.offeringId;
+    await assert.rejects(
+      service.producer.planSubscriptionObligations({
+        account_id: ACCOUNT,
+        principal: A,
+        subscriptionId: input.delivery_config_id,
+        configurations: [input],
+        obligations: [],
+        owedThrough: day(8),
+        now: day(8),
+      }),
+      /matching source offering/
+    );
+  });
+
   test('replay refuses to replace a stored source when the advertised mapping changes', async () => {
     const { clock, engine, service, store, options } = await world({ dual: true });
     clock.now = new Date(day(8));

@@ -1057,8 +1057,9 @@ function subscriptionConfiguration(
     subscription.principalId !== plan.principal.principalId ||
     subscription.subscriptionId !== plan.subscriptionId ||
     subscription.subscriptionId !== input.delivery_config_id ||
-    (subscription.offeringId !== input.offeringId &&
-      !matchesSubscriptionSource?.(subscription.offeringId, input.offeringId, input.requiredFinality)) ||
+    (matchesSubscriptionSource
+      ? !matchesSubscriptionSource(subscription.offeringId, input.offeringId, input.requiredFinality)
+      : subscription.offeringId !== input.offeringId) ||
     input.account?.account_id !== plan.account_id
   ) {
     throw new TypeError(
