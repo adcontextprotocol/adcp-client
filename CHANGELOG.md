@@ -1,5 +1,9 @@
 # Changelog
 
+## 17.0.0-rc
+
+Switches the SDK 17 prerelease line from `beta` to `rc`. No package is published at this version; the first release candidate is `17.0.0-rc.0`.
+
 ## 17.0.0-beta.40
 
 ### Minor Changes

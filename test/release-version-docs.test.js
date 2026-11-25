@@ -149,7 +149,13 @@ test('the release version workflow leaves generated agent docs current', { timeo
     );
     const worksheet = readFileSync(path.join(worktree, 'docs', 'migration-14.x-rc-worksheet.md'), 'utf8');
     assert.ok(worksheet.includes(`@adcp/sdk@${releasedVersion}`), 'worksheet must identify the Changesets release');
-    assert.ok(!worksheet.includes(`@adcp/sdk@${originalVersion}`), 'worksheet must not retain the previous SDK pin');
+    // Match the exact pin: a bare prerelease line version (17.0.0-rc) is a
+    // prefix of its first release (17.0.0-rc.0).
+    assert.doesNotMatch(
+      worksheet,
+      new RegExp(`@adcp/sdk@${originalVersion.replaceAll('.', '\\.')}(?![\\w.-])`),
+      'worksheet must not retain the previous SDK pin'
+    );
 
     // Changesets stages the release-PR output before CI checks it. Staging the
     // generated docs makes ci:docs-check report only regeneration drift.
