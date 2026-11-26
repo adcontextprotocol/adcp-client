@@ -437,3 +437,34 @@ Two more conditions deserve an alert, because neither sets `suppressed`:
 - **`overdue: true`, unsuppressed, and absent from `postedConsumerStatuses`.** Look in `failedConsumerStatuses`.
 
 Some suppressions are the seller's doing and you cannot configure your way out of them — `leaf_undisclosed` and `chain_indeterminate` in particular. Those are worth escalating out of band rather than retrying.
+
+### When your reader rejects a revision
+
+Any error thrown by `client.getMediaBuyDelivery` is posted as `unreadable` / `transport_failed`. That
+is right for a network failure or a timeout. It is wrong when the read succeeded and your own
+validation rejected the content: the seller is told the transport failed and cannot see why.
+
+To report a rejection, throw `ReportingRevisionContentRejectedError` from the read instead:
+
+```ts
+import { ReportingRevisionContentRejectedError } from '@adcp/sdk/reporting/consumer';
+
+throw new ReportingRevisionContentRejectedError('integrity_mismatch', {
+  reason: 'rows outside the revision coverage',
+});
+```
+
+The SDK then posts `unreadable` with the code you chose:
+
+| `failureCode` | Use when | Who must act |
+|---|---|---|
+| `integrity_mismatch` | The revision contradicts what the seller declared for it, for example rows outside its `coverage.covered_package_ids` or `media_buy_ids`. `reporting-revision.json` requires rows to cover only that coverage. | The seller |
+| `reader_incompatible` | The content may be valid, but your reader cannot accept it. | You |
+
+AdCP's `content_mismatch` codes are a closed list with no code for rows outside coverage
+(`coverage_short` is the opposite direction), so a rejection is reported as `unreadable`.
+
+Only the code goes to the seller: the consumer-status statement has no free-text field. `reason` is
+kept in `plan.reason` for your own logs, cut to 256 characters with control characters removed. The
+error's `message` and `cause` are never read. Every other thrown error, including one that only
+looks like this class, is still `transport_failed`.
