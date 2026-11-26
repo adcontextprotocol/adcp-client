@@ -1,24 +1,27 @@
 'use strict';
-// With ADCP_VALIDATOR_CACHE_DIR set, the validator cache also keeps the
-// modular tool validators (getValidator for schemas that $ref the release's
-// shared documents) and the canonical tool validators
-// (getCanonicalToolValidatorForVersion), keyed by the release's content, and
-// serves their diagnostics without compiling them.
+// With ADCP_VALIDATOR_CACHE_DIR set, the validator cache keeps the modular tool
+// validators (getValidator for schemas that $ref the release's shared
+// documents), the canonical tool validators (getCanonicalToolValidatorForVersion)
+// and the schema-ref validators (getSchemaValidatorByRef), keyed by the
+// release's content, and serves their diagnostics without compiling them.
 //
 // Contract:
-//   - A later process gets those validators without an Ajv compile, and a
-//     failing payload's diagnostics compile nothing either.
+//   - A later process gets those validators without an Ajv compile or a
+//     document registration, and a failing payload's diagnostics compile
+//     nothing either.
 //   - Every outcome a caller can see is identical cache off, cold and warm,
 //     in any call order and with any mix of hits and misses: raw verdicts and
-//     errors, validateRequest/validateResponse issues, registered ids, and
-//     the validators' schema objects.
+//     errors, validateRequest/validateResponse issues, registered ids, thrown
+//     errors and the validators' schema objects.
 //   - Each validator served from the cache is its own function.
 //   - A changed document is a miss; a damaged entry compiles live.
 //
-// Each run is a fresh child process. The child counts Ajv's top-level
-// compiles (Ajv.prototype.compile and _compileSchemaEnv, the meta-schema
-// excepted), lookups of validator entries and evaluations of cached modules.
-// Nothing under test is replaced. There are no wall-clock assertions.
+// The plan runs against small fixture releases written to a temp dir, so a
+// child costs a fraction of a CPU-second. Each run is a fresh child process
+// that counts Ajv's top-level compiles (Ajv.prototype.compile and
+// _compileSchemaEnv, the meta-schema excepted), document registrations, lookups
+// of validator entries, evaluations of cached modules, directory scans and
+// writes. Nothing under test is replaced. There are no wall-clock assertions.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -26,27 +29,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { ADCP_VERSION } = require('../../dist/lib/version');
 
 const SDK_ROOT = path.resolve(__dirname, '../..');
-const VERSIONS = [...new Set(['3.0.25', '3.2.8', ADCP_VERSION])];
-// Requests are modular in every release; 3.0.25 responses are modular too,
-// later responses are mostly bundled (served by the bundled cache).
-const TOOLS = [
-  'activate_signal',
-  'create_media_buy',
-  'get_products',
-  'sync_accounts',
-  'sync_creatives',
-  'update_media_buy',
-];
-// Schema refs validated through getSchemaValidatorByRef (the shared schema-ref registry) in every release.
-const REFS = [
-  'account/sync-accounts-request.json',
-  'core/account-ref.json',
-  'core/mcp-webhook-payload.json',
-  'core/product.json',
-];
 
 const tempDirs = [];
 const scenario = {};
@@ -61,6 +45,457 @@ function privateDir(label) {
   fs.chmodSync(dir, 0o700);
   tempDirs.push(dir);
   return dir;
+}
+
+// ---------------------------------------------------------------- fixture releases
+
+// The $ref-only chain's tool comes first: its origin must come from loading the
+// chain's document roots, before another tool's compile could add it.
+const TOOLS = [
+  'get_signals',
+  'get_products',
+  'create_media_buy',
+  'update_media_buy',
+  'activate_signal',
+  'list_creatives',
+];
+const MIRRORS = [
+  'core/async-response-refs/media-buy/create-media-buy-async-response-submitted.json',
+  'media-buy/create-media-buy-async-response-submitted.json',
+];
+// The two mirror files share entries by content, so a cold run serves the second
+// from the first's entry; they stay in the probes, out of the plan's refs.
+const REFS = [
+  'core/account-ref.json',
+  'core/b.json',
+  'core/mcp-webhook-payload.json',
+  'media-buy/update-media-buy-request.json',
+];
+
+/**
+ * A small release: requests and responses (closed and oneOf roots, which
+ * envelope widening copies), shared core documents, an enum, a discriminated
+ * union, a schema-ref target, two files mirroring one $id, a recursive tool,
+ * a document whose own root Ajv compiles while resolving another's reference
+ * (b, for c#/properties/a) and a $ref-only definition chain (d to e).
+ * `ids`: 'path' ($id /schemas/<v>/...) or 'url'. `bundled`: also ship
+ * activate_signal as self-contained bundled/ documents, as releases do.
+ */
+function releaseFiles(version, { ids = 'url', bundled = false, marker } = {}) {
+  const B = ids === 'path' ? `/schemas/${version}/` : `https://adcontextprotocol.org/schemas/${version}/`;
+  const ref = rel => ({ $ref: `${B}${rel}` });
+  const id = rel => ({ $id: `${B}${rel}` });
+  const submitted = {
+    ...id('media-buy/create-media-buy-async-response-submitted.json'),
+    allOf: [ref('core/protocol-envelope.json')],
+    properties: { status: { const: 'submitted' }, task_id: { type: 'string' } },
+    required: ['status', 'task_id'],
+  };
+  // The success and error branches of activate_signal's response, as fragments
+  // the authored response composes and its bundled copy inlines.
+  const activateBranches = {
+    success: {
+      type: 'object',
+      required: ['deployments'],
+      additionalProperties: false,
+      properties: {
+        deployments: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['type'],
+            properties: { type: { enum: ['platform', 'agent'] }, is_live: { type: 'boolean' } },
+          },
+        },
+      },
+    },
+    error: {
+      type: 'object',
+      required: ['errors'],
+      additionalProperties: false,
+      properties: { errors: { type: 'array', items: { type: 'object', required: ['code'] } } },
+    },
+  };
+  return {
+    'index.json': { adcp_version: version, ...(marker && { marker }) },
+    'enums/task-status.json': {
+      ...id('enums/task-status.json'),
+      type: 'string',
+      enum: ['completed', 'working', 'submitted'],
+    },
+    'enums/channel.json': { ...id('enums/channel.json'), type: 'string', enum: ['display', 'video', 'audio'] },
+    'core/protocol-envelope.json': {
+      ...id('core/protocol-envelope.json'),
+      type: 'object',
+      properties: {
+        status: ref('enums/task-status.json'),
+        context_id: { type: 'string' },
+        task_id: { type: 'string' },
+      },
+    },
+    'core/destination.json': {
+      ...id('core/destination.json'),
+      oneOf: [
+        {
+          type: 'object',
+          required: ['type', 'platform'],
+          properties: { type: { const: 'platform' }, platform: { type: 'string' }, account: { type: 'string' } },
+        },
+        {
+          type: 'object',
+          required: ['type', 'agent_url'],
+          properties: { type: { const: 'agent' }, agent_url: { type: 'string', format: 'uri' } },
+        },
+      ],
+    },
+    'core/c.json': { ...id('core/c.json'), type: 'object', properties: { a: { type: 'integer' } } },
+    'core/b.json': {
+      ...id('core/b.json'),
+      type: 'object',
+      properties: { c: ref('core/c.json#/properties/a') },
+      definitions: { x: { type: 'string' } },
+    },
+    'core/e.json': { ...id('core/e.json'), type: 'object', definitions: { b: { type: 'string' } } },
+    'core/d.json': {
+      ...id('core/d.json'),
+      type: 'object',
+      properties: { q: ref('core/c.json#/properties/a') },
+      definitions: { a: ref('core/e.json#/definitions/b') },
+    },
+    'core/package.json': {
+      ...id('core/package.json'),
+      type: 'object',
+      required: ['product_id'],
+      additionalProperties: false,
+      properties: {
+        product_id: { type: 'string' },
+        budget: { type: 'number', minimum: 0 },
+        channels: { type: 'array', items: ref('enums/channel.json') },
+      },
+    },
+    'core/account-ref.json': {
+      ...id('core/account-ref.json'),
+      oneOf: [
+        {
+          type: 'object',
+          required: ['account_id'],
+          additionalProperties: false,
+          properties: { account_id: { type: 'string' } },
+        },
+        {
+          type: 'object',
+          required: ['brand', 'operator'],
+          additionalProperties: false,
+          properties: { brand: { type: 'string' }, operator: { type: 'string' } },
+        },
+      ],
+    },
+    'core/mcp-webhook-payload.json': {
+      ...id('core/mcp-webhook-payload.json'),
+      type: 'object',
+      required: ['task_id', 'status'],
+      properties: {
+        task_id: { type: 'string' },
+        task_type: { type: 'string', enum: ['create_media_buy'] },
+        status: ref('enums/task-status.json'),
+        result: { type: 'object' },
+      },
+    },
+    'core/pagination-response.json': {
+      ...id('core/pagination-response.json'),
+      type: 'object',
+      properties: { has_more: { type: 'boolean' } },
+    },
+    [MIRRORS[0]]: submitted,
+    [MIRRORS[1]]: submitted,
+    'signals/get-signals-request.json': {
+      ...id('signals/get-signals-request.json'),
+      type: 'object',
+      properties: { p: ref('core/d.json#/definitions/a'), c: ref('core/c.json') },
+    },
+    'signals/get-signals-response.json': {
+      ...id('signals/get-signals-response.json'),
+      type: 'object',
+      properties: {
+        signals: { type: 'array', items: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } },
+      },
+    },
+    'media-buy/get-products-request.json': {
+      ...id('media-buy/get-products-request.json'),
+      type: 'object',
+      required: ['brief'],
+      properties: {
+        brief: { type: 'string' },
+        channels: { type: 'array', items: ref('enums/channel.json') },
+        b: ref('core/b.json#/definitions/x'),
+        c: ref('core/c.json'),
+        account: ref('core/account-ref.json'),
+      },
+    },
+    'media-buy/get-products-response.json': {
+      ...id('media-buy/get-products-response.json'),
+      type: 'object',
+      additionalProperties: false,
+      required: ['products'],
+      properties: {
+        products: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['product_id'],
+            properties: {
+              product_id: { type: 'string' },
+              channels: { type: 'array', items: ref('enums/channel.json') },
+            },
+          },
+        },
+      },
+    },
+    'media-buy/create-media-buy-request.json': {
+      ...id('media-buy/create-media-buy-request.json'),
+      type: 'object',
+      required: ['packages'],
+      properties: {
+        packages: { type: 'array', minItems: 1, items: ref('core/package.json') },
+        account: ref('core/account-ref.json'),
+        destination: ref('core/destination.json'),
+      },
+    },
+    'media-buy/create-media-buy-response.json': {
+      ...id('media-buy/create-media-buy-response.json'),
+      oneOf: [
+        {
+          type: 'object',
+          required: ['media_buy_id'],
+          additionalProperties: false,
+          properties: {
+            media_buy_id: { type: 'string' },
+            packages: { type: 'array', items: ref('core/package.json') },
+          },
+        },
+        {
+          type: 'object',
+          required: ['errors'],
+          additionalProperties: false,
+          properties: {
+            errors: {
+              type: 'array',
+              items: { type: 'object', required: ['code'], properties: { code: { type: 'string' } } },
+            },
+          },
+        },
+      ],
+    },
+    'media-buy/update-media-buy-request.json': {
+      ...id('media-buy/update-media-buy-request.json'),
+      type: 'object',
+      required: ['media_buy_id'],
+      properties: { media_buy_id: { type: 'string' }, packages: { type: 'array', items: ref('core/package.json') } },
+    },
+    'media-buy/update-media-buy-response.json': {
+      ...id('media-buy/update-media-buy-response.json'),
+      type: 'object',
+      required: ['media_buy_id'],
+      properties: { media_buy_id: { type: 'string' }, status: ref('enums/task-status.json') },
+    },
+    'signals/activate-signal-request.json': {
+      ...id('signals/activate-signal-request.json'),
+      type: 'object',
+      required: ['signal_agent_segment_id', 'destinations'],
+      properties: {
+        signal_agent_segment_id: { type: 'string' },
+        destinations: { type: 'array', minItems: 1, items: ref('core/destination.json') },
+      },
+    },
+    'signals/activate-signal-success.json': {
+      ...id('signals/activate-signal-success.json'),
+      ...activateBranches.success,
+    },
+    'signals/activate-signal-error.json': { ...id('signals/activate-signal-error.json'), ...activateBranches.error },
+    // A response that composes references: with a bundled/ copy, the getter takes that copy.
+    'signals/activate-signal-response.json': {
+      ...id('signals/activate-signal-response.json'),
+      oneOf: [ref('signals/activate-signal-success.json'), ref('signals/activate-signal-error.json')],
+    },
+    ...(bundled && {
+      'bundled/signals/activate-signal-response.json': {
+        ...id('bundled/signals/activate-signal-response.json'),
+        oneOf: [activateBranches.success, activateBranches.error],
+      },
+      'bundled/signals/activate-signal-request.json': {
+        ...id('bundled/signals/activate-signal-request.json'),
+        type: 'object',
+        required: ['signal_agent_segment_id', 'destinations'],
+        properties: {
+          signal_agent_segment_id: { type: 'string' },
+          destinations: {
+            type: 'array',
+            minItems: 1,
+            items: { type: 'object', required: ['type'], properties: { type: { enum: ['platform', 'agent'] } } },
+          },
+        },
+      },
+    }),
+    // `#` from a definition makes Ajv call the root through a holder object, and
+    // a and b refer to each other, so one of them calls the other through Ajv's
+    // wrapper for a function still being compiled.
+    'creative/list-creatives-request.json': {
+      ...id('creative/list-creatives-request.json'),
+      type: 'object',
+      properties: {
+        name: { type: 'string', enum: ['a', 'b'] },
+        child: { $ref: '#' },
+        node: { $ref: '#/definitions/a' },
+      },
+      definitions: {
+        a: { type: 'object', properties: { b: { $ref: '#/definitions/b' }, up: { $ref: '#' } } },
+        b: { type: 'object', properties: { a: { $ref: '#/definitions/a' }, v: { type: 'integer' } } },
+      },
+    },
+  };
+}
+
+/** Write `files` (root-relative path -> document, or raw JSON text) under `root`. */
+function writeRoot(root, files) {
+  for (const [rel, document] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), typeof document === 'string' ? document : JSON.stringify(document));
+  }
+  return root;
+}
+
+/** A fixture release `<version>` directory in its own temp dir (or under `parent`). */
+function release(label, version, options, extra = {}, parent) {
+  const root = path.join(parent ?? privateDir(`root-${label}`), version);
+  return writeRoot(root, { ...releaseFiles(version, options), ...extra });
+}
+
+// Payloads beyond the generated ones: the document-root origin (get_products),
+// the $ref-only chain (get_signals), the two recursion paths (list_creatives).
+const SIDE_EFFECT = { brief: 'x', b: 'ok', c: { a: 'not-an-int' } };
+const CHAIN = { p: 'ok', c: { a: 'x' } };
+const RECURSION = [
+  { name: 'a', child: { name: 'b', child: { name: 'c', child: { name: 7 } } } },
+  { node: { b: { a: { b: { v: 'x' } } }, up: { name: 'c', node: { up: { name: 7 } } } } },
+];
+const EXTRA = [SIDE_EFFECT, CHAIN, { p: 5 }, ...RECURSION];
+const EDITED_REQUEST = {
+  signal_agent_segment_id: 'seg_1',
+  destinations: [{ type: 'platform', platform: 'dsp1' }],
+};
+const ENVELOPE_PAYLOAD = { products: [], status: 'zzz_new' };
+
+/** Releases no run changes, written once. */
+function sharedRoots() {
+  const roots = {
+    r1: release('r1', '3.0.25', { ids: 'path' }),
+    r2: release('r2', '3.2.7', { ids: 'url' }),
+    r3: release('r3', '3.1.31', { ids: 'url', bundled: true }),
+    probe: release('probe', '3.0.25', { ids: 'path', marker: 'probe' }),
+  };
+  // Tools no cache can serve: a document without $id, and a property key no
+  // JSON pointer can encode (the store must fail closed, never throw).
+  const edgeBase = 'https://adcontextprotocol.org/schemas/3.2.7/';
+  roots.edge = release(
+    'edge',
+    '3.2.7',
+    { marker: 'edge' },
+    {
+      'creative/sync-creatives-request.json': { type: 'object', properties: { c: { $ref: `${edgeBase}core/c.json` } } },
+      'account/sync-accounts-request.json': `{"$id":"${edgeBase}account/sync-accounts-request.json","properties":{"\\ud800":{},"c":{"$ref":"${edgeBase}core/c.json"}}}`,
+    }
+  );
+  // Canonical registration skips files whose path has an mcp segment (same content as r1).
+  roots.underMcp = release('r1-under-mcp', '3.0.25', { ids: 'path' }, {}, path.join(privateDir('root-under'), 'mcp'));
+  // A document that fails meta-validation: registration throws, and Ajv keeps it.
+  roots.badDocument = release(
+    'bad-document',
+    '3.0.25',
+    { ids: 'path' },
+    {
+      'core/pagination-response.json': { $id: '/schemas/3.0.25/core/pagination-response.json', type: 5 },
+    }
+  );
+  // A second file declaring an existing $id with different content.
+  const destination = releaseFiles('3.0.25', { ids: 'path' })['core/destination.json'];
+  roots.ambiguous = release(
+    'ambiguous',
+    '3.0.25',
+    { ids: 'path' },
+    {
+      'core/destination-copy.json': { ...destination, title: 'Changed' },
+    }
+  );
+  // A release that starts with the task statuses the envelope edit adds.
+  const statuses = {
+    $id: '/schemas/3.0.25/enums/task-status.json',
+    type: 'string',
+    enum: ['completed', 'working', 'submitted', 'zzz_new'],
+  };
+  roots.envelopeFresh = release(
+    'envelope-fresh',
+    '3.0.25',
+    { ids: 'path', marker: 'envelope' },
+    { 'enums/task-status.json': statuses }
+  );
+  roots.envelopeStatuses = JSON.stringify(statuses);
+  return roots;
+}
+
+/** Releases a run edits in place: its own copies. */
+function runRoots() {
+  const edited = release('edited', '3.0.25', { ids: 'path', marker: 'edited' });
+  const destination = JSON.parse(fs.readFileSync(path.join(edited, 'core/destination.json'), 'utf8'));
+  destination.oneOf[0].properties.platform.maxLength = 2;
+  return {
+    edited,
+    editedDestination: JSON.stringify(destination),
+    envelope: release('envelope', '3.0.25', { ids: 'path', marker: 'envelope' }),
+  };
+}
+
+const RELEASE_SEGMENTS = ['r1', 'r2', 'r3'];
+
+/** The plan's segments: the releases, the probes, and one segment per edge case. */
+function planSegments(shared, own, { tools = TOOLS } = {}) {
+  const versionOf = root => path.basename(root);
+  const releaseSegment = (name, root, extra = {}) => ({
+    name,
+    versions: [versionOf(root)],
+    tools,
+    externalRoots: [[versionOf(root), root]],
+    extraPayloads: EXTRA,
+    ...extra,
+  });
+  return [
+    ...RELEASE_SEGMENTS.map(name => releaseSegment(name, shared[name])),
+    { name: 'probe', versions: ['3.0.25'], probe: true, externalRoots: [['3.0.25', shared.probe]] },
+    releaseSegment('edge', shared.edge, { tools: ['sync_creatives', 'sync_accounts'] }),
+    releaseSegment('mcp-under', shared.underMcp, { tools: ['activate_signal'], only: 'canonical' }),
+    releaseSegment('retry', shared.badDocument, { tools: ['get_products'], only: 'modular' }),
+    releaseSegment('ambiguous', shared.ambiguous, { tools: ['activate_signal'] }),
+    releaseSegment('edited-before', own.edited, { tools: ['activate_signal'], extraPayloads: [EDITED_REQUEST] }),
+    // Only the referenced core document changes, in place: same path, same $id.
+    releaseSegment('edited-after', own.edited, {
+      tools: ['activate_signal'],
+      extraPayloads: [EDITED_REQUEST],
+      writes: [[path.join(own.edited, 'core/destination.json'), own.editedDestination]],
+    }),
+    // The loader derives a release's envelope fields once per root path and
+    // process, so after an in-place edit this process keeps widening the closed
+    // response root with the old task statuses. What it stores must not be
+    // served to a root that has the new statuses from the start.
+    releaseSegment('envelope-before', own.envelope, { tools: ['get_products'], extraPayloads: [ENVELOPE_PAYLOAD] }),
+    releaseSegment('envelope-after', own.envelope, {
+      tools: ['get_products'],
+      extraPayloads: [ENVELOPE_PAYLOAD],
+      writes: [[path.join(own.envelope, 'enums/task-status.json'), shared.envelopeStatuses]],
+    }),
+    releaseSegment('envelope-fresh', shared.envelopeFresh, {
+      tools: ['get_products'],
+      extraPayloads: [ENVELOPE_PAYLOAD],
+    }),
+  ];
 }
 
 // ---------------------------------------------------------------- child process
@@ -133,6 +568,36 @@ const raw = (fn, payloads) => payloads.map(p => {
   return { valid, errors };
 });
 
+// The probes, run first in their release's state, so its registration is still deferred.
+function probe(version) {
+  const out = { schemaEnv: {}, ownFunction: {} };
+  // Reading schemaEnv registers the release, then compiles live.
+  for (const [t, d] of [['get_products', 'sync'], ['create_media_buy', 'sync'], ['create_media_buy', 'request']]) {
+    const fn = loader.getValidator(t, d, version);
+    out.schemaEnv[t + ':' + d] = { same: fn.schemaEnv.schema === fn.schema, compiled: typeof fn.schemaEnv.validate === 'function' };
+  }
+  for (const getter of ['getValidator', 'getCanonicalToolValidatorForVersion']) {
+    const a = loader[getter]('create_media_buy', 'request', version);
+    const b = loader[getter]('update_media_buy', 'request', version);
+    const again = loader[getter]('create_media_buy', 'request', version);
+    a({ packages: [{}] });
+    const held = JSON.stringify(a.errors);
+    b({ packages: [{ budget: 'x' }] });
+    out.ownFunction[getter] = { distinct: a !== b, stable: a === again, untouched: JSON.stringify(a.errors) === held, failed: held !== 'null' };
+  }
+  const [A, B] = cfg.mirrors;
+  const a = loader.getSchemaValidatorByRef(A, version);
+  const b = loader.getSchemaValidatorByRef(B, version);
+  const docA = loader.getSchemaDocumentByRef(A, version).schema;
+  const docB = loader.getSchemaDocumentByRef(B, version).schema;
+  a({});
+  const held = JSON.stringify(a.errors);
+  b({ status: 'submitted', bogus: 1 });
+  out.mirror = { sameId: docA.$id === docB.$id, distinct: a !== b, ownSchemas: a.schema.allOf === docA.allOf && b.schema.allOf === docB.allOf,
+                 untouched: JSON.stringify(a.errors) === held && held !== 'null' };
+  return out;
+}
+
 const steps = [];
 const directions = cfg.reverse ? ['sync', 'request'] : ['request', 'sync'];
 // Segments run one after another in this process, each first writing its files
@@ -145,6 +610,10 @@ steps.push({ label: (prefix || seg.versions.join(',') + '|') + 'setup', run: () 
   for (const [version, root] of seg.externalRoots ?? []) loader.registerExternalSchemaRoot(version, root);
   return null;
 } });
+if (seg.probe) {
+  steps.push({ label: prefix + 'probe', run: () => probe(seg.versions[0]) });
+  continue;
+}
 const versions = cfg.reverse ? [...seg.versions].reverse() : seg.versions;
 const tools = cfg.reverse ? [...seg.tools].reverse() : seg.tools;
 for (const version of versions) {
@@ -216,34 +685,13 @@ for (const step of steps) {
 process.stdout.write('\n@@RESULT@@' + JSON.stringify({ results, counts }) + '\n');
 `;
 
-/**
- * Run the plan in a fresh process: `segments` one after another, or one
- * segment from the remaining options. `cacheDir` undefined leaves the
- * variable unset.
- */
-function runChild({
-  cacheDir,
-  reverse = false,
-  tools = TOOLS,
-  versions = VERSIONS,
-  only,
-  externalRoots,
-  extraPayloads,
-  maxMb,
-  segments = [{ name: '', tools, versions, only, externalRoots, extraPayloads }],
-} = {}) {
+/** Run `segments` one after another in a fresh process. `cacheDir` undefined leaves the variable unset. */
+function runChild({ cacheDir, reverse = false, segments, maxMb }) {
   const resultFile = path.join(privateDir('results'), 'results.ndjson');
   const env = {
     ...process.env,
     NODE_ENV: 'test',
-    PLAN: JSON.stringify({
-      sdkRoot: SDK_ROOT,
-      cacheDir,
-      reverse,
-      segments,
-      resultFile,
-      refs: REFS,
-    }),
+    PLAN: JSON.stringify({ sdkRoot: SDK_ROOT, cacheDir, reverse, segments, resultFile, refs: REFS, mirrors: MIRRORS }),
   };
   delete env.ADCP_VALIDATOR_CACHE_DIR;
   delete env.ADCP_VALIDATOR_CACHE_MAX_MB;
@@ -265,20 +713,6 @@ function runChild({
       resolve(parsed);
     });
   });
-}
-
-/**
- * The plan of `options` with one child per release, run concurrently (each
- * release is its own loader state), merged in release order as one run.
- */
-async function runByRelease(options = {}) {
-  const runs = await Promise.all((options.versions ?? VERSIONS).map(v => runChild({ ...options, versions: [v] })));
-  const resultFile = path.join(privateDir('results'), 'results.ndjson');
-  fs.writeFileSync(resultFile, runs.map(run => fs.readFileSync(run.resultFile, 'utf8')).join(''));
-  const results = runs.flatMap(run => run.results);
-  const counts = {};
-  for (const run of runs) for (const [key, n] of Object.entries(run.counts)) counts[key] = (counts[key] ?? 0) + n;
-  return { results, counts, byLabel: Object.fromEntries(results.map(r => [r.label, r])), resultFile };
 }
 
 /** The first label whose value differs between two runs, with both values, or undefined. */
@@ -306,16 +740,6 @@ function assertSameOutcomes(run, reference, context) {
 }
 
 const compiles = r => r.compile + r.compileSchemaEnv;
-
-/** An external root for `version` with `files` (root-relative path -> document or raw JSON text). */
-function fixtureRoot(label, version, files) {
-  const root = path.join(privateDir(`root-${label}`), version);
-  for (const [rel, document] of Object.entries({ 'index.json': { adcp_version: version }, ...files })) {
-    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-    fs.writeFileSync(path.join(root, rel), typeof document === 'string' ? document : JSON.stringify(document));
-  }
-  return root;
-}
 
 /** The value a run recorded for one step. */
 function stepValue(run, label) {
@@ -347,270 +771,34 @@ function copyCache(from, label) {
   return dir;
 }
 
-/** A copy of a packaged release root. */
-function copyRoot(version, label) {
-  const root = path.join(privateDir(`root-${label}`), version);
-  fs.cpSync(path.join(SDK_ROOT, 'schemas/cache', version), root, { recursive: true });
-  return root;
-}
-
-// Roots that each exercise one way a compile reaches beyond the validator's own functions.
-const FIXTURES = {
-  // The request refers to d#/definitions/a, which is only a $ref into e: Ajv
-  // compiles d's root on the way, and d's root refers to c#/properties/a, an
-  // origin deeper than the request's own functions register.
-  'a $ref-only definition chain': base => ({
-    'core/c.json': { $id: `${base}core/c.json`, type: 'object', properties: { a: { type: 'integer' } } },
-    'core/e.json': { $id: `${base}core/e.json`, type: 'object', definitions: { b: { type: 'string' } } },
-    'core/d.json': {
-      $id: `${base}core/d.json`,
-      type: 'object',
-      properties: { q: { $ref: `${base}core/c.json#/properties/a` } },
-      definitions: { a: { $ref: `${base}core/e.json#/definitions/b` } },
-    },
-    'media-buy/get-products-request.json': {
-      $id: `${base}media-buy/get-products-request.json`,
-      type: 'object',
-      properties: { p: { $ref: `${base}core/d.json#/definitions/a` }, c: { $ref: `${base}core/c.json` } },
-    },
-  }),
-  // A property name no JSON pointer can be URI-encoded with.
-  'a property key with a lone surrogate': base => ({
-    'core/c.json': { $id: `${base}core/c.json`, type: 'object', properties: { a: { type: 'integer' } } },
-    'media-buy/get-products-request.json': `{"$id":"${base}media-buy/get-products-request.json","properties":{"\\ud800":{},"c":{"$ref":"${base}core/c.json"}}}`,
-  }),
-  // A tool document without $id: the canonical getter compiles it unregistered.
-  'a tool document without $id': base => ({
-    'core/c.json': { $id: `${base}core/c.json`, type: 'object', properties: { a: { type: 'integer' } } },
-    'media-buy/get-products-request.json': { type: 'object', properties: { c: { $ref: `${base}core/c.json` } } },
-  }),
-};
-
 // ---------------------------------------------------------------- scenarios
 //
-// Every child loads the SDK cold, so the scenarios share children: the main
-// plan's off / cold / warm runs, one off / cold / warm triple for all fixture
-// roots (one segment each), and one triple for the in-process probes. The
-// children of independent scenarios run concurrently.
+// One plan, every segment, in every run: cache off forward and reversed, cold,
+// warm forward and reversed, hits and misses mixed, and a damaged cache. Each
+// run edits its own copies of the releases it edits.
 
-const VERSION_A = '3.0.25';
-const VERSION_B = '3.2.7';
-const BASE_B = `https://adcontextprotocol.org/schemas/${VERSION_B}/`;
-
-/** An edited copy of a 3.0.25 root's core/destination.json: same path, same $id, a tighter platform. */
-function editedDestination(root) {
-  const destination = JSON.parse(fs.readFileSync(path.join(root, 'core/destination.json'), 'utf8'));
-  destination.oneOf[0].properties.platform.maxLength = 2;
-  return JSON.stringify(destination);
-}
-
-/** Fixture roots that no run changes, built once. */
-function sharedFixtureRoots() {
-  const roots = {};
-  roots.sideEffect = fixtureRoot('side-effect', VERSION_B, {
-    'core/c.json': { $id: `${BASE_B}core/c.json`, type: 'object', properties: { a: { type: 'integer' } } },
-    'core/b.json': {
-      $id: `${BASE_B}core/b.json`,
-      type: 'object',
-      properties: { c: { $ref: `${BASE_B}core/c.json#/properties/a` } },
-      definitions: { x: { type: 'string' } },
-    },
-    'media-buy/get-products-request.json': {
-      $id: `${BASE_B}media-buy/get-products-request.json`,
-      type: 'object',
-      properties: { b: { $ref: `${BASE_B}core/b.json#/definitions/x` }, c: { $ref: `${BASE_B}core/c.json` } },
-    },
-  });
-  for (const [name, files] of Object.entries(FIXTURES)) {
-    roots[name] = fixtureRoot(name.replace(/\W+/g, '-'), VERSION_B, files(BASE_B));
-  }
-  roots.recursive = fixtureRoot('recursive', VERSION_B, {
-    'media-buy/get-products-request.json': {
-      $id: `${BASE_B}media-buy/get-products-request.json`,
-      type: 'object',
-      properties: {
-        name: { type: 'string', enum: ['a', 'b'] },
-        child: { $ref: '#' },
-        node: { $ref: '#/definitions/a' },
-      },
-      definitions: {
-        a: { type: 'object', properties: { b: { $ref: '#/definitions/b' }, up: { $ref: '#' } } },
-        b: { type: 'object', properties: { a: { $ref: '#/definitions/a' }, v: { type: 'integer' } } },
-      },
-    },
-  });
-  // Canonical registration skips files whose path has an mcp segment.
-  roots.plain = copyRoot(VERSION_A, 'plain');
-  roots.underMcp = path.join(privateDir('root-under'), 'mcp', VERSION_A);
-  fs.mkdirSync(path.dirname(roots.underMcp), { recursive: true });
-  fs.cpSync(path.join(SDK_ROOT, 'schemas/cache', VERSION_A), roots.underMcp, { recursive: true });
-  // A document that fails meta-validation: registration throws, and Ajv keeps it.
-  roots.badDocument = copyRoot(VERSION_A, 'bad-document');
-  const pagination = path.join(roots.badDocument, 'core/pagination-response.json');
-  fs.writeFileSync(pagination, JSON.stringify({ ...JSON.parse(fs.readFileSync(pagination, 'utf8')), type: 5 }));
-  // A second file declaring an existing $id with different content.
-  roots.ambiguous = copyRoot(VERSION_A, 'ambiguous');
-  const destination = JSON.parse(fs.readFileSync(path.join(roots.ambiguous, 'core/destination.json'), 'utf8'));
-  fs.writeFileSync(
-    path.join(roots.ambiguous, 'core/destination-copy.json'),
-    JSON.stringify({ ...destination, title: 'Changed' })
+/** Steps of release segments only (the cacheable tools; edge segments are uncacheable by design). */
+const releaseSteps = run =>
+  run.results.filter(
+    r => RELEASE_SEGMENTS.some(name => r.label.startsWith(`${name}|`)) && !r.label.endsWith('|delivery-envelope')
   );
-  return roots;
-}
-
-const EDITED_REQUEST = {
-  signal_agent_segment_id: 'seg_1',
-  idempotency_key: '7f0c1f9e-3c1a-4b8e-9d1e-2b8f6f5a4c3d',
-  destinations: [{ type: 'platform', platform: 'dsp1' }],
-};
-
-/** The fixture segments for one run; `edited` is that run's own copy of a 3.0.25 root, which the run edits. */
-function fixtureSegments(roots, edited) {
-  const versionB = { versions: [VERSION_B], tools: ['get_products'] };
-  return [
-    {
-      name: 'side-effect',
-      ...versionB,
-      only: 'modular',
-      externalRoots: [[VERSION_B, roots.sideEffect]],
-      extraPayloads: [{ b: 'ok', c: { a: 'not-an-int' } }],
-    },
-    ...Object.keys(FIXTURES).map(name => ({
-      name,
-      ...versionB,
-      externalRoots: [[VERSION_B, roots[name]]],
-      extraPayloads: [{ p: 'ok', c: { a: 'x' } }, { p: 5 }],
-    })),
-    {
-      name: 'recursive',
-      ...versionB,
-      externalRoots: [[VERSION_B, roots.recursive]],
-      extraPayloads: [
-        { name: 'a', child: { name: 'b', child: { name: 'c', child: { name: 7 } } } },
-        { node: { b: { a: { b: { v: 'x' } } }, up: { name: 'c', node: { up: { name: 7 } } } } },
-      ],
-    },
-    {
-      name: 'mcp-plain',
-      versions: [VERSION_A],
-      tools: ['activate_signal'],
-      only: 'canonical',
-      externalRoots: [[VERSION_A, roots.plain]],
-    },
-    {
-      name: 'mcp-under',
-      versions: [VERSION_A],
-      tools: ['activate_signal'],
-      only: 'canonical',
-      externalRoots: [[VERSION_A, roots.underMcp]],
-    },
-    {
-      name: 'retry',
-      versions: [VERSION_A],
-      tools: ['get_products'],
-      only: 'modular',
-      externalRoots: [[VERSION_A, roots.badDocument]],
-    },
-    {
-      name: 'ambiguous',
-      versions: [VERSION_A],
-      tools: ['activate_signal'],
-      externalRoots: [[VERSION_A, roots.ambiguous]],
-    },
-    {
-      name: 'edited-before',
-      versions: [VERSION_A],
-      tools: ['activate_signal'],
-      externalRoots: [[VERSION_A, edited]],
-      extraPayloads: [EDITED_REQUEST],
-    },
-    // Only the referenced core document changes, in place: same path, same $id.
-    {
-      name: 'edited-after',
-      versions: [VERSION_A],
-      tools: ['activate_signal'],
-      writes: [[path.join(edited, 'core/destination.json'), editedDestination(edited)]],
-      externalRoots: [[VERSION_A, edited]],
-      extraPayloads: [EDITED_REQUEST],
-    },
-  ];
-}
-
-// The probes: function identity, schemaEnv identity after a deferred
-// registration, and two files that mirror one $id.
-const PROBES = String.raw`
-  const path = require('node:path');
-  const { sdkRoot } = JSON.parse(process.env.PLAN);
-  const loader = require(path.join(sdkRoot, 'dist/lib/validation/schema-loader.js'));
-  const out = {};
-  // First, while 3.0.25's registration is still deferred: reading schemaEnv registers the release, then compiles live.
-  out.schemaEnv = {};
-  for (const [t, d] of [['get_products', 'sync'], ['create_media_buy', 'sync'], ['create_media_buy', 'request']]) {
-    const fn = loader.getValidator(t, d, '3.0.25');
-    out.schemaEnv[t + ':' + d] = { same: fn.schemaEnv.schema === fn.schema, compiled: typeof fn.schemaEnv.validate === 'function' };
-  }
-  out.ownFunction = {};
-  for (const getter of ['getValidator', 'getCanonicalToolValidatorForVersion']) {
-    const a = loader[getter]('create_media_buy', 'request', '3.0.25');
-    const b = loader[getter]('update_media_buy', 'request', '3.0.25');
-    const again = loader[getter]('create_media_buy', 'request', '3.0.25');
-    a({ packages: [{}] });
-    const held = JSON.stringify(a.errors);
-    b({ packages: [{ budget: 'x' }] });
-    out.ownFunction[getter] = { distinct: a !== b, stable: a === again, untouched: JSON.stringify(a.errors) === held, failed: held !== 'null' };
-  }
-  // Releases mirror async-response documents under the same $id in two files.
-  const A = 'core/async-response-refs/creative/sync-creatives-async-response-submitted.json';
-  const B = 'creative/sync-creatives-async-response-submitted.json';
-  const version = '3.3.0-rc.3';
-  const a = loader.getSchemaValidatorByRef(A, version);
-  const b = loader.getSchemaValidatorByRef(B, version);
-  const docA = loader.getSchemaDocumentByRef(A, version).schema;
-  const docB = loader.getSchemaDocumentByRef(B, version).schema;
-  a({});
-  const held = JSON.stringify(a.errors);
-  b({ status: 'submitted', bogus: 1 });
-  out.mirror = { sameId: docA.$id === docB.$id, distinct: a !== b, ownSchemas: a.schema.allOf === docA.allOf && b.schema.allOf === docB.allOf,
-                 untouched: JSON.stringify(a.errors) === held && held !== 'null' };
-  process.stdout.write('\n@@RESULT@@' + JSON.stringify(out) + '\n');
-`;
-
-/** Run a script in a fresh process with the cache at `cacheDir` (undefined: off); resolves its @@RESULT@@ JSON. */
-function runScript(script, cacheDir, plan = { sdkRoot: SDK_ROOT }) {
-  return new Promise((resolve, reject) => {
-    const env = { ...process.env, NODE_ENV: 'test', PLAN: JSON.stringify(plan) };
-    delete env.ADCP_VALIDATOR_CACHE_DIR;
-    delete env.ADCP_VALIDATOR_CACHE_MAX_MB;
-    if (cacheDir) env.ADCP_VALIDATOR_CACHE_DIR = cacheDir;
-    const child = spawn(process.execPath, ['-e', script], { cwd: SDK_ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', chunk => (stdout += chunk));
-    child.stderr.on('data', chunk => (stderr += chunk));
-    child.on('error', reject);
-    child.on('close', status => {
-      const line = stdout.split('\n').find(l => l.startsWith('@@RESULT@@'));
-      if (status !== 0 || !line) return reject(new Error(`child exited ${status}: ${stderr}`));
-      resolve(JSON.parse(line.slice('@@RESULT@@'.length)));
-    });
-  });
-}
+/** Steps of one segment. */
+const segmentSteps = (run, name) => run.results.filter(r => r.label.startsWith(`${name}|`));
 
 before(() => {
+  const shared = sharedRoots();
+  const plan = (options = {}) => ({ segments: planSegments(shared, runRoots(), options) });
   const dir = privateDir('main');
   const mixedDir = privateDir('mixed');
   scenario.main = (async () => {
-    const off = runByRelease();
-    // Order matters within a release's state; the first release has the most of
-    // it (modular requests and responses with diagnostic origins, canonical and
-    // schema-ref validators).
-    const offReverse = runChild({ reverse: true, versions: [VERSIONS[0]] });
-    const cold = await runByRelease({ cacheDir: dir });
+    const off = runChild(plan());
+    const offReverse = runChild({ ...plan(), reverse: true });
+    const cold = await runChild({ ...plan(), cacheDir: dir });
     const entriesAfterCold = entryFiles(dir).length;
-    // Both read the entries the cold run stored, so they can run together.
+    // Both only read the entries the cold run stored, so they run together.
     const [warm, warmReverse] = await Promise.all([
-      runByRelease({ cacheDir: dir }),
-      runChild({ cacheDir: dir, reverse: true, versions: [VERSIONS[0]] }),
+      runChild({ ...plan(), cacheDir: dir }),
+      runChild({ ...plan(), cacheDir: dir, reverse: true }),
     ]);
     return {
       off: await off,
@@ -623,51 +811,44 @@ before(() => {
       entriesAfterWarm: entryFiles(dir).length,
     };
   })();
-  // Half the tools of the first release cached, then the whole plan: hits and
-  // misses interleave in that release's state.
+  // Half the tools cached, then the whole plan: hits and misses interleave in each release's state.
   scenario.mixed = (async () => {
-    await runChild({ cacheDir: mixedDir, versions: [VERSIONS[0]], tools: TOOLS.filter((_, i) => i % 2 === 0) });
-    return runChild({ cacheDir: mixedDir, versions: [VERSIONS[0]] });
+    await runChild({ ...plan({ tools: TOOLS.filter((_, i) => i % 2 === 0) }), cacheDir: mixedDir });
+    return runChild({ ...plan(), cacheDir: mixedDir });
   })();
-  scenario.fixtures = (async () => {
-    const roots = sharedFixtureRoots();
-    const fixtureDir = privateDir('fixtures-cache');
-    const plan = edited => ({ segments: fixtureSegments(roots, edited) });
-    const off = runChild(plan(copyRoot(VERSION_A, 'edited-off')));
-    const cold = await runChild({ ...plan(copyRoot(VERSION_A, 'edited-cold')), cacheDir: fixtureDir });
-    const warm = await runChild({ ...plan(copyRoot(VERSION_A, 'edited-warm')), cacheDir: fixtureDir });
-    return { off: await off, cold, warm };
-  })();
-  scenario.probes = (async () => {
-    const probeDir = privateDir('probes');
-    const off = runScript(PROBES, undefined);
-    const cold = await runScript(PROBES, probeDir);
-    return { off: await off, cold, warm: await runScript(PROBES, probeDir) };
+  scenario.damaged = (async () => {
+    const { dir: mainDir } = await scenario.main;
+    const damaged = copyCache(mainDir, 'damaged-meta');
+    let rewritten = 0;
+    for (const file of entryFiles(damaged)) {
+      const text = fs.readFileSync(file, 'utf8');
+      const newline = text.indexOf('\n');
+      const header = JSON.parse(text.slice('// adcp-validator-cache '.length, newline));
+      if (!header.meta) continue;
+      const body = text.slice(newline + 1);
+      const metaEnd = body.indexOf('\n');
+      const meta = JSON.parse(body.slice(0, metaEnd));
+      // Bundled entries list their origins; per-function entries carry one.
+      const origins = Array.isArray(meta.origins) ? meta.origins : meta.origin ? [meta.origin] : [];
+      if (origins.length === 0) continue;
+      // A pointer the release does not have: well-formed, correctly hashed, unlocatable.
+      for (const origin of origins) origin.pointer = `${origin.pointer}/not-in-the-release`;
+      const next = JSON.stringify(meta) + body.slice(metaEnd);
+      header.sha256 = crypto.createHash('sha256').update(next).digest('hex');
+      fs.writeFileSync(file, `// adcp-validator-cache ${JSON.stringify(header)}\n${next}`);
+      rewritten++;
+    }
+    return { rewritten, run: await runChild({ ...plan(), cacheDir: damaged }) };
   })();
   for (const promise of Object.values(scenario)) promise.catch(() => {});
 });
-
-/** The steps of `run`, each with the value `reference` recorded for the same label. */
-function assertSameOutcomesFor(run, reference, context) {
-  for (const r of run.results) {
-    assert.ok(reference.byLabel[r.label], `${context}: ${r.label} missing from the reference`);
-    if (reference.byLabel[r.label].digest !== r.digest) {
-      assert.fail(
-        `${context}: ${JSON.stringify({ label: r.label, a: stepValue(reference, r.label), b: stepValue(run, r.label) }).slice(0, 3000)}`
-      );
-    }
-  }
-}
-
-/** Steps of one segment. */
-const segmentSteps = (run, name) => run.results.filter(r => r.label.startsWith(`${name}|`));
 
 // ---------------------------------------------------------------- exactness
 
 test('outcomes are identical cache off, cold and warm', async () => {
   const { off, cold, warm } = await scenario.main;
   const failing = off.results.filter(r => r.label.endsWith('|issues'));
-  assert.ok(failing.length >= VERSIONS.length * TOOLS.length, 'the plan validates payloads for every tool');
+  assert.ok(failing.length >= RELEASE_SEGMENTS.length * TOOLS.length, 'the plan validates payloads for every tool');
   assertSameOutcomes(cold, off, 'cold');
   assertSameOutcomes(warm, off, 'warm');
 });
@@ -679,17 +860,21 @@ test('outcomes are identical warm in another call order, against stock in that o
 
 test('outcomes are identical when hits and misses interleave in one state', async () => {
   const [{ off }, mixed] = await Promise.all([scenario.main, scenario.mixed]);
-  // The first release's steps run first in every plan, so the off run's are the reference.
-  assertSameOutcomesFor(mixed, off, 'mixed');
+  assertSameOutcomes(mixed, off, 'mixed');
   assert.ok(
-    mixed.results.some(r => r.label.endsWith('|get') && compiles(r) > 0),
+    releaseSteps(mixed).some(r => r.label.endsWith('|get') && compiles(r) > 0),
     'the mixed run compiled the tools the first run did not store'
+  );
+  assert.ok(
+    releaseSteps(mixed).some(r => r.label.endsWith('|get') && r.evaluated > 0),
+    'and loaded the ones it stored'
   );
 });
 
 test('a cold run compiles exactly what stock compiles', async () => {
+  // Not the probe: its second mirror file loads the first's entry, which a cold run just stored.
   const { off, cold } = await scenario.main;
-  for (const r of off.results)
+  for (const r of off.results.filter(r => !r.label.startsWith('probe|')))
     assert.deepEqual(
       [cold.byLabel[r.label].compile, cold.byLabel[r.label].compileSchemaEnv],
       [r.compile, r.compileSchemaEnv],
@@ -701,17 +886,24 @@ test('a cold run compiles exactly what stock compiles', async () => {
 
 test('warm runs compile no tool validator, for valid and failing payloads alike', async () => {
   const { off, warm, warmReverse } = await scenario.main;
-  const modular = off.results.filter(r => r.label.endsWith('|get') && r.compile === 0 && r.compileSchemaEnv > 0);
-  const canonical = off.results.filter(r => r.label.endsWith('|canonical') && compiles(r) > 0);
-  assert.ok(modular.length >= VERSIONS.length * TOOLS.length, `modular validators in the plan: ${modular.length}`);
+  const modular = releaseSteps(off).filter(r => r.label.endsWith('|get') && r.compile === 0 && r.compileSchemaEnv > 0);
+  const canonical = releaseSteps(off).filter(r => r.label.endsWith('|canonical') && compiles(r) > 0);
+  const bundled = releaseSteps(off).filter(
+    r => r.label.endsWith('|get') && String(stepValue(off, r.label).rootSchemaId).includes('/bundled/')
+  );
   assert.ok(
-    canonical.length >= VERSIONS.length * TOOLS.length,
+    modular.length >= RELEASE_SEGMENTS.length * TOOLS.length,
+    `modular validators in the plan: ${modular.length}`
+  );
+  assert.ok(
+    canonical.length >= RELEASE_SEGMENTS.length * TOOLS.length,
     `canonical validators in the plan: ${canonical.length}`
   );
+  assert.ok(bundled.length >= 1, 'a bundled response validator in the plan');
   for (const run of [warm, warmReverse]) {
     // The delivery-envelope projection keeps its own uncached Ajv (one per release).
-    const compiled = run.results
-      .filter(r => !r.label.endsWith('|delivery-envelope') && compiles(r) > 0)
+    const compiled = releaseSteps(run)
+      .filter(r => compiles(r) > 0)
       .map(r => `${r.label}: ${r.compile}+${r.compileSchemaEnv}`);
     assert.deepEqual(compiled, [], 'steps that compiled in a warm run');
   }
@@ -719,14 +911,14 @@ test('warm runs compile no tool validator, for valid and failing payloads alike'
 
 test('warm runs build no schema-ref registry: schema-ref validators register and compile nothing', async () => {
   const { off, warm, warmReverse } = await scenario.main;
-  const refSteps = off.results.filter(r => r.label.includes('|ref|'));
-  assert.ok(refSteps.length >= VERSIONS.length * REFS.length * 2, `schema-ref steps: ${refSteps.length}`);
+  const refSteps = releaseSteps(off).filter(r => r.label.includes('|ref|'));
+  assert.ok(refSteps.length >= RELEASE_SEGMENTS.length * REFS.length * 2, `schema-ref steps: ${refSteps.length}`);
   assert.ok(
     refSteps.some(r => r.addSchema > 0 && compiles(r) > 0),
     'cache off, the first schema-ref validator of a release builds its registry'
   );
   for (const run of [warm, warmReverse]) {
-    const work = run.results
+    const work = releaseSteps(run)
       .filter(r => r.label.includes('|ref|'))
       .filter(r => r.addSchema > 0 || compiles(r) > 0)
       .map(r => `${r.label}: addSchema ${r.addSchema}, compiles ${compiles(r)}`);
@@ -737,11 +929,10 @@ test('warm runs build no schema-ref registry: schema-ref validators register and
 test('warm runs register no release documents: core registration waits for a validator that is not a hit', async () => {
   const { off, warm, warmReverse } = await scenario.main;
   const registering = run =>
-    run.results
-      .filter(r => !r.label.endsWith('|delivery-envelope') && r.addSchema > 0)
+    releaseSteps(run)
+      .filter(r => r.addSchema > 0)
       .map(r => `${r.label}: ${r.addSchema}`);
-  assert.ok(registering(off).length >= VERSIONS.length, 'cache off, each release registers its documents');
-  // The delivery-envelope projection keeps its own uncached Ajv (one per release).
+  assert.ok(registering(off).length >= RELEASE_SEGMENTS.length, 'cache off, each release registers its documents');
   for (const run of [warm, warmReverse])
     assert.deepEqual(registering(run), [], 'steps that registered documents in a warm run');
 });
@@ -751,54 +942,105 @@ test('every entry lookup of a warm run is a hit, and the warm runs store nothing
   assert.ok(entriesAfterCold > 0, `the cold run stored nothing in ${dir}`);
   assert.equal(entriesAfterWarm, entriesAfterCold, `new entries in ${dir}`);
   for (const run of [warm, warmReverse]) {
-    assert.ok(run.counts.lookups > 0, 'the warm run read the cache');
-    assert.equal(run.counts.evaluated, run.counts.lookups, 'every entry looked up was found and evaluated');
+    const steps = releaseSteps(run);
+    const lookups = steps.reduce((n, r) => n + r.lookups, 0);
+    assert.ok(lookups > 0, 'the warm run read the cache');
+    assert.equal(
+      steps.reduce((n, r) => n + r.evaluated, 0),
+      lookups,
+      'every entry looked up was found and evaluated'
+    );
   }
 });
 
-// ---------------------------------------------------------------- function identity
-
-// ---------------------------------------------------------------- function identity
+// ---------------------------------------------------------------- function identity (probes)
 
 test('each validator served from the cache is its own function: calling one leaves another errors alone', async () => {
-  const { off, cold, warm } = await scenario.probes;
-  for (const [mode, out] of Object.entries({ off, cold, warm }))
+  const { off, cold, warm } = await scenario.main;
+  for (const [mode, run] of Object.entries({ off, cold, warm }))
     for (const getter of ['getValidator', 'getCanonicalToolValidatorForVersion'])
       assert.deepEqual(
-        out.ownFunction[getter],
+        stepValue(run, 'probe|probe').ownFunction[getter],
         { distinct: true, stable: true, untouched: true, failed: true },
         `${mode} ${getter}`
       );
 });
 
 test("a hit's schema is the object registration adds later: schemaEnv.schema is the validator's schema", async () => {
-  // 3.0.25 responses are modular, and their registered roots are envelope-widened copies.
-  const { off, cold, warm } = await scenario.probes;
+  // Response roots are registered as envelope-widened copies; the probe reads
+  // schemaEnv while the release's registration is still deferred.
+  const { off, cold, warm } = await scenario.main;
   const expected = {
     'get_products:sync': { same: true, compiled: true },
     'create_media_buy:sync': { same: true, compiled: true },
     'create_media_buy:request': { same: true, compiled: true },
   };
-  for (const [mode, out] of Object.entries({ off, cold, warm })) assert.deepEqual(out.schemaEnv, expected, mode);
+  for (const [mode, run] of Object.entries({ off, cold, warm }))
+    assert.deepEqual(stepValue(run, 'probe|probe').schemaEnv, expected, mode);
 });
 
 test('schema-ref validators of two files that mirror one $id stay two functions, warm too', async () => {
-  const { off, cold, warm } = await scenario.probes;
+  const { off, cold, warm } = await scenario.main;
   const expected = { sameId: true, distinct: true, ownSchemas: true, untouched: true };
-  for (const [mode, out] of Object.entries({ off, cold, warm })) assert.deepEqual(out.mirror, expected, mode);
+  for (const [mode, run] of Object.entries({ off, cold, warm }))
+    assert.deepEqual(stepValue(run, 'probe|probe').mirror, expected, mode);
 });
 
-// ---------------------------------------------------------------- fixture roots (one segment each)
+// ---------------------------------------------------------------- what the fixtures exercise
 
-test('fixture runs: outcomes are identical cache off, cold and warm in every segment', async () => {
-  const { off, cold, warm } = await scenario.fixtures;
-  assertSameOutcomes(cold, off, 'cold');
-  assertSameOutcomes(warm, off, 'warm');
+test('origins of document roots Ajv compiles while resolving references are served too', async () => {
+  // get_products refers to b#/definitions/x and to all of c. Resolving the
+  // first compiles b's own root, whose reference compiles c#/properties/a: an
+  // origin at a deeper prefix than the request's own functions register,
+  // which the issue for c.a reports (`#/type`, not `#/properties/a/type`).
+  // get_signals reaches c#/properties/a only through d's root, which Ajv
+  // compiles while following d#/definitions/a, a $ref-only definition, to e.
+  const { off } = await scenario.main;
+  for (const name of RELEASE_SEGMENTS) {
+    const version = path.basename(segmentSteps(off, name)[1].label.split('|')[1]);
+    const issues = tool => stepValue(off, `${name}|${version}|${tool}|request|issues`);
+    assert.deepEqual(
+      issues('get_products')
+        .at(-5)
+        .issues.map(issue => [issue.pointer, issue.schemaPath]),
+      [['/c/a', '#/type']],
+      `${name}: the document-root origin`
+    );
+    assert.deepEqual(
+      issues('get_signals')
+        .at(-4)
+        .issues.map(issue => [issue.pointer, issue.schemaPath]),
+      [['/c/a', '#/type']],
+      `${name}: the $ref-only chain`
+    );
+  }
+});
+
+test('a recursive schema is served from the cache with its recursion intact', async () => {
+  const { off, warm } = await scenario.main;
+  for (const name of RELEASE_SEGMENTS) {
+    const label = segmentSteps(off, name).find(r => r.label.endsWith('|list_creatives|request|raw')).label;
+    const [deep, cycle] = stepValue(off, label).slice(-2);
+    assert.deepEqual(
+      deep.errors.map(e => e.instancePath),
+      ['/child/child/name', '/child/child/child/name', '/child/child/child/name'],
+      `${name}: the first payload fails three levels down`
+    );
+    assert.deepEqual(
+      cycle.errors.map(e => e.instancePath),
+      ['/node/b/a/b/v', '/node/up/name', '/node/up/node/up/name', '/node/up/node/up/name'],
+      `${name}: the second payload fails through a, b, a, b and through # from a`
+    );
+    const work = segmentSteps(warm, name)
+      .filter(r => r.label.includes('|list_creatives|'))
+      .reduce((n, r) => n + compiles(r), 0);
+    assert.equal(work, 0, `${name}: the warm run compiled nothing for it`);
+  }
 });
 
 test('a referenced document edited in place is a miss: the next registration validates against the new content', async () => {
-  const { off, cold } = await scenario.fixtures;
-  const label = `${VERSION_A}|activate_signal|request`;
+  const { off, cold } = await scenario.main;
+  const label = '3.0.25|activate_signal|request';
   assert.notEqual(
     off.byLabel[`edited-after|${label}|issues`].digest,
     off.byLabel[`edited-before|${label}|issues`].digest,
@@ -815,52 +1057,30 @@ test('a referenced document edited in place is a miss: the next registration val
   );
 });
 
-test('origins of document roots Ajv compiles while resolving references are served too', async () => {
-  // The request refers to b#/definitions/x and to all of c. Resolving the first
-  // compiles b's own root, whose reference compiles c#/properties/a: an origin
-  // at a deeper prefix than the request's own functions register, which the
-  // issue for c.a reports (`#/type`, not `#/properties/a/type`).
-  const { off, warm } = await scenario.fixtures;
-  const issues = stepValue(off, `side-effect|${VERSION_B}|get_products|request|issues`).at(-1).issues;
-  assert.deepEqual(
-    issues.map(issue => [issue.pointer, issue.schemaPath]),
-    [['/c/a', '#/type']],
-    'the fixture exercises the origin registered by c#/properties/a'
-  );
-  const work = segmentSteps(warm, 'side-effect').reduce((n, r) => n + compiles(r), 0);
-  assert.equal(work, 0, 'the warm run compiled nothing for it');
-});
-
-test('a recursive schema is served from the cache with its recursion intact', async () => {
-  // `#` from a definition makes Ajv call the root through a holder object, and
-  // a and b refer to each other, so one of them calls the other through Ajv's
-  // wrapper for a function still being compiled.
-  const { off, warm } = await scenario.fixtures;
-  const [deep, cycle] = stepValue(off, `recursive|${VERSION_B}|get_products|request|raw`).slice(-2);
-  assert.deepEqual(
-    deep.errors.map(e => e.instancePath),
-    ['/child/child/name', '/child/child/child/name', '/child/child/child/name'],
-    'the first payload fails three levels down'
-  );
-  assert.deepEqual(
-    cycle.errors.map(e => e.instancePath),
-    ['/node/b/a/b/v', '/node/up/name', '/node/up/node/up/name', '/node/up/node/up/name'],
-    'the second payload fails through a, b, a, b and through # from a'
-  );
-  const work = segmentSteps(warm, 'recursive')
-    .filter(r => !r.label.endsWith('|delivery-envelope'))
-    .reduce((n, r) => n + compiles(r), 0);
-  assert.equal(work, 0, 'the warm run compiled nothing for it');
+test('envelope fields a process derived before an in-place edit never reach another root', async () => {
+  // envelope-after and envelope-fresh hold the same documents; only the envelope
+  // fields their process derived differ.
+  const { off, cold, warm } = await scenario.main;
+  for (const [mode, run] of Object.entries({ off, cold, warm })) {
+    const verdict = name => stepValue(run, `${name}|3.0.25|get_products|sync|issues`).at(-1).valid;
+    assert.equal(verdict('envelope-before'), false, `${mode}: the old statuses reject the new one`);
+    assert.equal(
+      verdict('envelope-after'),
+      false,
+      `${mode}: after the edit the process keeps the old statuses (stock)`
+    );
+    assert.equal(verdict('envelope-fresh'), true, `${mode}: a root with the new statuses from the start accepts it`);
+  }
 });
 
 test('a root under a directory named mcp is no hit for the canonical getter: it throws as stock', async () => {
-  // The cold and warm runs hold entries for the same release from a plain path (the segment before).
-  const { off, cold, warm } = await scenario.fixtures;
-  const label = `mcp-under|${VERSION_A}|activate_signal|request|canonical`;
+  // The cold and warm runs hold entries for the same release content from r1's plain path.
+  const { off, cold, warm } = await scenario.main;
+  const label = 'mcp-under|3.0.25|activate_signal|request|canonical';
   assert.match(String(stepValue(off, label).threw), /can't resolve reference/);
   assert.ok(
-    segmentSteps(cold, 'mcp-plain').some(r => compiles(r) > 0),
-    'the plain segment stored the release'
+    segmentSteps(cold, 'r1').some(r => r.label.includes('|activate_signal|') && compiles(r) > 0),
+    'the plain path stored the release'
   );
   for (const [mode, run] of Object.entries({ cold, warm }))
     assert.equal(run.byLabel[label].digest, off.byLabel[label].digest, `${mode}: the same throw`);
@@ -869,92 +1089,40 @@ test('a root under a directory named mcp is no hit for the canonical getter: it 
 test('a registration that throws and a retry behave as without the cache', async () => {
   // Ajv keeps a document it rejects, so the next call's registration skips it
   // and can succeed: outcomes depend on the call that failed first.
-  const { off } = await scenario.fixtures;
-  assert.match(String(stepValue(off, `retry|${VERSION_A}|get_products|request|get`).threw), /schema is invalid/);
-  assert.ok(
-    !stepValue(off, `retry|${VERSION_A}|get_products|request|raw`).threw,
-    'the retry succeeds without the cache'
-  );
+  const { off } = await scenario.main;
+  assert.match(String(stepValue(off, 'retry|3.0.25|get_products|request|get').threw), /schema is invalid/);
+  assert.ok(!stepValue(off, 'retry|3.0.25|get_products|request|raw').threw, 'the retry succeeds without the cache');
 });
 
-test('a release whose documents have ambiguous identities still throws on the canonical and schema-ref getters, warm too', async () => {
-  const { off } = await scenario.fixtures;
+test('a release whose documents have ambiguous identities still throws on the canonical and schema-ref getters', async () => {
+  const { off } = await scenario.main;
   assert.match(
-    String(stepValue(off, `ambiguous|${VERSION_A}|activate_signal|request|canonical`).threw),
+    String(stepValue(off, 'ambiguous|3.0.25|activate_signal|request|canonical').threw),
     /unambiguous schema identities/
   );
   assert.match(
-    String(stepValue(off, `ambiguous|${VERSION_A}|ref|core/account-ref.json|false`).threw),
+    String(stepValue(off, 'ambiguous|3.0.25|ref|core/account-ref.json|false').threw),
     /unambiguous schema identities/
   );
 });
 
-test('envelope fields a process derived before an in-place edit never reach another process', async () => {
-  // The loader derives a release's envelope fields once per root path and
-  // process, so after an edit and re-registration this process still widens
-  // the closed response root with the old task statuses. What it stores must
-  // not be served to a process that reads the edited release fresh.
-  const version = '3.2.7';
-  const base = `https://adcontextprotocol.org/schemas/${version}/`;
-  const root = path.join(privateDir('root-envelope'), version);
-  const files = {
-    'index.json': { adcp_version: version },
-    'core/protocol-envelope.json': {
-      $id: `${base}core/protocol-envelope.json`,
-      type: 'object',
-      properties: { status: { $ref: `${base}enums/task-status.json` }, context_id: { type: 'string' } },
-    },
-    'enums/task-status.json': { $id: `${base}enums/task-status.json`, type: 'string', enum: ['completed', 'working'] },
-    'media-buy/get-products-response.json': {
-      $id: `${base}media-buy/get-products-response.json`,
-      type: 'object',
-      additionalProperties: false,
-      properties: { products: { type: 'array' } },
-    },
-  };
-  for (const [rel, document] of Object.entries(files)) {
-    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-    fs.writeFileSync(path.join(root, rel), JSON.stringify(document));
+test('a tool document without $id and a property key no pointer can encode give stock outcomes', async () => {
+  const { off, cold, warm } = await scenario.main;
+  for (const tool of ['sync_creatives', 'sync_accounts']) {
+    assert.equal(stepValue(off, `edge|3.2.7|${tool}|request|get`).defined, true, `${tool} has a validator`);
+    for (const [mode, run] of Object.entries({ cold, warm }))
+      for (const r of segmentSteps(run, 'edge').filter(r => r.label.includes(`|${tool}|`)))
+        assert.equal(r.digest, off.byLabel[r.label].digest, `${mode} ${r.label}`);
   }
-  const statusFile = path.join(root, 'enums/task-status.json');
-  const EDIT = String.raw`
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const { sdkRoot, version, root, statusFile, edit } = JSON.parse(process.env.PLAN);
-    const loader = require(path.join(sdkRoot, 'dist/lib/validation/schema-loader.js'));
-    const validator = require(path.join(sdkRoot, 'dist/lib/validation/schema-validator.js'));
-    const payload = { products: [], status: 'zzz_new' };
-    loader.registerExternalSchemaRoot(version, root);
-    const out = [validator.validateResponse('get_products', payload, version).valid];
-    if (edit) {
-      const status = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
-      status.enum.push('zzz_new');
-      fs.writeFileSync(statusFile, JSON.stringify(status));
-      loader.registerExternalSchemaRoot(version, root);
-      out.push(validator.validateResponse('get_products', payload, version).valid);
-    }
-    process.stdout.write('\n@@RESULT@@' + JSON.stringify(out) + '\n');
-  `;
-  const run = (cacheDir, edit) =>
-    new Promise((resolve, reject) => {
-      const env = { ...process.env, PLAN: JSON.stringify({ sdkRoot: SDK_ROOT, version, root, statusFile, edit }) };
-      delete env.ADCP_VALIDATOR_CACHE_DIR;
-      if (cacheDir) env.ADCP_VALIDATOR_CACHE_DIR = cacheDir;
-      const child = spawn(process.execPath, ['-e', EDIT], { cwd: SDK_ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', chunk => (stdout += chunk));
-      child.stderr.on('data', chunk => (stderr += chunk));
-      child.on('close', status => {
-        const line = stdout.split('\n').find(l => l.startsWith('@@RESULT@@'));
-        if (status !== 0 || !line) return reject(new Error(`child exited ${status}: ${stderr}`));
-        resolve(JSON.parse(line.slice('@@RESULT@@'.length)));
-      });
-    });
-  const dir = privateDir('envelope-cache');
-  assert.deepEqual(await run(dir, true), [false, false], 'the editing process keeps the old statuses (stock)');
-  assert.deepEqual(await run(undefined, false), [true], 'a fresh process accepts the new status (stock)');
-  assert.deepEqual(await run(dir, false), [true], 'a fresh process with the cache accepts it too');
+});
+
+// ---------------------------------------------------------------- key coverage, damage and pruning
+
+test('an entry whose origin data no longer matches the release compiles live, with stock outcomes', async () => {
+  const [{ off }, { rewritten, run }] = await Promise.all([scenario.main, scenario.damaged]);
+  assert.ok(rewritten > 0, 'entries with origin data');
+  assertSameOutcomes(run, off, 'unlocatable origin data');
+  assert.ok(run.counts.compileSchemaEnv > 0, 'the damaged entries were compiled live');
 });
 
 test('pruning keeps the directory near ADCP_VALIDATOR_CACHE_MAX_MB with far fewer scans than writes', async () => {
@@ -999,33 +1167,4 @@ test('pruning keeps the directory near ADCP_VALIDATOR_CACHE_MAX_MB with far fewe
   assert.ok(scans * 8 < 512, `${scans} scans for 512 writes`);
   assert.ok(total <= limit + limit / 8 + Math.max(...sizes), `directory ${total} bytes for a ${limit}-byte limit`);
   assert.ok(total > limit / 2, `the directory keeps recent entries: ${total} bytes`);
-});
-
-test('an entry whose origin data no longer matches the release compiles live, with stock outcomes', async () => {
-  const { off, dir } = await scenario.main;
-  const damaged = copyCache(dir, 'damaged-meta');
-  let rewritten = 0;
-  for (const file of entryFiles(damaged)) {
-    const text = fs.readFileSync(file, 'utf8');
-    const newline = text.indexOf('\n');
-    const header = JSON.parse(text.slice('// adcp-validator-cache '.length, newline));
-    if (!header.meta) continue;
-    const body = text.slice(newline + 1);
-    const metaEnd = body.indexOf('\n');
-    const meta = JSON.parse(body.slice(0, metaEnd));
-    // Bundled entries list their origins; per-function entries carry one.
-    const origins = Array.isArray(meta.origins) ? meta.origins : meta.origin ? [meta.origin] : [];
-    if (origins.length === 0) continue;
-    // A pointer the release does not have: well-formed, correctly hashed, unlocatable.
-    for (const origin of origins) origin.pointer = `${origin.pointer}/not-in-the-release`;
-    const next = JSON.stringify(meta) + body.slice(metaEnd);
-    header.sha256 = crypto.createHash('sha256').update(next).digest('hex');
-    fs.writeFileSync(file, `// adcp-validator-cache ${JSON.stringify(header)}\n${next}`);
-    rewritten++;
-  }
-  assert.ok(rewritten > 0, 'entries with origin data');
-  // One release (its steps run first in every plan, so the off run's are the reference).
-  const run = await runChild({ cacheDir: damaged, versions: [VERSIONS[0]] });
-  assertSameOutcomesFor(run, off, 'unlocatable origin data');
-  assert.ok(run.counts.compileSchemaEnv > 0, 'the damaged entries were compiled live');
 });
