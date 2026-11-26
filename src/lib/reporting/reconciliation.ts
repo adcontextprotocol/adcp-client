@@ -171,6 +171,10 @@ export interface ReportingReconciliationClient {
    * `content_mismatch`, but marks them `suppressed: 'consumption_unavailable'`
    * and posts neither. Attesting consumption we did not perform is the one
    * outcome worse than staying silent.
+   *
+   * A thrown error is posted as `unreadable` / `transport_failed`. To report
+   * that you read the content and rejected it, throw
+   * {@link ReportingRevisionContentRejectedError} instead.
    */
   getMediaBuyDelivery?(
     params: {
@@ -953,6 +957,88 @@ export class ReportingReconciliationError extends Error {
     super(message);
     this.name = 'ReportingReconciliationError';
   }
+}
+
+/**
+ * The `failure_code` values a consumer may claim when it rejects the content of
+ * a revision it did read, as opposed to failing to read it.
+ *
+ * - `integrity_mismatch` — the revision contradicts what the seller itself
+ *   declared for it. Use it for rows outside the revision's
+ *   `coverage.covered_package_ids` or its `media_buy_ids`: `reporting-revision.json`
+ *   requires rows to cover only that coverage, so the fault is the seller's.
+ * - `reader_incompatible` — the content may be valid, but this consumer's reader
+ *   cannot accept it. That is the buyer's limitation, not the seller's fault.
+ *
+ * AdCP's `content_mismatch` codes are a closed list with no code for "rows
+ * outside coverage" (`coverage_short` is the opposite direction), so a
+ * rejection is reported as `unreadable` with one of these codes.
+ */
+export type ReportingRevisionContentRejectionCodeV1 = 'integrity_mismatch' | 'reader_incompatible';
+
+const REVISION_CONTENT_REJECTION_CODES: ReadonlySet<string> = new Set<ReportingRevisionContentRejectionCodeV1>([
+  'integrity_mismatch',
+  'reader_incompatible',
+]);
+
+const REVISION_CONTENT_REJECTED_BRAND = Symbol.for('adcp.reportingRevisionContentRejectedError');
+
+/**
+ * Throw this from `client.getMediaBuyDelivery` to say the consumer read the
+ * revision and rejected its content, rather than failed to read it.
+ *
+ * `reconcileReporting` treats any other error thrown by the read as
+ * `unreadable` / `transport_failed`. A consumer that validates the rows before
+ * it accepts them would otherwise tell the seller "transport failed" when the
+ * real problem is the content. Throwing this instead posts `unreadable` with
+ * {@link failureCode}.
+ *
+ * Only `failureCode` goes to the seller. The wire statement has no free-text
+ * field, so `reason` stays on the local plan (`ReportingConsumerStatusPlanV1.reason`),
+ * bounded and stripped of control characters. The error's `message` and
+ * `cause` are never read. Do not put secrets in `reason`.
+ *
+ * @example
+ * ```ts
+ * if (rowsOutsideCoverage(rows, revision.coverage)) {
+ *   throw new ReportingRevisionContentRejectedError('integrity_mismatch', {
+ *     reason: 'REPORTING_REVISION_SPEND_ROW_INVALID',
+ *   });
+ * }
+ * ```
+ */
+export class ReportingRevisionContentRejectedError extends Error {
+  readonly failureCode: ReportingRevisionContentRejectionCodeV1;
+  /** Local diagnostic. Never sent to the seller. */
+  readonly reason?: string;
+
+  constructor(
+    failureCode: ReportingRevisionContentRejectionCodeV1,
+    options: { reason?: string; cause?: unknown } = {}
+  ) {
+    if (!REVISION_CONTENT_REJECTION_CODES.has(failureCode)) {
+      throw new TypeError('failureCode must be integrity_mismatch or reader_incompatible');
+    }
+    super(
+      `reporting revision content rejected: ${failureCode}`,
+      options.cause !== undefined ? { cause: options.cause } : undefined
+    );
+    this.name = 'ReportingRevisionContentRejectedError';
+    this.failureCode = failureCode;
+    if (options.reason !== undefined) this.reason = options.reason;
+    // A symbol brand rather than `instanceof`, so the check survives a host that
+    // loads both the CommonJS and ESM builds of this SDK.
+    Object.defineProperty(this, REVISION_CONTENT_REJECTED_BRAND, { value: true });
+  }
+}
+
+/** Whether `error` is a {@link ReportingRevisionContentRejectedError}, from any copy of this SDK. */
+export function isReportingRevisionContentRejectedError(
+  error: unknown
+): error is ReportingRevisionContentRejectedError {
+  return (
+    !!error && typeof error === 'object' && (error as Record<symbol, unknown>)[REVISION_CONTENT_REJECTED_BRAND] === true
+  );
 }
 
 async function callBeforeDeadline<T>(
@@ -4405,6 +4491,18 @@ async function consumeReportingRevision(
     // closed `failure_code` precisely so agents dispatch on the code.
     if (error instanceof ReportingReconciliationError && error.code === 'CONSUMER_STATUS_READ_FAILED') {
       return { budgetExhausted: 'run' };
+    }
+    // Opt-in: the consumer read the content and rejected it. Only the closed
+    // code goes on the wire; the consumer's own `reason` stays in the local
+    // diagnostic, bounded, and its `message` and `cause` are never read.
+    if (isReportingRevisionContentRejectedError(error) && REVISION_CONTENT_REJECTION_CODES.has(error.failureCode)) {
+      const reason = boundedDiagnostic(error.reason);
+      return {
+        failureCode: error.failureCode,
+        detail: reason
+          ? `the consumer rejected the exact revision content: ${reason}`
+          : 'the consumer rejected the exact revision content',
+      };
     }
     return { failureCode: 'transport_failed', detail: 'the exact-revision read failed before the rows were complete' };
   }

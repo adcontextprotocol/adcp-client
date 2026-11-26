@@ -9,10 +9,12 @@ export type {
 } from '../content-mismatch';
 export {
   ReportingReconciliationError,
+  ReportingRevisionContentRejectedError,
   buildReportingAdjustmentReceipt,
   buildReportingReceipt,
   evaluateReportingLedger,
   isReportingCoverageEvidence,
+  isReportingRevisionContentRejectedError,
   loadReportingLedger,
   reconcileReporting,
 } from '../reconciliation';
@@ -91,6 +93,7 @@ export type {
   ReportingEscalationV1,
   ReportingReconciliationClient,
   ReportingReconciliationResult,
+  ReportingRevisionContentRejectionCodeV1,
 } from '../reconciliation';
 export type {
   HttpsReportingResourceReaderOptions,

@@ -2218,3 +2218,233 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(result.consumerStatuses[0].observedRevisionContentSha256, undefined);
   });
 });
+
+describe('a consumer that rejects revision content (ReportingRevisionContentRejectedError)', () => {
+  const {
+    ReportingRevisionContentRejectedError,
+    isReportingRevisionContentRejectedError,
+  } = require('../../dist/lib/reporting/reconciliation.js');
+
+  /** A seller with one committed revision, overdue for a consumer status. */
+  async function publishedRevision() {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    return { seller, expected, at };
+  }
+
+  function captureWire(seller) {
+    const honest = seller.client.syncReportingStatus;
+    const bodies = [];
+    seller.client.syncReportingStatus = async params => {
+      bodies.push(params);
+      return honest(params);
+    };
+    return bodies;
+  }
+
+  for (const failureCode of ['integrity_mismatch', 'reader_incompatible']) {
+    test(`a typed ${failureCode} rejection posts unreadable/${failureCode}, not transport_failed`, async () => {
+      const { seller, expected, at } = await publishedRevision();
+      const obligation = [...seller.store.obligations.values()][0];
+      const [revision] = await seller.store.listRevisions(obligation.reporting_obligation_id);
+      const bodies = captureWire(seller);
+      const honest = seller.client.getMediaBuyDelivery;
+      seller.client.getMediaBuyDelivery = async params => {
+        // The consumer reads the rows, then refuses them.
+        await honest(params);
+        throw new ReportingRevisionContentRejectedError(failureCode, {
+          reason: 'REPORTING_REVISION_SPEND_ROW_INVALID',
+          cause: new Error('consumer-internal: row for pkg_secret_internal outside coverage'),
+        });
+      };
+
+      const result = await seller.reconcile(at, expected);
+
+      assert.deepEqual(result.failedConsumerStatuses, []);
+      assert.equal(result.postedConsumerStatuses.length, 1);
+      const posted = result.postedConsumerStatuses[0];
+      assert.equal(posted.consumerStatus, 'unreadable');
+      assert.equal(posted.failureCode, failureCode);
+      assert.equal(posted.mismatchCode, undefined);
+      assert.equal(posted.observedRevisionContentSha256, undefined);
+      assert.equal(posted.reportingRevisionId, revision.reporting_revision_id);
+      // The consumer's explicit reason is kept locally; its message and cause are not.
+      assert.equal(
+        posted.reason,
+        'the consumer rejected the exact revision content: REPORTING_REVISION_SPEND_ROW_INVALID'
+      );
+      assert.doesNotMatch(posted.reason, /pkg_secret_internal|consumer-internal/);
+
+      // What the seller sees: the closed code and nothing else. The wire has no
+      // free-text field, so no reason travels with it.
+      assert.equal(bodies.length, 1);
+      const [wire] = bodies[0].statuses;
+      assert.deepEqual(Object.keys(wire).sort(), [
+        'consumer_status',
+        'delivery_config_id',
+        'delivery_config_version',
+        'failure_code',
+        'period',
+        'report_definition_id',
+        'reporting_obligation_id',
+        'reporting_revision_id',
+        'reporting_status_id',
+        'status_as_of',
+      ]);
+      assert.equal(wire.consumer_status, 'unreadable');
+      assert.equal(wire.failure_code, failureCode);
+      assert.doesNotMatch(JSON.stringify(bodies[0]), /REPORTING_REVISION_SPEND_ROW_INVALID|pkg_secret_internal/);
+      // The SDK's own seller validated and recorded it.
+      assert.equal(seller.store.consumerStatements.length, 1);
+      assert.equal(seller.store.consumerStatements[0].consumer_status, 'unreadable');
+      assert.equal(seller.store.consumerStatements[0].failure_code, failureCode);
+    });
+  }
+
+  test('a rejection thrown on a later page is still the typed code', async () => {
+    const { seller, expected, at } = await publishedRevision();
+    const honest = seller.client.getMediaBuyDelivery;
+    let calls = 0;
+    seller.client.getMediaBuyDelivery = async params => {
+      calls += 1;
+      if (calls === 1) {
+        const page = await honest(params);
+        return { ...page, pagination: { ...page.pagination, has_more: true, cursor: 'page-2' } };
+      }
+      throw new ReportingRevisionContentRejectedError('integrity_mismatch');
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(calls, 2);
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    assert.equal(result.postedConsumerStatuses[0].consumerStatus, 'unreadable');
+    assert.equal(result.postedConsumerStatuses[0].failureCode, 'integrity_mismatch');
+    assert.equal(result.postedConsumerStatuses[0].reason, 'the consumer rejected the exact revision content');
+  });
+
+  test('a long or multi-line reason is bounded and stripped of control characters', async () => {
+    const { seller, expected, at } = await publishedRevision();
+    seller.client.getMediaBuyDelivery = async () => {
+      throw new ReportingRevisionContentRejectedError('integrity_mismatch', {
+        reason: `line one\r\nline two\u0000${'x'.repeat(1_000)}`,
+      });
+    };
+
+    const result = await seller.reconcile(at, expected);
+    const { reason } = result.postedConsumerStatuses[0];
+    assert.doesNotMatch(reason, /[\u0000-\u001f\u007f]/);
+    assert.ok(reason.length <= 'the consumer rejected the exact revision content: '.length + 256);
+    assert.match(reason, /line one line two x/);
+  });
+
+  // Must not break: every error that is not the typed class keeps today's
+  // outcome exactly, however much it looks like one.
+  const lookalikes = {
+    'a plain Error': () => new Error('connection reset by peer'),
+    'a consumer error carrying a rejection code': () =>
+      Object.assign(new Error('Reliable Reporting revision cannot be committed'), {
+        code: 'REPORTING_REVISION_SPEND_ROW_INVALID',
+        failureCode: 'integrity_mismatch',
+        reason: 'REPORTING_REVISION_SPEND_ROW_INVALID',
+      }),
+    'an Error named like the class but not branded': () =>
+      Object.assign(new Error('rejected'), {
+        name: 'ReportingRevisionContentRejectedError',
+        failureCode: 'integrity_mismatch',
+      }),
+    'a typed error whose code was mutated out of the closed set': () => {
+      const error = new ReportingRevisionContentRejectedError('integrity_mismatch');
+      Object.defineProperty(error, 'failureCode', { value: 'transport_failed_but_not_really' });
+      return error;
+    },
+    'a thrown non-Error': () => 'integrity_mismatch',
+    'an AbortError': () => new DOMException('The operation was aborted.', 'AbortError'),
+  };
+  for (const [name, make] of Object.entries(lookalikes)) {
+    test(`${name} is still unreadable/transport_failed`, async () => {
+      const { seller, expected, at } = await publishedRevision();
+      seller.client.getMediaBuyDelivery = async () => {
+        throw make();
+      };
+
+      const result = await seller.reconcile(at, expected);
+      assert.equal(result.postedConsumerStatuses.length, 1);
+      const posted = result.postedConsumerStatuses[0];
+      assert.equal(posted.consumerStatus, 'unreadable');
+      assert.equal(posted.failureCode, 'transport_failed');
+      assert.equal(posted.reason, 'the exact-revision read failed before the rows were complete');
+      assert.equal(seller.store.consumerStatements[0].failure_code, 'transport_failed');
+    });
+  }
+
+  test('a chain already at transport_failed is corrected once, then stays quiet, then recovers', async () => {
+    const { seller, expected, at } = await publishedRevision();
+    const honest = seller.client.getMediaBuyDelivery;
+
+    // Before the consumer adopts the typed error: the history ESA's buyers have.
+    seller.client.getMediaBuyDelivery = async () => {
+      throw new Error('REPORTING_REVISION_SPEND_ROW_INVALID');
+    };
+    const before = await seller.reconcile(at, expected);
+    assert.equal(before.postedConsumerStatuses[0].failureCode, 'transport_failed');
+
+    // After: the accurate code supersedes the misleading one.
+    seller.client.getMediaBuyDelivery = async () => {
+      throw new ReportingRevisionContentRejectedError('integrity_mismatch', {
+        reason: 'REPORTING_REVISION_SPEND_ROW_INVALID',
+      });
+    };
+    const corrected = await seller.reconcile(at + HOUR, expected);
+    assert.equal(corrected.postedConsumerStatuses.length, 1);
+    assert.equal(corrected.postedConsumerStatuses[0].failureCode, 'integrity_mismatch');
+    const chain = seller.store.consumerStatements;
+    assert.equal(chain.length, 2);
+    assert.equal(chain[1].failure_code, 'integrity_mismatch');
+    assert.equal(chain[1].supersedes_reporting_status_id, chain[0].reporting_status_id);
+
+    // The same rejection again is the same claim: no churn.
+    const again = await seller.reconcile(at + 2 * HOUR, expected);
+    assert.deepEqual(again.postedConsumerStatuses, []);
+    assert.equal(again.consumerStatuses[0].suppressed, 'unchanged');
+    assert.equal(seller.store.consumerStatements.length, 2);
+
+    // The consumer accepts the content: received supersedes the rejection.
+    seller.client.getMediaBuyDelivery = honest;
+    const recovered = await seller.reconcile(at + 3 * HOUR, expected);
+    assert.equal(recovered.postedConsumerStatuses.length, 1);
+    assert.equal(recovered.postedConsumerStatuses[0].consumerStatus, 'received');
+    assert.equal(seller.store.consumerStatements[2].supersedes_reporting_status_id, chain[1].reporting_status_id);
+  });
+
+  test('the constructor accepts only the two content codes', () => {
+    for (const code of ['transport_failed', 'access_denied', 'resource_not_found', 'coverage_short', '', undefined]) {
+      assert.throws(() => new ReportingRevisionContentRejectedError(code), TypeError, String(code));
+    }
+    const error = new ReportingRevisionContentRejectedError('reader_incompatible', { reason: 'r', cause: 'c' });
+    assert.ok(error instanceof Error);
+    assert.equal(error.name, 'ReportingRevisionContentRejectedError');
+    assert.equal(error.failureCode, 'reader_incompatible');
+    assert.equal(error.reason, 'r');
+    assert.equal(error.cause, 'c');
+    assert.equal(isReportingRevisionContentRejectedError(error), true);
+    assert.equal(isReportingRevisionContentRejectedError(new Error('x')), false);
+    assert.equal(isReportingRevisionContentRejectedError(undefined), false);
+  });
+
+  test('the guard recognizes an error built by the other module format', async () => {
+    const esm = await import('../../dist/lib/reporting/consumer/index.mjs');
+    const cjs = require('../../dist/lib/reporting/consumer/index.js');
+    assert.equal(
+      esm.isReportingRevisionContentRejectedError(new cjs.ReportingRevisionContentRejectedError('integrity_mismatch')),
+      true
+    );
+    assert.equal(
+      cjs.isReportingRevisionContentRejectedError(new esm.ReportingRevisionContentRejectedError('integrity_mismatch')),
+      true
+    );
+  });
+});
