@@ -1,5 +1,11 @@
 # Changelog
 
+## 17.0.0-rc.1
+
+### Minor Changes
+
+- 5a70a38: Allow buyers to reconcile package-level reporting for a fixed media-buy scope when the seller determines the package roster at the period boundary.
+
 ## 17.0.0-rc.0
 
 ### Minor Changes
