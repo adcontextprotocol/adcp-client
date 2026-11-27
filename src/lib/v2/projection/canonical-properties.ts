@@ -197,6 +197,7 @@ export const CREATIVE_FIT_ASPECT_RATIO_TOLERANCE = 0.01;
 
 const PRIMARY: Record<string, { slot: string; types: readonly string[] }> = {
   image: { slot: 'image_main', types: ['image'] },
+  native_in_feed: { slot: 'main_image', types: ['image'] },
   html5: { slot: 'html5_bundle', types: ['zip'] },
   display_tag: { slot: 'tag_url', types: ['display_tag', 'html', 'url'] },
   video_hosted: { slot: 'video_main', types: ['video'] },
@@ -273,14 +274,15 @@ export function normalizeCreativeFitFacts(
   const selected =
     requested !== undefined
       ? entries.filter(entry => entry.key === requested)
-      : defaultEntries.length > 0
+      : defaultEntries.length > 0 || kind === 'native_in_feed'
         ? defaultEntries
         : entries.length === 1
           ? entries
           : [];
   if (requested !== undefined && selected.length === 0)
     problems.push(reason('primary_asset_not_found', 'primaryAssetFacts.asset_group_id'));
-  if (selected.length === 0 && entries.length > 1) problems.push(reason('primary_asset_ambiguous', 'assets'));
+  if (kind !== 'native_in_feed' && selected.length === 0 && entries.length > 1)
+    problems.push(reason('primary_asset_ambiguous', 'assets'));
   if (measured && selected.length > 1)
     problems.push(reason('primary_asset_ambiguous', 'primaryAssetFacts.asset_group_id'));
   const primary: Json = selected.length === 1 ? { ...selected[0]!.asset } : {};
@@ -415,11 +417,15 @@ export function evaluateDeclaredCreativeFit(
     if (facts.kind === 'display_tag' && params.supported_delivery_types === undefined)
       unknown('legacy_delivery_type_unproven', 'params.supported_delivery_types');
   }
-  if (!facts.kind || !PRIMARY[facts.kind]) unknown('unsupported_format_kind', 'format_kind');
+  const nativeImages =
+    facts.kind === 'native_in_feed' && declaration.format_kind === 'native_in_feed' && scope === 'canonical';
+  if (!facts.kind || !PRIMARY[facts.kind] || (facts.kind === 'native_in_feed' && !nativeImages))
+    unknown('unsupported_format_kind', 'format_kind');
   if (declaration.format_schema !== undefined || facts.kind === 'custom')
     unknown('unresolved_format_schema', 'format_schema');
-  if (facts.primary_assets.length === 0) unknown('primary_asset_missing', 'assets');
+  if (!nativeImages && facts.primary_assets.length === 0) unknown('primary_asset_missing', 'assets');
   if (
+    !nativeImages &&
     facts.kind &&
     PRIMARY[facts.kind] &&
     facts.primary_asset_group_id !== PRIMARY[facts.kind]!.slot &&
@@ -687,7 +693,10 @@ export function evaluateDeclaredCreativeFit(
   checkSet('audio_codecs', facts.kind === 'audio_hosted' ? facts.primary.codec : facts.primary.audio_codec);
   checkSet('containers', facts.primary.container_format);
   checkSet('mime_types', facts.primary.mime_type);
-  checkSet('image_formats', facts.primary.format);
+  if (nativeImages) {
+    for (const key of ['main_image_sizes', 'icon_size', 'image_formats']) handled.add(key);
+    checkNativeImages(facts, params, fail, unknown);
+  } else checkSet('image_formats', facts.primary.format);
   checkSet('audio_sample_rates', facts.primary.sampling_rate_hz);
   checkSet('audio_channels', facts.primary.channels);
   checkSet('frame_rates', facts.primary.frame_rate);
@@ -771,6 +780,7 @@ export function evaluateDeclaredCreativeFit(
           fail('slot_asset_type_mismatch', 'slots');
         if (
           (slot.pixel_ratios !== undefined || slot.required_pixel_ratios !== undefined) &&
+          !(nativeImages && ['main_image', 'icon'].includes(slot.asset_group_id)) &&
           (facts.kind !== 'image' || slot.asset_group_id !== facts.primary_asset_group_id)
         ) {
           unknown('unsupported_constraint', 'params.slots.pixel_ratios');
@@ -807,6 +817,80 @@ export function evaluateDeclaredCreativeFit(
     ...(renditionDensities.size === 1 && pixelRatio !== undefined && { pixel_ratio: pixelRatio }),
     ...(renditionDensities.size > 0 && { pixel_ratios: [...renditionDensities].sort((a, b) => a - b) }),
   };
+}
+
+function checkNativeImages(
+  facts: NormalizedCreativeFitFacts,
+  params: Json,
+  fail: (code: string, field: string, expected?: unknown, actual?: unknown) => void,
+  unknown: (code: string, field: string) => void
+): void {
+  for (const slot of ['main_image', 'icon'] as const) {
+    const sizeField = slot === 'icon' ? 'icon_size' : 'main_image_sizes';
+    const sizes = params[sizeField];
+    const slotDeclaration = Array.isArray(params.slots)
+      ? params.slots.map(record).find(value => value?.asset_group_id === slot)
+      : undefined;
+    const images = facts.assets[slot];
+    if (images === undefined) continue;
+    const assets =
+      facts.primary_asset_group_id === slot ? facts.primary_assets : Array.isArray(images) ? images : [images];
+    const acceptedSizes = slot === 'icon' && sizes !== undefined ? [sizes] : sizes;
+    const ratios = slotDeclaration?.pixel_ratios ?? [1];
+    const required = slotDeclaration?.required_pixel_ratios;
+    const knownDensities = new Set<number>();
+    let unresolvedDensity = false;
+    if (
+      !Array.isArray(ratios) ||
+      !ratios.length ||
+      !ratios.every(positive) ||
+      (required !== undefined &&
+        (!Array.isArray(required) || !required.length || !required.every(ratio => ratios.includes(ratio)))) ||
+      (acceptedSizes !== undefined &&
+        (!Array.isArray(acceptedSizes) || !acceptedSizes.length || !acceptedSizes.every(pair)))
+    ) {
+      unknown('invalid_declaration', `params.${sizeField}`);
+      continue;
+    }
+    for (const item of assets) {
+      const asset = record(item);
+      if (asset?.asset_type !== 'image') {
+        fail('slot_asset_type_mismatch', slot);
+        continue;
+      }
+      if (params.image_formats !== undefined) {
+        if (!Array.isArray(params.image_formats) || !params.image_formats.length)
+          unknown('invalid_declaration', 'params.image_formats');
+        else if (asset.format === undefined) unknown('fact_missing', `assets.${slot}.format`);
+        else if (!params.image_formats.includes(asset.format))
+          fail('value_not_accepted', `${slot}.format`, undefined, asset.format);
+      }
+      if (acceptedSizes === undefined && slotDeclaration?.pixel_ratios === undefined && required === undefined)
+        continue;
+      const size = pair(asset);
+      const candidates = ratios.filter(
+        ratio =>
+          (asset.pixel_ratio === undefined || asset.pixel_ratio === ratio) &&
+          (!size ||
+            acceptedSizes === undefined ||
+            acceptedSizes.some(candidate => {
+              const logical = pair(candidate)!;
+              return logical.width * ratio === size.width && logical.height * ratio === size.height;
+            }))
+      );
+      if (candidates.length === 0) fail('image_size_or_density_mismatch', sizeField);
+      else if ((!size && acceptedSizes !== undefined) || candidates.length !== 1) {
+        unknown('native_image_measurement_missing', `assets.${slot}`);
+        unresolvedDensity = true;
+      } else {
+        const ratio = candidates[0]!;
+        if (Array.isArray(required) && knownDensities.has(ratio)) fail('pixel_ratio_duplicate', `${slot}.pixel_ratio`);
+        knownDensities.add(ratio);
+      }
+    }
+    if (Array.isArray(required) && !unresolvedDensity && required.some(ratio => !knownDensities.has(ratio)))
+      fail('required_pixel_ratio_missing', `${slot}.pixel_ratio`);
+  }
 }
 
 function evaluateMediaFile(media: CreativePrimaryAssetFacts, requirements: Json): 'match' | 'mismatch' | 'unknown' {
