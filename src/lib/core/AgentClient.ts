@@ -33,6 +33,7 @@ import {
   type CreativeDeliveryTaskOptions,
   type SingleAgentClientConfig,
   type SyncCreativesTaskOptions,
+  type SyncAccountsTaskOptions,
   type VerifyAndParseWebhookOptions,
   type WebhookHandlerAdapter,
   type WebhookParseResult,
@@ -1832,7 +1833,7 @@ export class AgentClient {
   async syncAccounts(
     params: MutatingRequestInput<SyncAccountsRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: SyncAccountsTaskOptions
   ): Promise<TaskResult<SyncAccountsResponse>> {
     const result = await this.client.syncAccounts(params, inputHandler, {
       ...this.withSession('sync_accounts', options),
