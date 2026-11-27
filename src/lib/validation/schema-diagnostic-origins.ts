@@ -12,10 +12,51 @@ export interface SchemaDiagnosticOrigin {
   /** Original AJV function-relative spelling; exact origins remain internal. */
   schemaPath: string;
 }
+/** What {@link SchemaDiagnosticOrigins.process} registered for one compiled function. */
+export interface RegisteredSchemaOrigin {
+  /** The origin id and pointer its schemaPath literals now start with. */
+  prefix: string;
+  /** The document the pointer is relative to: the function's root schema, or its own schema. */
+  document: SchemaObject;
+  /** JSON pointer of the function's schema in `document` (`#` for the document itself). */
+  pointer: string;
+  schemaId?: string;
+}
 export interface SchemaDiagnosticOrigins {
   process: (source: string, environment?: SchemaEnvironment) => string;
   resolve: (schemaPath: string) => unknown;
   origin: (schemaPath: string) => SchemaDiagnosticOrigin | undefined;
+  /** The origin `process` registered for `environment`, if it registered one. */
+  registered: (environment: object) => RegisteredSchemaOrigin | undefined;
+  /**
+   * Register an origin as `process` would have for a function whose schema is
+   * `schema`: the first schema at a prefix wins, a different one makes the
+   * prefix ambiguous. Lets a validator loaded from the cache add the origins
+   * its compile would have added.
+   */
+  replay: (prefix: string, schema: object, schemaId: string | undefined) => void;
+}
+
+/**
+ * The schema at an origin pointer (`#`, `#/a/b`) of `document`, through own
+ * properties only, or `undefined`. The inverse of the pointers `process` builds.
+ */
+export function schemaAtOriginPointer(document: unknown, pointer: string): object | undefined {
+  if (pointer !== '#' && !pointer.startsWith('#/')) return undefined;
+  let cursor = document;
+  if (pointer.length > 1) {
+    for (const segment of pointer.slice(2).split('/')) {
+      let key: string;
+      try {
+        key = decodeURIComponent(segment).replace(/~1/g, '/').replace(/~0/g, '~');
+      } catch {
+        return undefined;
+      }
+      if (!object(cursor) || !Object.hasOwn(cursor, key)) return undefined;
+      cursor = cursor[key];
+    }
+  }
+  return object(cursor) ? cursor : undefined;
 }
 
 function object(value: unknown): value is SchemaObject {
@@ -160,26 +201,51 @@ function schemaPathLiterals(source: string): Array<{ start: number; end: number;
   return paths;
 }
 
+/** Every object node of `root` by its origin pointer (`#`, `#/a/b`), the first path found winning. */
+function buildPointerIndex(root: object): WeakMap<object, string> {
+  const paths = new WeakMap<object, string>();
+  const pending: Array<[object, string]> = [[root, '#']];
+  while (pending.length) {
+    const [node, pointer] = pending.pop()!;
+    if (paths.has(node)) continue;
+    paths.set(node, pointer);
+    for (const [key, child] of Object.entries(node)) {
+      if (object(child))
+        pending.push([child, `${pointer}/${encodeURIComponent(key.replace(/~/g, '~0').replace(/\//g, '~1'))}`]);
+    }
+  }
+  return paths;
+}
+
+const sharedPointerIndexes = new WeakMap<object, WeakMap<object, string>>();
+
+/** The origin pointer of `schema` inside `root`, as `process` spells it, or `undefined`. */
+export function schemaPointerIn(root: object, schema: object): string | undefined {
+  let index = sharedPointerIndexes.get(root);
+  if (!index) {
+    index = buildPointerIndex(root);
+    sharedPointerIndexes.set(root, index);
+  }
+  return index.get(schema);
+}
+
 /** Use AJV's supported code.process hook; only diagnostic string literals change. */
 export function createSchemaDiagnosticOrigins(): SchemaDiagnosticOrigins {
   const indexes = new WeakMap<object, WeakMap<object, string>>();
   const anonymousIds = new WeakMap<object, string>();
   const origins = new Map<string, { schema: SchemaObject; schemaId?: string } | undefined>();
+  const registeredOrigins = new WeakMap<object, RegisteredSchemaOrigin>();
   let anonymousId = 0;
+  // A conflicting identity cannot justify precise enrichment. Retain the
+  // real validation errors but never fall through to a different origin.
+  const register = (prefix: string, schema: SchemaObject, schemaId: string | undefined): void => {
+    if (origins.has(prefix) && origins.get(prefix)?.schema !== schema) origins.set(prefix, undefined);
+    else if (!origins.has(prefix)) origins.set(prefix, { schema, ...(schemaId && { schemaId }) });
+  };
   const indexRoot = (root: object): WeakMap<object, string> => {
     const cached = indexes.get(root);
     if (cached) return cached;
-    const paths = new WeakMap<object, string>();
-    const pending: Array<[object, string]> = [[root, '#']];
-    while (pending.length) {
-      const [node, pointer] = pending.pop()!;
-      if (paths.has(node)) continue;
-      paths.set(node, pointer);
-      for (const [key, child] of Object.entries(node)) {
-        if (object(child))
-          pending.push([child, `${pointer}/${encodeURIComponent(key.replace(/~/g, '~0').replace(/\//g, '~1'))}`]);
-      }
-    }
+    const paths = buildPointerIndex(root);
     indexes.set(root, paths);
     return paths;
   };
@@ -246,16 +312,12 @@ export function createSchemaDiagnosticOrigins(): SchemaDiagnosticOrigins {
         }
       }
       const prefix = `${id}${pointer ?? '#'}`;
-      // A conflicting identity cannot justify precise enrichment. Retain the
-      // real validation errors but never fall through to a different origin.
-      if (origins.has(prefix) && origins.get(prefix)?.schema !== environment.schema) origins.set(prefix, undefined);
-      else if (!origins.has(prefix)) {
-        // baseId is AJV's resolved effective resource identity, including an
-        // embedded $id. It is independent of the exact compiled pointer.
-        const schemaId =
-          environment.baseId || (typeof environment.schema.$id === 'string' ? environment.schema.$id : undefined);
-        origins.set(prefix, { schema: environment.schema, ...(schemaId && { schemaId }) });
-      }
+      // baseId is AJV's resolved effective resource identity, including an
+      // embedded $id. It is independent of the exact compiled pointer.
+      const schemaId =
+        environment.baseId || (typeof environment.schema.$id === 'string' ? environment.schema.$id : undefined);
+      register(prefix, environment.schema, schemaId);
+      registeredOrigins.set(environment, { prefix, document, pointer: pointer ?? '#', ...(schemaId && { schemaId }) });
       const fragments: string[] = [];
       let cursor = 0;
       for (const literal of literals) {
@@ -269,5 +331,11 @@ export function createSchemaDiagnosticOrigins(): SchemaDiagnosticOrigins {
       return origin(schemaPath)?.schema;
     },
     origin,
+    registered(environment) {
+      return registeredOrigins.get(environment);
+    },
+    replay(prefix, schema, schemaId) {
+      register(prefix, schema as SchemaObject, schemaId);
+    },
   };
 }

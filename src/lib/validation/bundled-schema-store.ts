@@ -131,6 +131,11 @@ export function listBundledSchemaFiles(bundledRoot: string): string[] {
   return archive ? [...archive.keys()].map(relativePath => path.join(bundledRoot, relativePath)) : [];
 }
 
+/** @internal The protocol-authored shape of a bundled document already parsed from disk. */
+export function expandBundledSchemaDocument(schema: JsonSchema): JsonSchema {
+  return expandCompactSchema(schema);
+}
+
 export function loadBundledSchemaFile(file: string): JsonSchema | undefined {
   if (existsSync(file)) return expandCompactSchema(JSON.parse(readFileSync(file, 'utf8')) as JsonSchema);
   const marker = `${path.sep}bundled${path.sep}`;

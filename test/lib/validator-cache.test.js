@@ -5,9 +5,9 @@
 //   - Unset, empty or relative: the SDK behaves exactly as it does without the
 //     feature. It writes nothing anywhere and never loads the cache module.
 //   - Absolute path: the first process compiles as stock and stores one entry
-//     per bundled validator. A later process gets the same validators without
-//     an Ajv compile. A failing payload compiles a validator once
-//     (materialization) for the diagnostics lookup.
+//     per compiled validator. A later process gets the same validators without
+//     an Ajv compile, and a failing payload's diagnostics use the origins
+//     stored with the entry instead of compiling it.
 //   - Every outcome a caller can see (validateRequest/validateResponse results
 //     incl. issue schemaId/schemaPath/discriminator/hint/allowedValues,
 //     getRegisteredSchemaIds, validator.schema, fresh epochs on
@@ -504,14 +504,20 @@ test('env relative path: ignored, nothing created under the cwd and the cache mo
   assert.deepEqual(values(run), values(off));
 });
 
-test('env absolute path: the cache module loads, the dir is created 0700 and one entry per bundled validator is stored', async () => {
+test('env absolute path: the cache module loads, the dir is created 0700 and the compiled validators are stored', async () => {
   const { off, miss, hit, missDir, entriesAfterMiss, entriesAfterHit } = await scenario.full;
   const bundled = bundledLabels(off);
+  // A step that compiled through _compileSchemaEnv alone compiled one modular root (requests, 3.0
+  // responses), stored as one entry per function it reaches.
+  const modular = off.results.filter(r => r.compile === 0 && r.compileSchemaEnv === 1);
   assert.ok(bundled.length >= 6, `expected bundled response validators in 3.1+, got ${JSON.stringify(bundled)}`);
   assert.equal(miss.cacheModuleLoaded, true, 'the cache module is loaded when the env var is an absolute path');
   assert.ok(fs.existsSync(missDir), 'the cache dir is created');
   assert.equal(fs.lstatSync(missDir).mode & 0o777, 0o700, 'the cache dir is created with mode 0700');
-  assert.equal(entriesAfterMiss, bundled.length, `one entry per bundled validator: ${JSON.stringify(walk(missDir))}`);
+  assert.ok(
+    entriesAfterMiss >= bundled.length + modular.length,
+    `an entry per compiled validator: ${JSON.stringify(walk(missDir))}`
+  );
   assert.equal(entriesAfterHit, entriesAfterMiss, 'a warm run stores no new entries');
   for (const run of [miss, hit])
     for (const write of run.writes)
@@ -546,7 +552,7 @@ test('a cold run compiles exactly what stock compiles', async () => {
 
 // ---------------------------------------------------------------- hit proof
 
-test('warm run: bundled getValidator does no Ajv compile; a failing payload materializes its validator exactly once', async () => {
+test('warm run: bundled getValidator does no Ajv compile, and neither do the diagnostics of failing payloads', async () => {
   const { off, hit } = await scenario.full;
   const bundled = bundledLabels(off);
   assert.ok(bundled.length >= 6, JSON.stringify(bundled));
@@ -556,27 +562,18 @@ test('warm run: bundled getValidator does no Ajv compile; a failing payload mate
       [0, 0],
       `${label}: ${why} (compile, _compileSchemaEnv)`
     );
-  const stockCompile = label => [off.byLabel[label].compile, off.byLabel[label].compileSchemaEnv];
   for (const label of bundled) zero(label, 'a warm getValidator must not compile');
+  let failing = 0;
   for (const version of VERSIONS) {
     const v = version;
     if (!bundled.includes(`${v}:A`) || !bundled.includes(`${v}:B`)) continue;
-    // Sequence: A was loaded, B fails: B (only) materializes, as one stock compile of B.
-    assert.deepEqual(
-      [hit.byLabel[`${v}:B:fail`].compile, hit.byLabel[`${v}:B:fail`].compileSchemaEnv],
-      stockCompile(`${v}:B`),
-      `${v}: the first failing ${TOOL_B} payload materializes its validator once`
-    );
-    zero(`${v}:B:fail-again`, 'a second failure reuses the materialized validator');
-    zero(`${v}:B:valid`, 'a valid payload never materializes');
-    assert.deepEqual(
-      [hit.byLabel[`${v}:A:fail`].compile, hit.byLabel[`${v}:A:fail`].compileSchemaEnv],
-      stockCompile(`${v}:A`),
-      `${v}: the first failing ${TOOL_A} payload materializes its validator once`
-    );
-    zero(`${v}:A:valid`, 'a valid payload after materialization compiles nothing');
-    zero(`${v}:B:enum`, 'another failure of a materialized validator compiles nothing');
+    // Sequence: A was loaded, B fails, then A: the failures' issues come from stored origins.
+    for (const step of ['B:fail', 'B:fail-again', 'B:valid', 'A:fail', 'A:valid', 'B:enum']) {
+      zero(`${v}:${step}`, 'a warm validation compiles nothing, failing or not');
+      failing++;
+    }
   }
+  assert.ok(failing > 0, 'the plan has bundled releases');
 });
 
 // ---------------------------------------------------------------- safety

@@ -27,6 +27,7 @@ import { ConfigurationError } from '../errors';
 import { bindEnvelopeSchemaLoader } from '../utils/envelope-status-compat';
 import {
   clearBundledSchemaStoreCache,
+  expandBundledSchemaDocument,
   hasBundledSchemaStore,
   listBundledSchemaFiles,
   loadBundledSchemaFile,
@@ -388,7 +389,8 @@ interface LoaderState {
   canonicalValidators: Map<string, ValidateFunction>;
   fileIndex: Map<string, string>;
   validators: Map<string, ValidateFunction>;
-  rawSchemas: Map<string, Record<string, unknown>>;
+  /** The root's parsed documents, shared with its schema-ref validators (see {@link documentStore}). */
+  documents: DocumentStore;
   entityPaths: Map<string, SchemaEntityPath[]>;
   schemaIdFiles?: Map<string, string>;
   root: string;
@@ -409,6 +411,611 @@ interface LoaderState {
   contentDigest?: string | null;
   /** Whether {@link contentUnchangedSinceDigest} has checked the digest. */
   contentDigestChecked?: boolean;
+  /** With the cache enabled: sources of the functions `ajv` compiled (see {@link CompiledSources}). */
+  modularSources?: CompiledSources;
+  /** With the cache enabled: the modular validator this state returned for each root $id. */
+  modularById?: Map<string, ValidateFunction>;
+  /** With the cache enabled: sources of the functions `canonicalAjv` compiled. */
+  canonicalSources?: CompiledSources;
+  /** With the cache enabled: the canonical validator this state returned for each root $id. */
+  canonicalById?: Map<string, ValidateFunction>;
+  /**
+   * With the cache enabled: the documents core registration adds, in order,
+   * selected without adding them (see {@link planCoreRegistration}).
+   */
+  corePlan?: LoadedSchema[];
+  /** {@link corePlan} by registry key. */
+  corePlanByKey?: Map<string, LoadedSchema>;
+  /** A modular validator needed registration and the state planned it instead (see {@link planCoreRegistration}). */
+  coreRegistrationDeferred?: boolean;
+  /** With the cache enabled: each registry's functions in the cache, by kind and options. */
+  cachedFunctions?: Map<string, CachedFunctions>;
+  /** {@link registrationInputsDigest}, once computed. */
+  registrationInputs?: string;
+  /** The documents canonical registration registers, by $id, once its scan has succeeded. */
+  canonicalDocuments?: Map<string, LoadedSchema>;
+}
+
+/** Ajv's standalone source of one compiled function (its `source` with `code.source` on). */
+interface AjvFunctionSource {
+  validateName?: unknown;
+  validateCode: string;
+  evaluated?: unknown;
+  scopeValues?: Record<string, Iterable<{ prefix?: string; value?: { ref?: unknown } }>>;
+}
+
+/**
+ * Standalone sources of the functions an Ajv instance compiled, held off the
+ * functions (stock validators carry no `source`), so the cache can store a
+ * function whichever validator's compile produced it.
+ */
+interface CompiledSources {
+  /** code.process input and output per compiled schema environment, until drained. */
+  pending: Array<{ env: { validate?: SourcedValidateFunction }; source: string; output: string }>;
+  /** Each drained function's source, its body as code.process returned it. */
+  byFunction: WeakMap<object, AjvFunctionSource>;
+  /**
+   * The registry entries each schema environment looked up while it was
+   * compiled (see {@link recordRegistryLookups}); absent when they cannot be
+   * observed, and then nothing is stored.
+   */
+  lookups?: WeakMap<object, Set<object>>;
+}
+
+/**
+ * Record, for each schema environment Ajv compiles, the registered schema
+ * environments it looks up while resolving its references. Ajv compiles each
+ * one it finds (a document's root when the reference points into it, every
+ * document a chain of `$ref`-only definitions passes through), and those
+ * compiles register diagnostic origins, so a cached validator must bring
+ * them along. Lookups are attributed to the innermost environment being
+ * compiled, so the record depends on the schemas, not on compile order.
+ */
+function recordRegistryLookups(ajv: Ajv, sources: CompiledSources): void {
+  const internals = ajv as unknown as {
+    schemas: Record<string, unknown>;
+    refs: Record<string, unknown>;
+    _compilations?: unknown;
+  };
+  const compiling = internals._compilations;
+  if (!(compiling instanceof Set)) return;
+  const lookups = new WeakMap<object, Set<object>>();
+  const handler: ProxyHandler<Record<string, unknown>> = {
+    get(target, key, receiver) {
+      const value: unknown = Reflect.get(target, key, receiver);
+      if (typeof key === 'string' && value && typeof value === 'object' && compiling.size > 0) {
+        let current: object | undefined;
+        for (const env of compiling as Set<object>) current = env;
+        let found = lookups.get(current!);
+        if (!found) lookups.set(current!, (found = new Set()));
+        found.add(value);
+      }
+      return value;
+    },
+  };
+  internals.schemas = new Proxy(internals.schemas, handler);
+  internals.refs = new Proxy(internals.refs, handler);
+  sources.lookups = lookups;
+}
+
+/** A code.process hook that applies `process` (if any) and records input and output in `sources`. */
+function recordingCodeProcess(
+  sources: CompiledSources,
+  process?: SchemaDiagnosticOrigins['process']
+): (source: string, environment?: unknown) => string {
+  return (source, environment) => {
+    const output = process ? process(source, environment as Parameters<SchemaDiagnosticOrigins['process']>[1]) : source;
+    sources.pending.push({ env: environment as CompiledSources['pending'][number]['env'], source, output });
+    return output;
+  };
+}
+
+/**
+ * Move the `source` Ajv attached to each function compiled since the last
+ * drain into `sources`, with the processed body. A function whose processed
+ * code is not the plain source with rewritten literals is not kept, so no
+ * module containing it is stored.
+ */
+function drainCompiledSources(sources: CompiledSources): void {
+  const pending = sources.pending;
+  sources.pending = [];
+  for (const entry of pending) {
+    const fn = entry.env?.validate as (SourcedValidateFunction & { source?: AjvFunctionSource }) | undefined;
+    if (!fn) continue;
+    const src = fn.source;
+    delete fn.source;
+    if (!src || typeof src.validateCode !== 'string' || !entry.source.endsWith(src.validateCode)) continue;
+    // Ajv emits `<scope refs>return <validateCode>`; code.process rewrites
+    // only schemaPath literals inside the function body.
+    const prefixLength = entry.source.length - src.validateCode.length;
+    if (
+      !entry.source.slice(0, prefixLength).endsWith('return ') ||
+      entry.output.slice(0, prefixLength) !== entry.source.slice(0, prefixLength)
+    ) {
+      continue;
+    }
+    src.validateCode = entry.output.slice(prefixLength);
+    sources.byFunction.set(fn, src);
+  }
+}
+
+/**
+ * The functions `root`'s code reaches, as Ajv's standalone code generation
+ * walks them, or `undefined` when one has no source.
+ */
+function compiledClosure(
+  root: ValidateFunction,
+  sourceOf: (fn: object) => AjvFunctionSource | undefined
+): ValidateFunction[] | undefined {
+  const closure: ValidateFunction[] = [];
+  const seen = new Set<object>();
+  const pending: unknown[] = [root];
+  while (pending.length > 0) {
+    const fn = pending.pop();
+    if (typeof fn !== 'function' || seen.has(fn)) continue;
+    seen.add(fn);
+    const src = sourceOf(fn);
+    if (!src) return undefined;
+    closure.push(fn as ValidateFunction);
+    for (const names of Object.values(src.scopeValues ?? {})) {
+      for (const name of names) {
+        const ref = name.value?.ref;
+        if (name.prefix === 'validate') pending.push(ref);
+        else if ((name.prefix === 'root' || name.prefix === 'wrapper') && ref && typeof ref === 'object') {
+          pending.push((ref as { validate?: unknown }).validate);
+        }
+      }
+    }
+  }
+  return closure;
+}
+
+/**
+ * A registry's compiled functions in the cross-process cache, one entry per
+ * function, so a function many validators share is stored and loaded once, as
+ * the registry compiles it once. An entry is the function's code as a factory
+ * that takes what the code refers to (the functions it calls, Ajv's recursion
+ * wrappers, its own schema object) in order; its metadata says where each
+ * comes from, which registered documents' roots Ajv also compiles when it
+ * resolves the function's references, and the diagnostic origin the function
+ * registered.
+ */
+interface CachedFunctions {
+  cache: import('./validator-cache').ValidatorCache;
+  /** Key parts before the function id. */
+  keyParts: readonly unknown[];
+  /** The functions loaded in this state, by id. */
+  loaded: Map<string, ValidateFunction>;
+  /** Ids this state found or wrote in the cache. */
+  stored: Set<string>;
+}
+
+/** A factory slot: `['f', id]` that function, `['h', id]` an object whose `validate` is it, `['s']` the function's schema. */
+type StoredRef = ['f', string] | ['h', string] | ['s'];
+
+interface StoredFunctionMeta {
+  refs: StoredRef[];
+  /**
+   * Ids of functions Ajv compiles beside this one: the roots of the documents
+   * it lives in and what it looked up while resolving its references.
+   */
+  also: string[];
+  origin?: StoredOrigin;
+}
+
+/**
+ * The id of a compiled function: the registry key of its root document, where
+ * its schema sits (a pointer inside the root, or another registered document
+ * as a whole) and its base URI, with the registry keys of those documents.
+ * `undefined` for a function this scheme cannot name.
+ */
+function functionLocation(
+  ajv: Ajv,
+  env: { schema?: unknown; root?: { schema?: unknown }; baseId?: unknown } | undefined,
+  ownRoot?: OwnRootDocument
+): { id: string; documents: string[] } | undefined {
+  const root = env?.root?.schema;
+  const schema = env?.schema;
+  if (!root || typeof root !== 'object' || !schema || typeof schema !== 'object') return undefined;
+  if (typeof env?.baseId !== 'string') return undefined;
+  const rootKey = ownRoot && root === ownRoot.schema ? ownRoot.key : registryKeyOf(ajv, root);
+  if (rootKey === undefined) return undefined;
+  const { schemaPointerIn } = require('./schema-diagnostic-origins') as typeof import('./schema-diagnostic-origins');
+  const pointer = schemaPointerIn(root, schema);
+  if (pointer !== undefined) return { id: JSON.stringify([rootKey, pointer, env.baseId]), documents: [rootKey] };
+  // A whole document referenced from another root. Its base URI must not
+  // depend on that root, so every function at its origin prefix agrees.
+  const documentKey = registryKeyOf(ajv, schema);
+  if (documentKey === undefined || registeredSchemaEnv(ajv, documentKey)?.baseId !== env.baseId) return undefined;
+  return { id: JSON.stringify([rootKey, `doc:${documentKey}`, env.baseId]), documents: [rootKey, documentKey] };
+}
+
+/**
+ * A validator's root document that its registry does not hold (a schema-ref
+ * validator compiles a shallow copy of the registered document), named by a
+ * key no registered document has, so its functions are that validator's own.
+ */
+interface OwnRootDocument {
+  schema: object;
+  key: string;
+}
+
+/** The {@link OwnRootDocument} key of the shallow copy of the document with `$id`. */
+function ownCopyKey(id: string): string {
+  return `copy:${id}`;
+}
+
+/** Whether a function id names a function of an {@link OwnRootDocument}. */
+function isOwnRootFunctionId(id: string): boolean {
+  return id.startsWith(JSON.stringify(['copy:']).slice(0, -2));
+}
+
+/** The id {@link functionLocation} gives the function of a registered document's own environment. */
+function documentRootFunctionId(key: string, baseId: string): string {
+  return JSON.stringify([key, '#', baseId]);
+}
+
+/** The schema object at a function id's location, through `documentFor` (registry key -> document). */
+function schemaAtFunctionLocation(id: string, documentFor: (key: string) => object | undefined): object | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(id);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed) || typeof parsed[0] !== 'string' || typeof parsed[1] !== 'string') return undefined;
+  const [rootKey, location] = parsed as [string, string];
+  if (location.startsWith('doc:')) return documentFor(location.slice('doc:'.length));
+  const { schemaAtOriginPointer } =
+    require('./schema-diagnostic-origins') as typeof import('./schema-diagnostic-origins');
+  return schemaAtOriginPointer(documentFor(rootKey), location);
+}
+
+function cachedFunctionKey(cf: CachedFunctions, id: string): string {
+  const { validatorCacheKey } = require('./validator-cache') as typeof import('./validator-cache');
+  return validatorCacheKey([...cf.keyParts, id]);
+}
+
+/**
+ * Store the functions `root` reaches that the cache does not hold yet: the
+ * functions its code calls, the registry entries Ajv looked up and compiled
+ * while resolving their references, and the roots of the documents they live
+ * in, transitively. Nothing is stored when one of them cannot be named, has
+ * no recorded source, or (with `origins`) registered an origin whose
+ * document `ajv` does not hold; nor when `mayStore` says no. Never throws.
+ */
+function storeCompiledFunctions(
+  cf: CachedFunctions,
+  ajv: Ajv,
+  sources: CompiledSources,
+  root: ValidateFunction,
+  origins: SchemaDiagnosticOrigins | undefined,
+  mayStore: () => boolean,
+  ownRoot?: OwnRootDocument
+): void {
+  try {
+    storeCompiledFunctionsOrThrow(cf, ajv, sources, root, origins, mayStore, ownRoot);
+  } catch {
+    // An entry the cache cannot build costs the next process a compile.
+  }
+}
+
+function storeCompiledFunctionsOrThrow(
+  cf: CachedFunctions,
+  ajv: Ajv,
+  sources: CompiledSources,
+  root: ValidateFunction,
+  origins: SchemaDiagnosticOrigins | undefined,
+  mayStore: () => boolean,
+  ownRoot?: OwnRootDocument
+): void {
+  // What Ajv compiles beside a function matters only through the origins it
+  // registers; a registry without them stores the functions code calls.
+  const sideEffects = origins !== undefined;
+  const lookups = sources.lookups;
+  if (sideEffects && !lookups) return;
+  const located = new Map<object, { id: string; documents: string[]; looked: ValidateFunction[] }>();
+  const order: ValidateFunction[] = [];
+  const visit: unknown[] = [root];
+  while (visit.length > 0) {
+    const fn = visit.pop();
+    if (typeof fn !== 'function' || located.has(fn)) continue;
+    const src = sources.byFunction.get(fn);
+    const env = (fn as { schemaEnv?: Parameters<typeof functionLocation>[1] }).schemaEnv;
+    const location = functionLocation(ajv, env, ownRoot);
+    if (!src || !location || src.evaluated !== undefined || (fn as { $async?: unknown }).$async) return;
+    const looked: ValidateFunction[] = [];
+    for (const entry of sideEffects ? (lookups!.get(env!) ?? []) : []) {
+      // Ajv compiles every environment it finds while resolving a reference.
+      const lookedFn = (entry as { validate?: unknown }).validate;
+      if (typeof lookedFn !== 'function') return;
+      looked.push(lookedFn as ValidateFunction);
+      visit.push(lookedFn);
+    }
+    located.set(fn, { ...location, looked });
+    order.push(fn as ValidateFunction);
+    for (const names of Object.values(src.scopeValues ?? {})) {
+      for (const name of names) {
+        const ref = name.value?.ref;
+        if (name.prefix === 'validate') visit.push(ref);
+        else if ((name.prefix === 'root' || name.prefix === 'wrapper') && ref && typeof ref === 'object') {
+          visit.push((ref as { validate?: unknown }).validate);
+        }
+      }
+    }
+    for (const key of sideEffects ? location.documents : []) {
+      const documentFn = registeredSchemaEnv(ajv, key)?.validate;
+      if (!documentFn) return;
+      visit.push(documentFn);
+    }
+  }
+
+  const entries: Array<[id: string, code: string, meta: StoredFunctionMeta]> = [];
+  for (const fn of order) {
+    const { id, documents, looked } = located.get(fn)!;
+    if (cf.stored.has(id)) continue;
+    const src = sources.byFunction.get(fn)!;
+    const env = (fn as { schemaEnv?: { schema?: unknown } }).schemaEnv!;
+    const refs: StoredRef[] = [];
+    const slot = (ref: StoredRef): string => `refs[${refs.push(ref) - 1}]`;
+    let declarations = '';
+    for (const [prefix, names] of Object.entries(src.scopeValues ?? {})) {
+      for (const name of names) {
+        const ref = name.value?.ref;
+        let value: string | undefined;
+        if (prefix === 'schema') {
+          value = ref === env.schema ? slot(['s']) : undefined;
+        } else if (prefix === 'validate') {
+          const target = typeof ref === 'function' ? located.get(ref)?.id : undefined;
+          value = target !== undefined ? slot(['f', target]) : undefined;
+        } else if (prefix === 'root' || prefix === 'wrapper') {
+          const target =
+            ref && typeof ref === 'object' ? located.get((ref as { validate?: object }).validate ?? {})?.id : undefined;
+          value = target !== undefined ? slot(['h', target]) : undefined;
+        } else {
+          const code = (name.value as { code?: unknown } | undefined)?.code;
+          value = code !== undefined ? String(code) : undefined;
+        }
+        if (value === undefined) return;
+        declarations += `const ${String(name)} = ${value};\n`;
+      }
+    }
+    // Sloppy mode, as Ajv compiles a live function.
+    const code = `module.exports = function (refs) {\n${declarations}${src.validateCode}\nreturn ${String(src.validateName)};\n};\n`;
+    // Anonymous origin ids are numbered by compile order within a state.
+    if (code.includes('urn:adcp:schema-origin:')) return;
+    let origin: StoredOrigin | undefined;
+    const registered = origins?.registered(env);
+    if (registered) {
+      const key = registryKeyOf(ajv, registered.document);
+      const { schemaAtOriginPointer } =
+        require('./schema-diagnostic-origins') as typeof import('./schema-diagnostic-origins');
+      if (key === undefined || schemaAtOriginPointer(registered.document, registered.pointer) !== env.schema) return;
+      origin = {
+        prefix: registered.prefix,
+        key,
+        pointer: registered.pointer,
+        ...(registered.schemaId !== undefined && { schemaId: registered.schemaId }),
+      };
+    }
+    const also = [
+      ...new Set([
+        ...(sideEffects ? documents : []).map(key =>
+          documentRootFunctionId(key, registeredSchemaEnv(ajv, key)!.baseId as string)
+        ),
+        ...looked.map(other => located.get(other)!.id),
+      ]),
+    ].filter(other => other !== id);
+    entries.push([id, code, { refs, also, ...(origin && { origin }) }]);
+  }
+  if (entries.length === 0 || !mayStore()) return;
+  // Callees first, so a concurrent reader rarely finds a caller without them.
+  for (const [id, code, meta] of entries.reverse()) {
+    cf.cache.write(cachedFunctionKey(cf, id), code, undefined, meta);
+    cf.stored.add(id);
+  }
+}
+
+/**
+ * Load the function `rootId` names and everything its entry needs from the
+ * cache. `documentFor` gives this state's document for a registry key; with
+ * `withOrigins`, each function's stored origin is located too. Returns the
+ * function and the located origins of the functions loaded by this call, or
+ * `undefined` when any entry is missing or does not fit this state; then
+ * nothing is kept.
+ */
+function loadCachedFunctions(
+  cf: CachedFunctions,
+  rootId: string,
+  documentFor: (key: string) => object | undefined,
+  withOrigins: boolean
+):
+  | { fn: ValidateFunction; origins: Array<[prefix: string, schema: object, schemaId: string | undefined]> }
+  | undefined {
+  try {
+    return loadCachedFunctionsOrThrow(cf, rootId, documentFor, withOrigins);
+  } catch {
+    return undefined;
+  }
+}
+
+function loadCachedFunctionsOrThrow(
+  cf: CachedFunctions,
+  rootId: string,
+  documentFor: (key: string) => object | undefined,
+  withOrigins: boolean
+):
+  | { fn: ValidateFunction; origins: Array<[prefix: string, schema: object, schemaId: string | undefined]> }
+  | undefined {
+  const fresh = new Map<string, ValidateFunction>();
+  const holders: Array<[holder: { validate?: unknown }, id: string]> = [];
+  const pendingAlso: string[] = [];
+  const origins: Array<[string, object, string | undefined]> = [];
+  const started = new Set<string>();
+  const load = (id: string): ValidateFunction | undefined => {
+    const known = (isOwnRootFunctionId(id) ? undefined : cf.loaded.get(id)) ?? fresh.get(id);
+    if (known) return known;
+    // Ajv compiles a callee before its caller, so a cycle means a damaged entry.
+    if (started.has(id)) return undefined;
+    started.add(id);
+    const entry = cf.cache.read(cachedFunctionKey(cf, id));
+    const meta = entry?.meta as Partial<StoredFunctionMeta> | undefined;
+    if (!entry || !meta || !Array.isArray(meta.refs) || !Array.isArray(meta.also)) return undefined;
+    const args: unknown[] = [];
+    for (const ref of meta.refs as unknown[]) {
+      if (!Array.isArray(ref)) return undefined;
+      if (ref[0] === 's' && ref.length === 1) {
+        const schema = schemaAtFunctionLocation(id, documentFor);
+        if (!schema) return undefined;
+        args.push(schema);
+      } else if (ref[0] === 'f' && typeof ref[1] === 'string') {
+        const callee = load(ref[1]);
+        if (!callee) return undefined;
+        args.push(callee);
+      } else if (ref[0] === 'h' && typeof ref[1] === 'string') {
+        const holder: { validate?: unknown } = { validate: undefined };
+        holders.push([holder, ref[1]]);
+        args.push(holder);
+      } else {
+        return undefined;
+      }
+    }
+    for (const other of meta.also as unknown[]) {
+      if (typeof other !== 'string') return undefined;
+      // Only origins make those compiles observable.
+      if (withOrigins) pendingAlso.push(other);
+    }
+    if (meta.origin !== undefined) {
+      if (!withOrigins) return undefined;
+      const located = locateStoredOrigins({ origins: [meta.origin] }, key =>
+        key === undefined ? undefined : documentFor(key)
+      );
+      if (!located) return undefined;
+      origins.push(located[0]!);
+    }
+    let fn: unknown;
+    try {
+      fn = (entry.validate as unknown as (refs: unknown[]) => unknown)(args);
+    } catch {
+      return undefined;
+    }
+    if (typeof fn !== 'function') return undefined;
+    (fn as { errors?: unknown }).errors = null;
+    fresh.set(id, fn as ValidateFunction);
+    return fn as ValidateFunction;
+  };
+  const root = load(rootId);
+  if (!root) return undefined;
+  for (let i = 0; i < holders.length || pendingAlso.length > 0; ) {
+    if (pendingAlso.length > 0) {
+      if (!load(pendingAlso.pop()!)) return undefined;
+      continue;
+    }
+    const [holder, id] = holders[i++]!;
+    const target = load(id);
+    if (!target) return undefined;
+    holder.validate = target;
+  }
+  for (const [id, fn] of fresh) {
+    // A validator's own root document (a schema-ref copy) is its alone, also
+    // when another file mirrors it under the same $id.
+    if (!isOwnRootFunctionId(id)) cf.loaded.set(id, fn);
+    cf.stored.add(id);
+  }
+  return { fn: root, origins };
+}
+
+/** An origin a stored module's compile registered: `key` names its document (absent: the module's own root). */
+interface StoredOrigin {
+  prefix: string;
+  key?: string;
+  pointer: string;
+  schemaId?: string;
+}
+
+/**
+ * The origins `origins` registered for the functions of `closure`, with each
+ * document named by `documentKey` (`null`: the module's own root;
+ * `undefined`: not storable), or `undefined` when one cannot be named or its
+ * pointer does not lead back to the function's schema.
+ */
+function closureOrigins(
+  origins: SchemaDiagnosticOrigins,
+  closure: readonly ValidateFunction[],
+  documentKey: (document: object) => string | null | undefined
+): StoredOrigin[] | undefined {
+  const { schemaAtOriginPointer } =
+    require('./schema-diagnostic-origins') as typeof import('./schema-diagnostic-origins');
+  const out: StoredOrigin[] = [];
+  for (const fn of closure) {
+    const env = (fn as { schemaEnv?: { schema?: unknown } }).schemaEnv;
+    if (!env) return undefined;
+    const registered = origins.registered(env);
+    if (!registered) continue;
+    const key = documentKey(registered.document);
+    if (key === undefined || schemaAtOriginPointer(registered.document, registered.pointer) !== env.schema) {
+      return undefined;
+    }
+    out.push({
+      prefix: registered.prefix,
+      ...(key !== null && { key }),
+      pointer: registered.pointer,
+      ...(registered.schemaId !== undefined && { schemaId: registered.schemaId }),
+    });
+  }
+  return out;
+}
+
+/**
+ * Stored origins located in this process: each document from `documentFor`
+ * (by key, `undefined` for the module's own root) and the schema at its
+ * pointer. `undefined` when the value is malformed or any origin is not found.
+ */
+function locateStoredOrigins(
+  meta: unknown,
+  documentFor: (key: string | undefined) => object | undefined
+): Array<[prefix: string, schema: object, schemaId: string | undefined]> | undefined {
+  const stored = (meta as { origins?: unknown } | undefined)?.origins;
+  if (!Array.isArray(stored)) return undefined;
+  const { schemaAtOriginPointer } =
+    require('./schema-diagnostic-origins') as typeof import('./schema-diagnostic-origins');
+  const located: Array<[string, object, string | undefined]> = [];
+  for (const origin of stored as Array<Partial<StoredOrigin> | null>) {
+    if (
+      !origin ||
+      typeof origin.prefix !== 'string' ||
+      typeof origin.pointer !== 'string' ||
+      (origin.key !== undefined && typeof origin.key !== 'string') ||
+      (origin.schemaId !== undefined && typeof origin.schemaId !== 'string')
+    ) {
+      return undefined;
+    }
+    const schema = schemaAtOriginPointer(documentFor(origin.key), origin.pointer);
+    if (!schema) return undefined;
+    located.push([origin.prefix, schema, origin.schemaId]);
+  }
+  return located;
+}
+
+/** Ajv's registered (addSchema) environment for `key`, without compiling it. */
+function registeredSchemaEnv(
+  ajv: Ajv,
+  key: string
+): { schema: unknown; baseId?: unknown; validate?: ValidateFunction } | undefined {
+  const env = (ajv as unknown as { schemas: Record<string, unknown> }).schemas[key];
+  return env && typeof env === 'object' && 'schema' in env
+    ? (env as { schema: unknown; baseId?: unknown; validate?: ValidateFunction })
+    : undefined;
+}
+
+/** The key `document` is registered under in `ajv` (by its $id), or `undefined`. */
+function registryKeyOf(ajv: Ajv, document: object): string | undefined {
+  const id = (document as { $id?: unknown }).$id;
+  if (typeof id !== 'string') return undefined;
+  for (const key of new Set([id, id.replace(/#\/?$/, '')])) {
+    if (registeredSchemaEnv(ajv, key)?.schema === document) return key;
+  }
+  return undefined;
 }
 
 /** Per-state bookkeeping for the opt-in cross-process cache of bundled validators. */
@@ -503,6 +1110,9 @@ function clearStatesForBundle(bundleKey: string): void {
   }
   for (const cacheKey of schemaRefValidators.keys()) {
     if (cacheKey.startsWith(`${bundleKey}\0`)) schemaRefValidators.delete(cacheKey);
+  }
+  for (const [root, entry] of documentStores) {
+    if (entry.bundleKeys.has(bundleKey)) documentStores.delete(root);
   }
 }
 
@@ -1005,6 +1615,141 @@ function loadJson(file: string): LoadedSchema {
   return openExtensibleReportingDimensions(JSON.parse(readFileSync(file, 'utf-8')) as LoadedSchema);
 }
 
+/** One document of a {@link DocumentStore}: what {@link loadJson} returns or throws, read once. */
+interface StoredDocument {
+  /** The parsed document, deep-frozen; absent when reading or parsing threw. */
+  schema?: LoadedSchema;
+  /** What reading or parsing threw. */
+  error?: unknown;
+  /**
+   * The document's content for {@link rootContentDigest}: a hash of the text
+   * read, of an archive entry, or the read error's code. Only recorded while
+   * ADCP_VALIDATOR_CACHE_DIR is enabled, the only time a digest is taken.
+   */
+  content?: string;
+}
+
+type DocumentStore = Map<string, StoredDocument>;
+
+/**
+ * Parsed documents per schema root. Every reader of a root in the same epoch
+ * (core registration, the tool and canonical validators, schema-ref
+ * validators, the content digest and the document getters) shares one read
+ * and one parse of each file, instead of each reading the whole root again,
+ * whichever bundle key (`3.3.0-rc.3`, `3.3-rc.3`, ...) selected the root.
+ * Cleared when the loader states of any bundle key that used the root are,
+ * so a new epoch reads the files again; a state keeps the store it started
+ * with, which holds the documents its validators compiled.
+ *
+ * Documents are deep-frozen: one caller's mutation cannot reach another, and
+ * an attempt throws in strict-mode code. Callers that need a modified schema
+ * copy it first, as the envelope widening, nested-$id strip, compaction and
+ * draft overlays already do.
+ */
+const documentStores: Map<string, { store: DocumentStore; bundleKeys: Set<string> }> = new Map();
+
+function documentStore(bundleKey: string, root: string): DocumentStore {
+  let entry = documentStores.get(root);
+  if (!entry) {
+    entry = { store: new Map(), bundleKeys: new Set() };
+    documentStores.set(root, entry);
+  }
+  entry.bundleKeys.add(bundleKey);
+  return entry.store;
+}
+
+/** {@link loadJson} through `store`: the file is read and parsed at most once per store. */
+function readStoredDocument(store: DocumentStore, file: string): LoadedSchema {
+  let entry = store.get(file);
+  if (!entry) {
+    entry = loadStoredDocument(file);
+    store.set(file, entry);
+  }
+  if ('error' in entry) throw entry.error;
+  return entry.schema!;
+}
+
+/** Documents a store has deep-frozen: their content never changes. */
+const storedDocuments = new WeakSet<object>();
+
+/**
+ * Stored documents that passed Ajv's draft-07 meta-validation in a registry
+ * with the SDK's plain options (strict off, union types, ajv-formats, no custom
+ * keywords). Every registry below that adds them has those options, and the
+ * outcome depends only on the document, so each is validated once per process
+ * instead of once per registry. A document that fails is never recorded, so it
+ * fails again wherever it is added.
+ */
+const metaValidatedDocuments = new WeakSet<object>();
+
+/**
+ * `ajv.addSchema(schema)`, skipping meta-validation of a stored document that
+ * passed it before. Only for registries with the SDK's plain options.
+ */
+function addPlainRegistryDocument(ajv: Ajv, schema: LoadedSchema): void {
+  const validated = metaValidatedDocuments.has(schema);
+  ajv.addSchema(schema, undefined, undefined, validated ? false : undefined);
+  if (!validated && storedDocuments.has(schema)) metaValidatedDocuments.add(schema);
+}
+
+function frozenStoredDocument(schema: LoadedSchema): LoadedSchema {
+  deepFreeze(schema);
+  storedDocuments.add(schema);
+  return schema;
+}
+
+function loadStoredDocument(file: string): StoredDocument {
+  const recordContent = validatorCacheDir() !== undefined;
+  const bundled = file.includes(`${path.sep}bundled${path.sep}`);
+  let text: string;
+  try {
+    // The utf-8 read is one native call; a Buffer read costs several.
+    text = readFileSync(file, 'utf-8');
+  } catch (readError) {
+    // Bundled paths not on disk are entries of the root's compact archive.
+    let entry: LoadedSchema | undefined;
+    if (bundled) {
+      try {
+        entry = loadBundledSchemaFile(file);
+      } catch {
+        entry = undefined;
+      }
+    }
+    if (!entry) {
+      return {
+        error: readError,
+        ...(recordContent && { content: `unreadable\0${(readError as NodeJS.ErrnoException).code ?? ''}` }),
+      };
+    }
+    const content = recordContent ? `archive\0${contentHash(JSON.stringify(entry))}` : undefined;
+    return { schema: frozenStoredDocument(openExtensibleReportingDimensions(entry)), ...(content && { content }) };
+  }
+  const content = recordContent ? `file\0${contentHash(text)}` : undefined;
+  try {
+    const parsed = JSON.parse(text) as LoadedSchema;
+    const schema = bundled ? (expandBundledSchemaDocument(parsed) as LoadedSchema) : parsed;
+    return { schema: frozenStoredDocument(openExtensibleReportingDimensions(schema)), ...(content && { content }) };
+  } catch (error) {
+    return { error, ...(content && { content }) };
+  }
+}
+
+function contentHash(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function deepFreeze<T>(value: T): T {
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node && typeof node === 'object') {
+      Object.freeze(node);
+      for (const child of Object.values(node)) pending.push(child);
+    }
+  }
+  return value;
+}
+
 const REPORTING_DIMENSION_PATTERN = '^[a-z][a-z0-9_]*$';
 
 /**
@@ -1072,13 +1817,14 @@ const releaseEnvelopeFields = new Map<string, ReleaseEnvelopeFields>();
  * published. `adcp_version` / `adcp_major_version` are always included: they
  * are the version echo, accepted on every response.
  */
-function envelopeFieldsForRelease(root: string): ReleaseEnvelopeFields {
+function envelopeFieldsForRelease(root: string, documents?: DocumentStore): ReleaseEnvelopeFields {
   const cached = releaseEnvelopeFields.get(root);
   if (cached) return cached;
+  const read = (file: string): LoadedSchema => (documents ? readStoredDocument(documents, file) : loadJson(file));
   const fields = new Map<string, Record<string, unknown>>();
   const envelopeFile = path.join(root, 'core', 'protocol-envelope.json');
   const declared = existsSync(envelopeFile)
-    ? Object.keys((loadJson(envelopeFile).properties ?? {}) as Record<string, unknown>)
+    ? Object.keys((read(envelopeFile).properties ?? {}) as Record<string, unknown>)
     : [...Object.keys(ENVELOPE_FIELD_SCHEMAS), 'status'];
   for (const name of new Set([...declared, 'adcp_version', 'adcp_major_version'])) {
     // `payload` is the conceptual grouping of the body on the abstract
@@ -1086,7 +1832,7 @@ function envelopeFieldsForRelease(root: string): ReleaseEnvelopeFields {
     if (name === 'payload') continue;
     if (name === 'status') {
       const statusFile = path.join(root, 'enums', 'task-status.json');
-      const values = existsSync(statusFile) ? (loadJson(statusFile).enum as unknown) : undefined;
+      const values = existsSync(statusFile) ? (read(statusFile).enum as unknown) : undefined;
       fields.set('status', Array.isArray(values) ? { type: 'string', enum: values } : { type: 'string' });
     } else if (ENVELOPE_FIELD_SCHEMAS[name]) {
       fields.set(name, ENVELOPE_FIELD_SCHEMAS[name]);
@@ -1132,8 +1878,13 @@ function composesProtocolEnvelope(schema: LoadedSchema): boolean {
  */
 /** @internal Shared by opt-in overlays that retain response-envelope compatibility. */
 export function acceptEnvelopeOnClosedResponseRoot(schema: LoadedSchema, root: string): LoadedSchema {
+  return acceptEnvelopeFromRelease(schema, root);
+}
+
+/** {@link acceptEnvelopeOnClosedResponseRoot}, reading the release's envelope through `documents`. */
+function acceptEnvelopeFromRelease(schema: LoadedSchema, root: string, documents?: DocumentStore): LoadedSchema {
   if (composesProtocolEnvelope(schema)) return schema;
-  const { fields } = envelopeFieldsForRelease(root);
+  const { fields } = envelopeFieldsForRelease(root, documents);
   const widen = (node: Record<string, unknown>): Record<string, unknown> => {
     const clone = { ...node };
     if (clone.additionalProperties === false) {
@@ -1182,7 +1933,8 @@ export function acceptEnvelopeOnClosedResponseRootForVersion(
   schema: LoadedSchema,
   version: string = ADCP_VERSION
 ): LoadedSchema {
-  return acceptEnvelopeOnClosedResponseRoot(schema, ensureInit(version).root);
+  const state = ensureInit(version);
+  return acceptEnvelopeFromRelease(schema, state.root, state.documents);
 }
 
 function getAjvRegisteredIds(ajv: Ajv): Set<string> {
@@ -1276,19 +2028,27 @@ function ensureInit(version: string): LoaderState {
     require('./schema-diagnostic-origins') as typeof import('./schema-diagnostic-origins');
   const diagnosticOrigins = createSchemaDiagnosticOrigins();
   const bundledDiagnosticOrigins = createSchemaDiagnosticOrigins();
+  const bundledCache = openBundledValidatorCache();
+  // With the cache enabled, the modular registry keeps each function's
+  // source (off the function) so its compiled functions can be stored.
+  const modularSources: CompiledSources | undefined = bundledCache
+    ? { pending: [], byFunction: new WeakMap() }
+    : undefined;
   const ajv = new Ajv({
     inlineRefs: false,
     strict: false,
     allErrors: true,
     allowUnionTypes: true,
-    code: { process: diagnosticOrigins.process },
+    code: modularSources
+      ? { source: true, process: recordingCodeProcess(modularSources, diagnosticOrigins.process) }
+      : { process: diagnosticOrigins.process },
   });
   addFormats(ajv);
+  if (modularSources) recordRegistryLookups(ajv, modularSources);
   // Bundled tool roots can intentionally share their canonical `$id` with
   // modular documents registered in `ajv`. Keep them in a separate registry
   // so getValidator compiles the file selected by fileIndex rather than
   // accidentally reusing a modular validator with the same public id.
-  const bundledCache = openBundledValidatorCache();
   const bundledAjv = new Ajv({
     inlineRefs: false,
     strict: false,
@@ -1324,12 +2084,13 @@ function ensureInit(version: string): LoaderState {
     canonicalValidators: new Map(),
     fileIndex: buildFileIndex(root),
     validators: new Map(),
-    rawSchemas: new Map(),
+    documents: documentStore(key, root),
     entityPaths: new Map(),
     root,
     coreLoaded: false,
     version: key,
     ...(bundledCache && { bundledCache }),
+    ...(modularSources && { modularSources, modularById: new Map() }),
   };
   modularOriginStates.set(diagnosticOrigins, state);
   states.set(cacheKey, state);
@@ -1361,18 +2122,63 @@ function ensureInit(version: string): LoaderState {
  */
 function ensureCoreLoaded(s: LoaderState): void {
   if (s.coreLoaded) return;
+  s.coreRegistrationDeferred = false;
   try {
     registerCoreDocuments(s);
   } catch (error) {
+    if (s.modularSources) drainCompiledSources(s.modularSources);
     // Ajv keeps a document it then rejects, so a later attempt can succeed
     // where this one failed: outcomes in this state depend on call order.
+    // A retry selects again from what the registry now holds, as without a
+    // plan (no hit precedes a failed registration: entries come only from
+    // states whose registration succeeded).
+    s.corePlan = undefined;
+    s.corePlanByKey = undefined;
     s.coreLoadFailed = true;
     throw error;
   }
+  // Registration compiled the meta-schema; its function keeps no source either.
+  if (s.modularSources) drainCompiledSources(s.modularSources);
   s.coreLoaded = true;
 }
 
 function registerCoreDocuments(s: LoaderState): void {
+  // A planned registration adds the planned objects, so what a cache hit
+  // handed out (`schema`, origin documents) is what the registry holds.
+  if (s.corePlan) {
+    for (const schema of s.corePlan) addPlainRegistryDocument(s.ajv, schema);
+    return;
+  }
+  selectCoreDocuments(s, schema => addPlainRegistryDocument(s.ajv, schema));
+}
+
+/**
+ * With the cache enabled, select the documents core registration adds
+ * without adding them, so a state whose modular validators are all cache
+ * hits never registers them. A selection that throws leaves no plan, and
+ * registration then fails as it does without the cache.
+ */
+function planCoreRegistration(s: LoaderState): boolean {
+  if (s.coreLoaded || s.coreLoadFailed) return false;
+  if (!s.corePlan) {
+    const plan: LoadedSchema[] = [];
+    try {
+      selectCoreDocuments(s, schema => plan.push(schema));
+    } catch {
+      return false;
+    }
+    s.corePlan = plan;
+    s.corePlanByKey = new Map();
+    for (const schema of plan) {
+      const key = (schema.$id as string).replace(/#\/?$/, '');
+      if (!s.corePlanByKey.has(key)) s.corePlanByKey.set(key, schema);
+    }
+  }
+  return true;
+}
+
+/** The documents core registration adds, in order, each passed to `add` as it is selected. */
+function selectCoreDocuments(s: LoaderState, add: (schema: LoadedSchema) => void): void {
   // Tool response files are pre-registered with the same response-root
   // envelope handling `getValidator` would apply. This matters for the async response
   // union: `core/async-response-data.json` can `$ref` both async variants and
@@ -1393,7 +2199,7 @@ function registerCoreDocuments(s: LoaderState): void {
     const file = authoredToolSchemaFile(s, indexedFile);
     const response = !key.endsWith('::request');
     if (response) responseToolFiles.add(file);
-    const schema = loadJson(file);
+    const schema = readStoredDocument(s.documents, file);
     if (typeof schema.$id === 'string') {
       const previous = selectedToolsById.get(schema.$id);
       if (!previous || previous.file === file) selectedToolsById.set(schema.$id, { file, response });
@@ -1405,18 +2211,18 @@ function registerCoreDocuments(s: LoaderState): void {
     if (!isRuntimeSchemaDirectory(entry.name)) continue;
     const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
-      const schema = loadJson(file);
+      const schema = readStoredDocument(s.documents, file);
       const selected = typeof schema.$id === 'string' ? selectedToolsById.get(schema.$id) : undefined;
       const selectedShadowsModular = selected !== undefined && selected.file !== file;
-      const selectedSchema = selectedShadowsModular ? loadJson(selected.file) : schema;
+      const selectedSchema = selectedShadowsModular ? readStoredDocument(s.documents, selected.file) : schema;
       const prepared =
         selectedShadowsModular && selected.file.includes(`${path.sep}bundled${path.sep}`)
           ? stripNestedIds(selectedSchema)
           : selectedSchema;
       const isResponseTool = selected?.response ?? responseToolFiles.has(file);
-      const schemaToRegister = isResponseTool ? acceptEnvelopeOnClosedResponseRoot(prepared, s.root) : prepared;
+      const schemaToRegister = isResponseTool ? acceptEnvelopeFromRelease(prepared, s.root, s.documents) : prepared;
       if (typeof schemaToRegister.$id === 'string' && !registeredIds.has(schemaToRegister.$id)) {
-        s.ajv.addSchema(schemaToRegister);
+        add(schemaToRegister);
         registeredIds.add(schemaToRegister.$id);
       }
     }
@@ -1457,9 +2263,16 @@ function validatorForState(s: LoaderState, toolName: string, direction: Directio
   // those trees registered before compile. Bundled schemas contain only
   // root-local refs and compile independently.
   const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
-  if (!fromBundled) ensureCoreLoaded(s);
+  // The root's content keys cached modular validators; like definesToolRequest,
+  // take it before the documents are registered.
+  const digest = !fromBundled && s.modularSources ? cacheContentDigest(s) : undefined;
+  if (!fromBundled) {
+    // With the cache, registration waits for the first validator that is not a hit.
+    if (s.modularSources && !s.coreLoaded && planCoreRegistration(s)) s.coreRegistrationDeferred = true;
+    else ensureCoreLoaded(s);
+  }
 
-  const rawSchema = loadJson(file);
+  const rawSchema = readStoredDocument(s.documents, file);
   // Bundled files inline every referenced subschema with the original
   // canonical `$id` (e.g. `core/version-envelope.json` appears nested
   // inside every bundled tool response). Bundled files carry no external
@@ -1476,7 +2289,7 @@ function validatorForState(s: LoaderState, toolName: string, direction: Directio
   const prepared = fromBundled ? stripNestedIds(rawSchema) : rawSchema;
   // Relax the authored composition before factoring can move a closed arm
   // behind a private ref. Canonical validators deliberately skip it.
-  const envelope = direction === 'request' ? prepared : acceptEnvelopeOnClosedResponseRoot(prepared, s.root);
+  const envelope = direction === 'request' ? prepared : acceptEnvelopeFromRelease(prepared, s.root, s.documents);
   if (fromBundled && s.bundledCache) {
     const resolved = resolveBundledValidatorWithCache(s, s.bundledCache, cacheKey, envelope);
     s.validators.set(cacheKey, resolved);
@@ -1484,6 +2297,12 @@ function validatorForState(s: LoaderState, toolName: string, direction: Directio
     return resolved;
   }
   const schema = fromBundled ? compactSchemaForValidation(envelope) : envelope;
+  if (!fromBundled && s.bundledCache && s.modularSources) {
+    const resolved = resolveModularValidatorWithCache(s, s.bundledCache, s.modularSources, schema, digest);
+    s.validators.set(cacheKey, resolved);
+    validatorDiagnosticOrigins.set(resolved, s.diagnosticOrigins);
+    return resolved;
+  }
   const ajv = fromBundled ? s.bundledAjv : s.ajv;
   const existing = typeof schema.$id === 'string' ? ajv.getSchema(schema.$id) : undefined;
   const compiled = existing ?? ajv.compile(schema);
@@ -1568,8 +2387,8 @@ function flushDeferredCompiles(s: LoaderState): void {
 
 /**
  * The state's root content digest, computed once, or `undefined` when the
- * state registered its documents before the digest was taken: those bytes
- * may differ from what the digest would read now.
+ * state registered its documents before the digest was taken, or when a
+ * document it covers was read without its content recorded.
  */
 function stateContentDigest(s: LoaderState): string | undefined {
   if (s.contentDigest === undefined) s.contentDigest = s.coreLoaded ? null : rootContentDigest(s);
@@ -1591,13 +2410,19 @@ function contentUnchangedSinceDigest(s: LoaderState): boolean {
 
 /**
  * SHA-256 over every document a modular compile in `s` can read, by
- * root-relative path and bytes: JSON files at the root and in its runtime
+ * root-relative path and content: JSON files at the root and in its runtime
  * directories (what ensureCoreLoaded registers and getValidator reads), the
  * index entries, and each indexed file the loader reads in place of a missing
  * authored one. Content, not stat: a byte-identical copy of a root has the
  * same digest.
+ *
+ * Each document's content comes from the state's document store, the same
+ * read the compile uses, so a document is read once whether it is digested,
+ * compiled or both. A later digest walks the directories again, so a document
+ * added or removed since the first one changes it. `null` when a document was
+ * read without its content recorded (the cache was enabled after that read).
  */
-function rootContentDigest(s: LoaderState): string {
+function rootContentDigest(s: LoaderState): string | null {
   const files = new Set<string>();
   for (const entry of readdirSync(s.root, { withFileTypes: true })) {
     if (entry.isDirectory()) {
@@ -1615,28 +2440,21 @@ function rootContentDigest(s: LoaderState): string {
     hash.update(`index\0${key}\0${path.relative(s.root, file)}\0`);
   }
   for (const file of [...files].sort(byPath)) {
-    hash.update(`file\0${path.relative(s.root, file)}\0`);
-    hash.update(documentBytes(file));
-    hash.update('\0');
+    const content = storedDocumentContent(s.documents, file);
+    if (content === undefined) return null;
+    hash.update(`file\0${path.relative(s.root, file)}\0${content}\0`);
   }
   return hash.digest('hex');
 }
 
-/** A document's bytes, an archive entry's JSON, or a marker for an unreadable file. */
-function documentBytes(file: string): Buffer | string {
+/** The content {@link loadStoredDocument} recorded for `file`, reading it into `store` if needed. */
+function storedDocumentContent(store: DocumentStore, file: string): string | undefined {
   try {
-    return readFileSync(file);
-  } catch (error) {
-    if (file.includes(`${path.sep}bundled${path.sep}`)) {
-      try {
-        const entry = loadBundledSchemaFile(file);
-        if (entry) return `archive\0${JSON.stringify(entry)}`;
-      } catch {
-        // Recorded as unreadable below.
-      }
-    }
-    return `unreadable\0${(error as NodeJS.ErrnoException).code ?? ''}`;
+    readStoredDocument(store, file);
+  } catch {
+    // Unparseable and unreadable documents still record their content.
   }
+  return store.get(file)?.content;
 }
 
 /** Loader modules whose code shapes a compiled bundled validator. */
@@ -1736,14 +2554,15 @@ type SourcedValidateFunction = ValidateFunction & { source?: { validateCode: str
  * Compile `schema` into the state's bundledAjv while recording code.process
  * output, then drop the per-function `.source` that code.source adds (stock
  * validators carry none). Returns the compiled validator and, when it can be
- * stored exactly, its standalone module code.
+ * stored exactly, its standalone module code and the diagnostic origins its
+ * functions registered (all relative to `schema`, the module's own root).
  */
 function compileBundledRecorded(
   s: LoaderState,
   bc: BundledValidatorCacheState,
   schema: LoadedSchema,
   wantModule: boolean
-): { compiled: ValidateFunction; moduleCode?: string } {
+): { compiled: ValidateFunction; moduleCode?: string; origins?: StoredOrigin[] } {
   const log: NonNullable<BundledValidatorCacheState['compileLog']> = [];
   bc.compileLog = log;
   let compiled: ValidateFunction;
@@ -1753,6 +2572,7 @@ function compileBundledRecorded(
     bc.compileLog = undefined;
   }
   let moduleCode: string | undefined;
+  let origins: StoredOrigin[] | undefined;
   try {
     let exact = wantModule && !(compiled as { $async?: unknown }).$async && log.length > 0;
     for (const entry of log) {
@@ -1779,13 +2599,21 @@ function compileBundledRecorded(
       const code = standaloneCode(s.bundledAjv, compiled);
       // Anonymous origin ids are numbered by compile order within a state.
       if (!code.includes('urn:adcp:schema-origin:')) moduleCode = code;
+      const closure =
+        moduleCode !== undefined
+          ? compiledClosure(compiled, fn => (fn as { source?: AjvFunctionSource }).source)
+          : undefined;
+      origins =
+        closure &&
+        closureOrigins(s.bundledDiagnosticOrigins, closure, document => (document === schema ? null : undefined));
     }
   } catch {
     moduleCode = undefined;
+    origins = undefined;
   } finally {
     for (const entry of log) delete (entry.env.validate as SourcedValidateFunction | undefined)?.source;
   }
-  return { compiled, ...(moduleCode !== undefined && { moduleCode }) };
+  return { compiled, ...(moduleCode !== undefined && { moduleCode }), ...(origins !== undefined && { origins }) };
 }
 
 /**
@@ -1822,7 +2650,23 @@ function resolveBundledValidatorWithCache(
         return undefined;
       }
     };
-    pendingDiagnosticOrigins.set(fn, () => void materialize());
+    // The first diagnostic lookup adds the origins the compile would have
+    // added, relative to the compacted schema `.schema` returns; an entry
+    // without them, or whose origins this schema lacks, compiles it instead.
+    pendingDiagnosticOrigins.set(fn, () => {
+      pendingDiagnosticOrigins.delete(fn);
+      let located: ReturnType<typeof locateStoredOrigins>;
+      try {
+        const root = compactedSchema();
+        located = locateStoredOrigins(entry.meta, origin => (origin === undefined ? root : undefined));
+      } catch {
+        located = undefined;
+      }
+      if (!located) return void materialize();
+      for (const [prefix, originSchema, schemaId] of located) {
+        s.bundledDiagnosticOrigins.replay(prefix, originSchema, schemaId);
+      }
+    });
     Object.defineProperty(fn, 'schema', {
       configurable: true,
       enumerable: true,
@@ -1836,11 +2680,7 @@ function resolveBundledValidatorWithCache(
       configurable: true,
       enumerable: true,
       get() {
-        const live =
-          (pendingDiagnosticOrigins.has(fn) ? materialize() : undefined) ??
-          (typeof compactedSchema().$id === 'string'
-            ? s.bundledAjv.getSchema(compactedSchema().$id as string)
-            : undefined);
+        const live = materialize();
         const value = live?.schemaEnv;
         Object.defineProperty(fn, 'schemaEnv', { value, writable: true, enumerable: true, configurable: true });
         return value;
@@ -1860,10 +2700,242 @@ function resolveBundledValidatorWithCache(
     const result = compileBundledRecorded(s, bc, schema, true);
     compiled = result.compiled;
     if (result.moduleCode !== undefined) {
-      bc.cache.write(key, result.moduleCode, typeof schema.$id === 'string' ? schema.$id : undefined);
+      bc.cache.write(
+        key,
+        result.moduleCode,
+        typeof schema.$id === 'string' ? schema.$id : undefined,
+        result.origins !== undefined ? { origins: result.origins } : undefined
+      );
     }
   }
   if (id !== undefined) bc.byId.set(id, compiled);
+  return compiled;
+}
+
+/**
+ * {@link stateContentDigest} for keying cached tool validators, `undefined`
+ * when the state cannot use the cache. A root the digest cannot read is left
+ * to the registration that follows, which fails as it would without the cache.
+ */
+function cacheContentDigest(s: LoaderState): string | undefined {
+  try {
+    return stateContentDigest(s);
+  } catch {
+    s.contentDigest = null;
+    return undefined;
+  }
+}
+
+/**
+ * Inputs of a state's registrations that its content digest does not show:
+ * the order its directories list their files (the first of several files
+ * with one $id wins) and the envelope fields response roots are widened with
+ * (derived once per root path and process). Computed once per state.
+ */
+function registrationInputsDigest(s: LoaderState): string {
+  if (s.registrationInputs !== undefined) return s.registrationInputs;
+  const hash = createHash('sha256');
+  for (const file of walkJsonFiles(s.root)) hash.update(`file\0${path.relative(s.root, file)}\0`);
+  for (const [key, file] of s.fileIndex) hash.update(`index\0${key}\0${path.relative(s.root, file)}\0`);
+  hash.update(`envelope\0${JSON.stringify([...envelopeFieldsForRelease(s.root, s.documents).fields])}`);
+  s.registrationInputs = hash.digest('hex');
+  return s.registrationInputs;
+}
+
+/**
+ * The {@link CachedFunctions} of a state's registry, keyed by everything its
+ * compiles read, or `undefined` when a key input cannot be read (the compile
+ * then reports what it reports without the cache).
+ */
+function cachedFunctionsFor(
+  s: LoaderState,
+  bc: BundledValidatorCacheState,
+  kind: 'modular-tool-validator' | 'canonical-tool-validator' | 'schema-ref-validator',
+  digest: string,
+  options: readonly unknown[] = []
+): CachedFunctions | undefined {
+  const field = JSON.stringify([kind, ...options]);
+  const known = s.cachedFunctions?.get(field);
+  if (known) return known;
+  let inputs: string;
+  try {
+    inputs = registrationInputsDigest(s);
+  } catch {
+    return undefined;
+  }
+  const cf: CachedFunctions = {
+    cache: bc.cache,
+    keyParts: [kind, ...bundledValidatorCacheStaticKey(), s.version, digest, inputs, ...options],
+    loaded: new Map(),
+    stored: new Set(),
+  };
+  (s.cachedFunctions ??= new Map()).set(field, cf);
+  return cf;
+}
+
+/** Give a validator loaded from the cache the stock `schema` and a `schemaEnv` that compiles it live when read. */
+function adoptCachedValidator(fn: ValidateFunction, schema: unknown, liveSchemaEnv: () => unknown): ValidateFunction {
+  (fn as { schema?: unknown }).schema = schema;
+  Object.defineProperty(fn, 'schemaEnv', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      const value = liveSchemaEnv();
+      Object.defineProperty(fn, 'schemaEnv', { value, writable: true, enumerable: true, configurable: true });
+      return value;
+    },
+  });
+  return fn;
+}
+
+/**
+ * getValidator's modular branch with the cache enabled, after the state's
+ * documents are registered. A modular validator is the registry's compile of
+ * the document registered under the root's $id; with the functions it
+ * reaches it is stored per function (see {@link CachedFunctions}). A hit
+ * returns the loaded function, its `.schema` the registered document, after
+ * replaying the origins the compile would have registered, so the state's
+ * diagnostics are what compiling it leaves. A miss, or a root that is not
+ * registered under its $id or is already compiled, compiles as stock.
+ */
+function resolveModularValidatorWithCache(
+  s: LoaderState,
+  bc: BundledValidatorCacheState,
+  sources: CompiledSources,
+  schema: LoadedSchema,
+  digest: string | undefined
+): ValidateFunction {
+  const id = typeof schema.$id === 'string' ? schema.$id : undefined;
+  const known = id !== undefined ? s.modularById?.get(id) : undefined;
+  if (known) return known;
+  // Before a deferred registration, the plan holds the documents (and their
+  // keys and base URIs) registration will add.
+  const planned = !s.coreLoaded ? s.corePlanByKey : undefined;
+  const registered =
+    id === undefined
+      ? undefined
+      : planned
+        ? planned.has(id)
+          ? { schema: planned.get(id)!, baseId: id.replace(/#\/?$/, ''), validate: undefined }
+          : undefined
+        : registeredSchemaEnv(s.ajv, id);
+  const cf =
+    id !== undefined && registered && !registered.validate && digest !== undefined && !s.coreLoadFailed
+      ? cachedFunctionsFor(s, bc, 'modular-tool-validator', digest)
+      : undefined;
+  if (id === undefined || !registered || !cf || typeof registered.baseId !== 'string') {
+    ensureCoreLoaded(s);
+    try {
+      return (id !== undefined ? s.ajv.getSchema(id) : undefined) ?? s.ajv.compile(schema);
+    } finally {
+      drainCompiledSources(sources);
+    }
+  }
+
+  const documentFor = (key: string): object | undefined => {
+    const document = planned ? planned.get(key) : registeredSchemaEnv(s.ajv, key)?.schema;
+    return document && typeof document === 'object' ? document : undefined;
+  };
+  const hit = loadCachedFunctions(cf, documentRootFunctionId(id, registered.baseId), documentFor, true);
+  if (hit) {
+    for (const [prefix, originSchema, schemaId] of hit.origins)
+      s.diagnosticOrigins.replay(prefix, originSchema, schemaId);
+    const fn = adoptCachedValidator(hit.fn, registered.schema, () => {
+      ensureCoreLoaded(s);
+      try {
+        return s.ajv.getSchema(id)?.schemaEnv;
+      } finally {
+        drainCompiledSources(sources);
+      }
+    });
+    s.modularById?.set(id, fn);
+    return fn;
+  }
+
+  ensureCoreLoaded(s);
+  let compiled: ValidateFunction;
+  try {
+    compiled = s.ajv.getSchema(id) ?? s.ajv.compile(schema);
+  } finally {
+    drainCompiledSources(sources);
+  }
+  if (compiled.schemaEnv === registeredSchemaEnv(s.ajv, id)) {
+    storeCompiledFunctions(
+      cf,
+      s.ajv,
+      sources,
+      compiled,
+      s.diagnosticOrigins,
+      () => !s.coreLoadFailed && contentUnchangedSinceDigest(s)
+    );
+  }
+  s.modularById?.set(id, compiled);
+  return compiled;
+}
+
+/**
+ * getCanonicalToolValidatorForVersion with the cache enabled, for a document
+ * the canonical registry registers under its $id; stored per function like a
+ * modular validator (the canonical registry rewrites no origins). A hit does
+ * the canonical registration's document scan and identity check (the same
+ * throw) but adds nothing to an Ajv; the first miss builds the registry.
+ */
+function resolveCanonicalValidatorWithCache(
+  state: LoaderState,
+  bc: BundledValidatorCacheState,
+  rawSchema: LoadedSchema,
+  id: string
+): ValidateFunction {
+  const byId = (state.canonicalById ??= new Map());
+  const known = byId.get(id);
+  if (known) return known;
+  const digest = cacheContentDigest(state);
+  const compiledAlready = state.canonicalAjv ? registeredSchemaEnv(state.canonicalAjv, id)?.validate : undefined;
+  const cf = digest !== undefined ? cachedFunctionsFor(state, bc, 'canonical-tool-validator', digest) : undefined;
+  if (cf && !compiledAlready) {
+    const documents = canonicalRegistryDocuments(state);
+    const document = documents?.get(id);
+    if (document === rawSchema) {
+      const hit = loadCachedFunctions(
+        cf,
+        documentRootFunctionId(id, id.replace(/#\/?$/, '')),
+        key => documents!.get(key),
+        false
+      );
+      if (hit) {
+        const fn = adoptCachedValidator(hit.fn, rawSchema, () => {
+          try {
+            return ensureCanonicalAjv(state).getSchema(id)?.schemaEnv;
+          } finally {
+            if (state.canonicalSources) drainCompiledSources(state.canonicalSources);
+          }
+        });
+        byId.set(id, fn);
+        return fn;
+      }
+    }
+  }
+
+  const ajv = ensureCanonicalAjv(state);
+  const sources = state.canonicalSources;
+  let existing: ValidateFunction | undefined;
+  let compiled: ValidateFunction;
+  try {
+    existing = ajv.getSchema(id);
+    compiled = existing ?? ajv.compile(rawSchema);
+  } finally {
+    if (sources) drainCompiledSources(sources);
+  }
+  if (
+    cf &&
+    sources &&
+    existing !== undefined &&
+    compiled.schema === rawSchema &&
+    compiled.schemaEnv === registeredSchemaEnv(ajv, id)
+  ) {
+    storeCompiledFunctions(cf, ajv, sources, compiled, undefined, () => contentUnchangedSinceDigest(state));
+  }
+  byId.set(id, compiled);
   return compiled;
 }
 
@@ -1912,7 +2984,7 @@ function runtimeToolSchemaFile(state: LoaderState, indexedFile: string, directio
   // A modular response may alias a closed non-tool fragment. Relaxing that
   // shared fragment globally would also loosen nested request validation.
   // Its paired bundled tree provides a context-local composition to widen.
-  return hasCompositionReference(loadJson(authoredFile)) ? indexedFile : authoredFile;
+  return hasCompositionReference(readStoredDocument(state.documents, authoredFile)) ? indexedFile : authoredFile;
 }
 
 function compactSchemaForValidation(schema: LoadedSchema): LoadedSchema {
@@ -1927,6 +2999,8 @@ function compactSchemaForValidation(schema: LoadedSchema): LoadedSchema {
  * resolver used by runtime validation. Unlike `getValidator().schema`, response
  * documents never receive envelope widening, so callers can publish
  * the protocol-authored schema verbatim from an on-demand discovery tool.
+ * The document is deep-frozen and shared with every other reader of the
+ * bundle, as {@link getSchemaDocumentByRef}'s are; copy it to modify it.
  */
 export function getToolSchemaDocument(
   toolName: string,
@@ -1936,10 +3010,10 @@ export function getToolSchemaDocument(
   const state = ensureInit(version);
   const file = state.fileIndex.get(`${toolName}::${direction}`);
   if (!file) return undefined;
-  const schema = loadJson(file) as Record<string, unknown>;
+  const schema = readStoredDocument(state.documents, file) as Record<string, unknown>;
   let resolvedVersion = state.version;
   try {
-    const index = loadJson(path.join(state.root, 'index.json')) as Record<string, unknown>;
+    const index = readStoredDocument(state.documents, path.join(state.root, 'index.json')) as Record<string, unknown>;
     if (typeof index.adcp_version === 'string') resolvedVersion = index.adcp_version;
   } catch {
     // Legacy/external bundles may omit index.json; the resolved key remains an
@@ -1973,25 +3047,11 @@ export function getSchemaDocumentByRef(
   if (!existsSync(file)) return undefined;
 
   // Bundle documents are immutable for the lifetime of their loader state,
-  // just like compiled validators. Freeze shared documents so domain audits
-  // can memoize by identity without allowing callers to mutate a schema.
-  const readDocument = (ref: string): Record<string, unknown> => {
-    const key = `document::${ref}`;
-    let schema = state.rawSchemas.get(key);
-    if (!schema) {
-      schema = loadJson(path.join(state.root, ref));
-      const pending: unknown[] = [schema];
-      while (pending.length > 0) {
-        const value = pending.pop();
-        if (value && typeof value === 'object') {
-          for (const child of Object.values(value)) pending.push(child);
-          Object.freeze(value);
-        }
-      }
-      state.rawSchemas.set(key, schema);
-    }
-    return schema;
-  };
+  // just like compiled validators. The store's documents are frozen and
+  // shared, so domain audits can memoize by identity without allowing callers
+  // to mutate a schema.
+  const readDocument = (ref: string): Record<string, unknown> =>
+    readStoredDocument(state.documents, path.join(state.root, ref));
 
   let resolvedVersion = state.version;
   try {
@@ -2084,10 +3144,60 @@ function compileSchemaReference(
   const file = path.join(root, normalized);
   if (!existsSync(file)) return undefined;
 
-  // Use an isolated AJV instance for arbitrary schema refs. Tool response
-  // validators widen closed pre-composition roots for SDK back-compat; webhook
-  // payload schemas need strict raw JSON Schema behavior without polluting the
-  // shared tool-validator registry with widened response schemas.
+  const documents = documentStore(bundleKey, root);
+  if (!keywords && !projection && isSchemaRefRegistryDocument(file)) {
+    const authored = identity33ReferenceSchema(readStoredDocument(documents, file), version);
+    if (typeof authored.$id === 'string') {
+      let fromCache: ReturnType<typeof schemaRefValidatorFromCache>;
+      try {
+        fromCache =
+          validatorCacheDir() !== undefined
+            ? schemaRefValidatorFromCache(documents, root, version, allErrors, authored, authored.$id)
+            : undefined;
+      } catch {
+        // The registry build below throws what the scan threw, as without the cache.
+        fromCache = undefined;
+      }
+      if (fromCache?.fn) {
+        cache.set(cacheKey, fromCache.fn);
+        return fromCache.fn;
+      }
+      const registry = schemaRefRegistry(documents, root, version, allErrors);
+      if (registry.ids.has(authored.$id)) {
+        // A shallow copy compiles as the caller's own function, so no other
+        // validator's internal $ref call writes its `errors`; the sub-schemas it
+        // refers to compile once per registry.
+        const copy = { ...authored };
+        let compiled: ValidateFunction;
+        try {
+          compiled = registry.ajv.compile(copy);
+        } finally {
+          if (registry.sources) drainCompiledSources(registry.sources);
+        }
+        if (fromCache?.store && registry.sources) {
+          const { cf, state } = fromCache.store;
+          storeCompiledFunctions(
+            cf,
+            registry.ajv,
+            registry.sources,
+            compiled,
+            undefined,
+            () => contentUnchangedSinceDigest(state),
+            { schema: copy, key: ownCopyKey(authored.$id) }
+          );
+        }
+        cache.set(cacheKey, compiled);
+        return compiled;
+      }
+    }
+  }
+
+  // Keep an isolated AJV instance for custom keywords, projected roots and
+  // roots outside the documents a registry holds (bundled/, transport
+  // projections). Tool response validators widen closed pre-composition
+  // roots for SDK back-compat; webhook payload schemas need strict raw JSON
+  // Schema behavior without polluting the shared tool-validator registry
+  // with widened response schemas.
   const ajv = new Ajv({
     inlineRefs: false,
     strict: false,
@@ -2100,7 +3210,7 @@ function compileSchemaReference(
   });
   addFormats(ajv);
   for (const keyword of keywords ?? []) ajv.addKeyword(keyword);
-  const authoredSchema = identity33ReferenceSchema(loadJson(file), version);
+  const authoredSchema = identity33ReferenceSchema(readStoredDocument(documents, file), version);
   const rawSchema = projection ? projection.project(authoredSchema) : authoredSchema;
   const dependencySchemas: LoadedSchema[] = [];
   const registeredIds = new Map<string, LoadedSchema>();
@@ -2112,7 +3222,7 @@ function compileSchemaReference(
       continue;
     }
     if (schemaFile === file) continue;
-    const schema = identity33ReferenceSchema(loadJson(schemaFile), version);
+    const schema = identity33ReferenceSchema(readStoredDocument(documents, schemaFile), version);
     if (typeof schema.$id === 'string') {
       // Compare mirrors against the authored root, before any caller-specific
       // envelope projection. Never register the same root id as a dependency.
@@ -2129,12 +3239,187 @@ function compileSchemaReference(
       dependencySchemas.push(schema);
     }
   }
-  if (dependencySchemas.length > 0) {
-    ajv.addSchema(dependencySchemas);
+  if (keywords) {
+    // A keyword's metaSchema takes part in meta-validation here.
+    if (dependencySchemas.length > 0) ajv.addSchema(dependencySchemas);
+  } else {
+    for (const schema of dependencySchemas) addPlainRegistryDocument(ajv, schema);
   }
   const compiled = ajv.compile(rawSchema);
   cache.set(cacheKey, compiled);
   return compiled;
+}
+
+/**
+ * A schema-ref validator of the shared registry from the cache: the registry's
+ * document scan (same throw) gives the schema objects, and no registry is
+ * built. `fn` on a hit; otherwise where a live compile should be stored, or
+ * nothing when the state cannot use the cache.
+ */
+function schemaRefValidatorFromCache(
+  documents: DocumentStore,
+  root: string,
+  version: string,
+  allErrors: boolean,
+  authored: LoadedSchema,
+  id: string
+): { fn?: ValidateFunction; store?: { cf: CachedFunctions; state: LoaderState } } | undefined {
+  const state = ensureInit(version);
+  const bc = state.bundledCache;
+  if (!bc || state.documents !== documents) return undefined;
+  const digest = cacheContentDigest(state);
+  if (digest === undefined) return undefined;
+  const identity33 = isIdentity33SchemaScope() && resolveBundleKey(version) === '3.3';
+  const cf = cachedFunctionsFor(state, bc, 'schema-ref-validator', digest, [allErrors, identity33]);
+  if (!cf) return undefined;
+  const byId = schemaRefDocuments(documents, root, version, allErrors);
+  const byKey = byId.has(id) ? documentsByRegistryKey(byId) : undefined;
+  if (!byKey) return undefined;
+  const copy = { ...authored };
+  const own = ownCopyKey(id);
+  const hit = loadCachedFunctions(
+    cf,
+    documentRootFunctionId(own, id.replace(/#\/?$/, '')),
+    key => (key === own ? copy : byKey.get(key)),
+    false
+  );
+  if (!hit) return { store: { cf, state } };
+  return {
+    fn: adoptCachedValidator(hit.fn, copy, () => {
+      const registry = schemaRefRegistry(documents, root, version, allErrors);
+      try {
+        return registry.ajv.compile(copy).schemaEnv;
+      } finally {
+        if (registry.sources) drainCompiledSources(registry.sources);
+      }
+    }),
+  };
+}
+
+/** One Ajv holding a root's runtime documents for schema-ref validators with one option set. */
+interface SchemaRefRegistry {
+  ajv: Ajv;
+  /** The `$id`s registered in `ajv`. */
+  ids: Set<string>;
+  /** With the cache enabled: sources of the functions `ajv` compiled. */
+  sources?: CompiledSources;
+}
+
+/**
+ * With the cache enabled, the schema-ref registry's document scan per store
+ * and registry options, kept once it succeeds, so a cache hit and a later
+ * registry build use the same document objects.
+ */
+const schemaRefScans = new WeakMap<DocumentStore, Map<string, Map<string, LoadedSchema>>>();
+
+/**
+ * Schema-ref registries by the document store they were built from, so a
+ * registry is dropped with the store: when any bundle key that used the root
+ * is cleared, the next miss builds both again from the files.
+ */
+const schemaRefRegistries = new WeakMap<DocumentStore, Map<string, SchemaRefRegistry>>();
+
+/** Whether `file` is one of the runtime documents a schema-ref registry holds. */
+function isSchemaRefRegistryDocument(file: string): boolean {
+  if (file.includes(`${path.sep}bundled${path.sep}`)) return false;
+  return ![...TRANSPORT_PROJECTION_DIRECTORIES].some(directory => file.includes(`${path.sep}${directory}${path.sep}`));
+}
+
+/**
+ * The root's schema-ref registry for `allErrors` and the identity-3.3 scope in
+ * effect, built on first use: the documents a per-ref Ajv registered as
+ * dependencies (every runtime document with an `$id`, one per `$id`), added
+ * one at a time in walk order, with the same ambiguity check. Stored only once
+ * it is complete, so a failure is thrown again on the next call.
+ * `addUsedSchema: false` keeps compiled roots out of the registry.
+ */
+function schemaRefRegistry(
+  documents: DocumentStore,
+  root: string,
+  version: string,
+  allErrors: boolean
+): SchemaRefRegistry {
+  const identity33 = isIdentity33SchemaScope() && resolveBundleKey(version) === '3.3';
+  const key = `all-errors::${allErrors}\0identity33::${identity33}`;
+  let registries = schemaRefRegistries.get(documents);
+  if (!registries) {
+    registries = new Map();
+    schemaRefRegistries.set(documents, registries);
+  }
+  const existing = registries.get(key);
+  if (existing) return existing;
+
+  const cached = validatorCacheDir() !== undefined;
+  const byId = cached
+    ? schemaRefDocuments(documents, root, version, allErrors)
+    : scanSchemaRefDocuments(documents, root, version);
+  const sources: CompiledSources | undefined = cached ? { pending: [], byFunction: new WeakMap() } : undefined;
+  const ajv = new Ajv({
+    inlineRefs: false,
+    strict: false,
+    // See compileSchemaReference: first-violation by default for remote payloads.
+    allErrors,
+    allowUnionTypes: true,
+    addUsedSchema: false,
+    ...(sources && { code: { source: true, process: recordingCodeProcess(sources) } }),
+  });
+  addFormats(ajv);
+  try {
+    for (const schema of byId.values()) addPlainRegistryDocument(ajv, schema);
+  } finally {
+    if (sources) drainCompiledSources(sources);
+  }
+  const registry = { ajv, ids: new Set(byId.keys()), ...(sources && { sources }) };
+  registries.set(key, registry);
+  return registry;
+}
+
+/** {@link scanSchemaRefDocuments}, kept per store and registry options once it succeeds. */
+function schemaRefDocuments(
+  documents: DocumentStore,
+  root: string,
+  version: string,
+  allErrors: boolean
+): Map<string, LoadedSchema> {
+  const identity33 = isIdentity33SchemaScope() && resolveBundleKey(version) === '3.3';
+  let scans = schemaRefScans.get(documents);
+  if (!scans) {
+    scans = new Map();
+    schemaRefScans.set(documents, scans);
+  }
+  // One scan per registry, as each registry scans the files when it is built.
+  const key = `all-errors::${allErrors}\0identity33::${identity33}`;
+  let byId = scans.get(key);
+  if (!byId) {
+    byId = scanSchemaRefDocuments(documents, root, version);
+    scans.set(key, byId);
+  }
+  return byId;
+}
+
+/**
+ * The documents a schema-ref registry registers, by $id in walk order: every
+ * runtime document with an `$id`, one per `$id`. Throws when two share an
+ * `$id` with different content.
+ */
+function scanSchemaRefDocuments(documents: DocumentStore, root: string, version: string): Map<string, LoadedSchema> {
+  const byId = new Map<string, LoadedSchema>();
+  for (const schemaFile of walkJsonFiles(root)) {
+    if (!isSchemaRefRegistryDocument(schemaFile)) continue;
+    const schema = identity33ReferenceSchema(readStoredDocument(documents, schemaFile), version);
+    if (typeof schema.$id !== 'string') continue;
+    const previous = byId.get(schema.$id);
+    if (previous) {
+      // Bundles intentionally mirror async-response refs. Identical copies
+      // are harmless; conflicting definitions must not shadow audited files.
+      if (!isDeepStrictEqual(previous, schema)) {
+        throw new ConfigurationError('Schema validation requires unambiguous schema identities', 'schemaRoot');
+      }
+      continue;
+    }
+    byId.set(schema.$id, schema);
+  }
+  return byId;
 }
 
 /**
@@ -2155,25 +3440,34 @@ export function getCanonicalToolValidatorForVersion(
   const indexedFile = state.fileIndex.get(cacheKey);
   if (!indexedFile) return undefined;
   const file = authoredToolSchemaFile(state, indexedFile);
-  const rawSchema = loadJson(file);
-  const ajv = ensureCanonicalAjv(state);
-  const existing = typeof rawSchema.$id === 'string' ? ajv.getSchema(rawSchema.$id) : undefined;
+  const rawSchema = readStoredDocument(state.documents, file);
   // External/legacy schema roots may contain only self-contained bundled
   // contracts. They have no authored graph to pre-register, so compile the
   // strict bundled fallback lazily after removing nested metadata `$id`s.
   const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
-  const compiled =
-    existing ?? ajv.compile(fromBundled ? compactSchemaForValidation(stripNestedIds(rawSchema)) : rawSchema);
+  if (state.bundledCache && !fromBundled && typeof rawSchema.$id === 'string') {
+    const resolved = resolveCanonicalValidatorWithCache(state, state.bundledCache, rawSchema, rawSchema.$id);
+    state.canonicalValidators.set(cacheKey, resolved);
+    return resolved;
+  }
+  const ajv = ensureCanonicalAjv(state);
+  let compiled: ValidateFunction;
+  try {
+    const existing = typeof rawSchema.$id === 'string' ? ajv.getSchema(rawSchema.$id) : undefined;
+    compiled = existing ?? ajv.compile(fromBundled ? compactSchemaForValidation(stripNestedIds(rawSchema)) : rawSchema);
+  } finally {
+    // With the cache enabled the registry records sources; returned functions keep none.
+    if (state.canonicalSources) drainCompiledSources(state.canonicalSources);
+  }
   state.canonicalValidators.set(cacheKey, compiled);
   return compiled;
 }
 
-function ensureCanonicalAjv(state: LoaderState): Ajv {
-  if (state.canonicalAjv) return state.canonicalAjv;
-
-  const ajv = new Ajv({ inlineRefs: false, strict: false, allErrors: true, allowUnionTypes: true });
-  addFormats(ajv);
-
+/**
+ * The documents canonical registration adds, by $id, in registration order.
+ * Throws when two of them share an $id with different content.
+ */
+function scanCanonicalSchemas(state: LoaderState): Map<string, LoadedSchema> {
   const schemasById = new Map<string, LoadedSchema>();
   for (const schemaFile of walkJsonFiles(state.root)) {
     if (schemaFile.includes(`${path.sep}bundled${path.sep}`)) continue;
@@ -2183,7 +3477,7 @@ function ensureCanonicalAjv(state: LoaderState): Ajv {
       continue;
     }
 
-    const schema = loadJson(schemaFile);
+    const schema = readStoredDocument(state.documents, schemaFile);
     if (typeof schema.$id !== 'string') continue;
     const previous = schemasById.get(schema.$id);
     if (previous) {
@@ -2194,9 +3488,71 @@ function ensureCanonicalAjv(state: LoaderState): Ajv {
     }
     schemasById.set(schema.$id, schema);
   }
+  return schemasById;
+}
 
-  if (schemasById.size > 0) ajv.addSchema([...schemasById.values()]);
+/**
+ * {@link scanCanonicalSchemas} for canonical cache hits, kept once it
+ * succeeds; a failing scan runs again on the next call, as registration does.
+ */
+function canonicalSchemasById(state: LoaderState): Map<string, LoadedSchema> {
+  return (state.canonicalDocuments ??= scanCanonicalSchemas(state));
+}
+
+/**
+ * The canonical registry's documents by registry key, without building it, or
+ * `undefined` when two $ids share a key (registration then fails in Ajv).
+ * Throws what canonical registration throws.
+ */
+function canonicalRegistryDocuments(state: LoaderState): Map<string, LoadedSchema> | undefined {
+  return documentsByRegistryKey(canonicalSchemasById(state));
+}
+
+/**
+ * Documents by the key Ajv registers them under (the normalized $id), or
+ * `undefined` when two $ids share a key (registration then fails in Ajv).
+ */
+function documentsByRegistryKey(schemasById: Map<string, LoadedSchema>): Map<string, LoadedSchema> | undefined {
+  if (registryKeyMaps.has(schemasById)) return registryKeyMaps.get(schemasById) ?? undefined;
+  let byKey: Map<string, LoadedSchema> | null = new Map();
+  for (const [id, schema] of schemasById) {
+    const key = id.replace(/#\/?$/, '');
+    if (byKey.has(key)) {
+      byKey = null;
+      break;
+    }
+    byKey.set(key, schema);
+  }
+  registryKeyMaps.set(schemasById, byKey);
+  return byKey ?? undefined;
+}
+const registryKeyMaps = new WeakMap<Map<string, LoadedSchema>, Map<string, LoadedSchema> | null>();
+
+function ensureCanonicalAjv(state: LoaderState): Ajv {
+  if (state.canonicalAjv) return state.canonicalAjv;
+
+  // With the cache enabled, keep each function's source off the function, as for the modular registry.
+  const sources: CompiledSources | undefined = state.bundledCache
+    ? { pending: [], byFunction: new WeakMap() }
+    : undefined;
+  const ajv = new Ajv({
+    inlineRefs: false,
+    strict: false,
+    allErrors: true,
+    allowUnionTypes: true,
+    ...(sources && { code: { source: true, process: recordingCodeProcess(sources) } }),
+  });
+  addFormats(ajv);
+  if (sources) recordRegistryLookups(ajv, sources);
+
+  const schemasById = scanCanonicalSchemas(state);
+  try {
+    for (const schema of schemasById.values()) addPlainRegistryDocument(ajv, schema);
+  } finally {
+    if (sources) drainCompiledSources(sources);
+  }
   state.canonicalAjv = ajv;
+  if (sources) state.canonicalSources = sources;
   return ajv;
 }
 
@@ -2262,7 +3618,15 @@ export function getRegisteredSchemaIds(version: string = ADCP_VERSION): readonly
   // the keys is enough for prefix matching; we don't expose the SchemaEnv values.
   const registry = (s.ajv as unknown as { schemas?: Record<string, unknown> }).schemas;
   const bundledRegistry = (s.bundledAjv as unknown as { schemas?: Record<string, unknown> }).schemas;
-  return [...new Set([...Object.keys(registry ?? {}), ...Object.keys(bundledRegistry ?? {})])];
+  // A deferred registration reports the keys it will add, after the meta-schemas, in order.
+  const planned = s.coreRegistrationDeferred && !s.coreLoaded && s.corePlan ? s.corePlan : [];
+  return [
+    ...new Set([
+      ...Object.keys(registry ?? {}),
+      ...planned.map(schema => (schema.$id as string).replace(/#\/?$/, '')),
+      ...Object.keys(bundledRegistry ?? {}),
+    ]),
+  ];
 }
 
 /** Keep new invalidation reasons isolated to explicitly enabled draft references. */
@@ -2652,6 +4016,7 @@ export function _resetValidationLoader(version?: string): void {
   if (version === undefined) {
     states.clear();
     schemaRefValidators.clear();
+    documentStores.clear();
     epochRootFingerprints.clear();
     rootDocumentIdentityCache().clear();
     keywordCacheGeneration++;
@@ -2669,7 +4034,7 @@ export function _resetValidationLoader(version?: string): void {
  *
  * Reads the raw JSON schema file without compiling — avoids coupling to AJV
  * internals. Only inspects the top-level `properties` map; nested sub-schemas
- * are not traversed. Results are memoized in `LoaderState.rawSchemas` so
+ * are not traversed. The document comes from the state's document store, so
  * multi-step storyboard runs don't re-read the same file on each step.
  *
  * **Semantic note**: AdCP 3.1.0-beta.3 set `additionalProperties: true` on
@@ -2696,11 +4061,7 @@ export function schemaAllowsTopLevelField(toolName: string, field: string, versi
     const cacheKey = `${toolName}::request`;
     const file = s.fileIndex.get(cacheKey);
     if (!file) return true;
-    let schema = s.rawSchemas.get(cacheKey);
-    if (!schema) {
-      schema = loadJson(file) as Record<string, unknown>;
-      s.rawSchemas.set(cacheKey, schema);
-    }
+    const schema = readStoredDocument(s.documents, file);
     const props = schema.properties as Record<string, unknown> | undefined;
     return props !== undefined && field in props;
   } catch {
@@ -2736,7 +4097,7 @@ export function getRequestSchemaEntityPaths(
     const file = s.fileIndex.get(cacheKey);
     if (!file) return [];
 
-    const root = loadJson(file) as Record<string, unknown>;
+    const root = readStoredDocument(s.documents, file) as Record<string, unknown>;
     const found = new Map<string, SchemaEntityPath>();
     const stack = new Set<string>();
 
@@ -2784,7 +4145,7 @@ export function getRequestSchemaEntityPaths(
           const idToFile = new Map<string, string>();
           for (const schemaFile of walkJsonFiles(s.root)) {
             try {
-              const schema = loadJson(schemaFile);
+              const schema = readStoredDocument(s.documents, schemaFile);
               if (typeof schema.$id === 'string') idToFile.set(schema.$id, schemaFile);
             } catch {
               // A malformed unrelated schema is not a usable ref target.
@@ -2795,7 +4156,7 @@ export function getRequestSchemaEntityPaths(
         targetFile = s.schemaIdFiles.get(refPath);
       }
       if (!targetFile) return undefined;
-      const document = loadJson(targetFile) as Record<string, unknown>;
+      const document = readStoredDocument(s.documents, targetFile) as Record<string, unknown>;
       return {
         node: resolvePointer(document, fragment),
         file: targetFile,
@@ -2883,16 +4244,10 @@ export function getSchemaDefaultByPath(schemaRef: string, dottedPath: string, ve
     const normalized = normalizeSchemaRef(schemaRef);
     if (!normalized) return undefined;
 
-    const cacheKey = `schema-ref::${normalized}`;
     const file = path.join(s.root, normalized);
     if (!existsSync(file)) return undefined;
 
-    let schema = s.rawSchemas.get(cacheKey);
-    if (!schema) {
-      schema = loadJson(file) as Record<string, unknown>;
-      s.rawSchemas.set(cacheKey, schema);
-    }
-
+    const schema = readStoredDocument(s.documents, file);
     const node = resolveSchemaPropertyPath(schema, dottedPath);
     if (!node || !Object.prototype.hasOwnProperty.call(node, 'default')) return undefined;
     return cloneJsonValue((node as { default: unknown }).default);

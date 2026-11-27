@@ -1,20 +1,32 @@
 /**
- * Opt-in on-disk cache of compiled bundled-schema validators.
+ * Opt-in on-disk cache of compiled schema validators.
  *
  * Enabled only when `ADCP_VALIDATOR_CACHE_DIR` names an absolute directory.
  * schema-loader requires this module only in that case, so with the variable
  * unset the SDK touches no cache files and loads no cache code.
  *
- * An entry is Ajv's standalone module for one compiled validator, stored under
- * a key that digests every input of the compile (see schema-loader). Entries
+ * An entry is a CommonJS module of generated validator code: Ajv's standalone
+ * module for a bundled validator, or one compiled function of a modular or
+ * canonical registry (see schema-loader), stored under a key that digests
+ * every input of the compile. Entries
  * are executable code, so the directory and every entry must belong to the
  * current user and be closed to group and other users, entries are written
  * atomically, and each body is checked against the SHA-256 in its header
  * before it is evaluated. Any doubt (wrong owner or mode, symlink, digest
  * mismatch, truncation, evaluation error) means the caller compiles live.
  *
+ * A validator entry may carry JSON metadata (what a function refers to, its
+ * diagnostic origins) as the first line of its body, covered by the same
+ * digest. The directory is kept near `ADCP_VALIDATOR_CACHE_MAX_MB` (default
+ * 512) by dropping the least recently used files.
+ *
  * The same directory also holds JSON data entries under the same rules
- * (schema-root document identities, see schema-loader's persistRootCheck).
+ * (schema-root document identities, see schema-loader's persistRootCheck),
+ * and, beside each validator entry, V8's code cache for its module: written by
+ * the first process that evaluates the entry, passed to V8 by later ones only
+ * when its header names the entry's verified body and this runtime and its
+ * data matches its digest, so a process evaluates the module without parsing
+ * it again. Anything else compiles the module from source and replaces it.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -35,12 +47,13 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { runInThisContext } from 'node:vm';
+import { Script } from 'node:vm';
 
 const FORMAT = 1;
 const HEADER_PREFIX = '// adcp-validator-cache ';
 const ENTRY_SUFFIX = '.js';
 const DATA_SUFFIX = '.json';
+const CODE_CACHE_SUFFIX = '.v8';
 const TMP_SUFFIX = '.tmp';
 const ORPHAN_TMP_AGE_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
@@ -50,11 +63,14 @@ export interface CachedValidatorEntry {
   validate: ((data: unknown) => boolean) & { errors?: unknown };
   /** The raw root `$id` of the schema the validator was compiled from, when it was a string. */
   rootSchemaId: string | undefined;
+  /** The JSON value {@link ValidatorCache.write} stored with the module, if any. */
+  meta?: unknown;
 }
 
 export interface ValidatorCache {
   read(key: string): CachedValidatorEntry | undefined;
-  write(key: string, moduleCode: string, rootSchemaId: string | undefined): void;
+  /** Store a validator module; `meta` (JSON) is stored with it, under the same digest. */
+  write(key: string, moduleCode: string, rootSchemaId: string | undefined, meta?: unknown): void;
   /** The JSON value stored under `key` by {@link ValidatorCache.writeData}, or `undefined`. */
   readData(key: string): unknown;
   /** Store a JSON value under `key`, with the same integrity and ownership rules as validators. */
@@ -65,6 +81,26 @@ interface EntryHeader {
   format: number;
   sha256: string;
   rootSchemaId: string | null;
+  /** Validator entries: the body's first line is the JSON metadata stored with the module. */
+  meta?: boolean;
+  /** Code cache only: {@link moduleSourceDigest} of the module it was produced from. */
+  source?: string;
+  /** Code cache only: {@link CODE_CACHE_RUNTIME} of the process that produced it. */
+  runtime?: string;
+}
+
+const MODULE_HEAD = '(function (require, module, exports) {';
+const MODULE_TAIL = '\n})';
+
+/** The runtime V8's code cache is valid for. V8 also refuses data built under other flags. */
+const CODE_CACHE_RUNTIME = `${process.version} ${process.arch} ${process.versions.v8}`;
+
+/**
+ * Digest of the exact string an entry's module compiles from, by the entry's
+ * verified body digest: V8 itself compares only the source's length.
+ */
+function moduleSourceDigest(bodySha256: string): string {
+  return sha256(`${MODULE_HEAD}\0${MODULE_TAIL}\0${bodySha256}`);
 }
 
 function sha256(value: string | Buffer): string {
@@ -125,12 +161,17 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
     }
   };
 
-  const prune = (): void => {
+  /**
+   * Scan the directory; above the limit, drop the least recently used files
+   * down to seven eighths of it, so the next writes do not scan again at once.
+   * Returns the total left.
+   */
+  const prune = (): number | undefined => {
     let names: string[];
     try {
       names = readdirSync(entries);
     } catch {
-      return;
+      return undefined;
     }
     const now = Date.now();
     const files: Array<{ file: string; size: number; mtimeMs: number }> = [];
@@ -151,13 +192,28 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
       files.push({ file, size: stat.size, mtimeMs: stat.mtimeMs });
       total += stat.size;
     }
-    if (total <= limit) return;
+    if (total <= limit) return total;
+    const target = limit - limit / 8;
     files.sort((a, b) => a.mtimeMs - b.mtimeMs);
     for (const entry of files) {
-      if (total <= limit) break;
+      if (total <= target) break;
       discard(entry.file);
       total -= entry.size;
     }
+    return total;
+  };
+
+  // A scan stats every file, and a cache of per-function entries holds
+  // thousands, so a process scans at its first write and then whenever its
+  // own writes since the last scan could reach the limit or pass an eighth
+  // of it (other processes' writes count at the next scan).
+  let scannedTotal: number | undefined;
+  let writtenSinceScan = 0;
+  const noteWrite = (bytes: number): void => {
+    writtenSinceScan += bytes;
+    if (scannedTotal !== undefined && scannedTotal + writtenSinceScan <= limit && writtenSinceScan < limit / 8) return;
+    scannedTotal = prune();
+    writtenSinceScan = 0;
   };
 
   /**
@@ -201,16 +257,35 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
   };
 
   /** Write `body` under `file` atomically: a private temp file, then rename. */
-  const writeAtomic = (key: string, file: string, header: EntryHeader, body: string): boolean => {
+  const writeAtomic = (key: string, file: string, header: EntryHeader, body: string): void => {
     const tmp = path.join(entries, `.${key}.${process.pid}.${randomBytes(6).toString('hex')}${TMP_SUFFIX}`);
+    const text = `${HEADER_PREFIX}${JSON.stringify(header)}\n${body}`;
     try {
-      writeFileSync(tmp, `${HEADER_PREFIX}${JSON.stringify(header)}\n${body}`, { flag: 'wx', mode: 0o600 });
+      writeFileSync(tmp, text, { flag: 'wx', mode: 0o600 });
       renameSync(tmp, file);
-      return true;
     } catch {
       discard(tmp);
-      return false;
+      return;
     }
+    noteWrite(Buffer.byteLength(text));
+  };
+
+  /** Store V8's code cache for an evaluated entry module; a failure only costs the next process a parse. */
+  const writeCodeCache = (key: string, codeFile: string, script: Script, source: string): void => {
+    let body: string;
+    try {
+      body = script.createCachedData().toString('base64');
+    } catch {
+      return;
+    }
+    const header: EntryHeader = {
+      format: FORMAT,
+      sha256: sha256(body),
+      rootSchemaId: null,
+      source,
+      runtime: CODE_CACHE_RUNTIME,
+    };
+    writeAtomic(`${key}${CODE_CACHE_SUFFIX}`, codeFile, header, body);
   };
 
   const touch = (file: string): void => {
@@ -227,12 +302,39 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
       const file = entryPath(key);
       const entry = readVerified(file);
       if (!entry) return undefined;
-      const { header, body } = entry;
+      const { header } = entry;
+      let body = entry.body;
+      let meta: unknown;
+      if (header.meta === true) {
+        const newline = body.indexOf('\n');
+        try {
+          if (newline < 0) throw new Error('no metadata line');
+          meta = JSON.parse(body.slice(0, newline)) as unknown;
+        } catch {
+          discard(file);
+          return undefined;
+        }
+        body = body.slice(newline + 1);
+      }
+      const source = moduleSourceDigest(header.sha256);
+      const codeFile = path.join(entries, `${key}${CODE_CACHE_SUFFIX}`);
+      const code = readVerified(codeFile);
+      const cachedData =
+        code && code.header.source === source && code.header.runtime === CODE_CACHE_RUNTIME
+          ? Buffer.from(code.body, 'base64')
+          : undefined;
       let validate: CachedValidatorEntry['validate'];
+      let script: Script;
       try {
-        const factory = runInThisContext(`(function (require, module, exports) {${body}\n})`, {
+        script = new Script(`${MODULE_HEAD}${body}${MODULE_TAIL}`, {
           filename: file,
-        }) as (req: NodeRequire, mod: { exports: unknown }, exp: unknown) => void;
+          ...(cachedData && { cachedData }),
+        });
+        const factory = script.runInThisContext() as (
+          req: NodeRequire,
+          mod: { exports: unknown },
+          exp: unknown
+        ) => void;
         const mod: { exports: unknown } = { exports: {} };
         factory(moduleRequire, mod, mod.exports);
         validate = mod.exports as CachedValidatorEntry['validate'];
@@ -247,12 +349,27 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
       delete (validate as { default?: unknown }).default;
       validate.errors = null;
       touch(file);
-      return { validate, rootSchemaId: typeof header.rootSchemaId === 'string' ? header.rootSchemaId : undefined };
+      if (cachedData && !script.cachedDataRejected) {
+        touch(codeFile);
+      } else {
+        writeCodeCache(key, codeFile, script, source);
+      }
+      return {
+        validate,
+        rootSchemaId: typeof header.rootSchemaId === 'string' ? header.rootSchemaId : undefined,
+        ...(header.meta === true && { meta }),
+      };
     },
 
-    write(key, moduleCode, rootSchemaId) {
-      const header: EntryHeader = { format: FORMAT, sha256: sha256(moduleCode), rootSchemaId: rootSchemaId ?? null };
-      if (writeAtomic(key, entryPath(key), header, moduleCode)) prune();
+    write(key, moduleCode, rootSchemaId, meta) {
+      const body = meta === undefined ? moduleCode : `${JSON.stringify(meta)}\n${moduleCode}`;
+      const header: EntryHeader = {
+        format: FORMAT,
+        sha256: sha256(body),
+        rootSchemaId: rootSchemaId ?? null,
+        ...(meta !== undefined && { meta: true }),
+      };
+      writeAtomic(key, entryPath(key), header, body);
     },
 
     readData(key) {
@@ -272,7 +389,7 @@ export function openValidatorCache(dir: string, requireFrom: string): ValidatorC
     writeData(key, value) {
       const body = JSON.stringify(value);
       const header: EntryHeader = { format: FORMAT, sha256: sha256(body), rootSchemaId: null };
-      if (writeAtomic(key, path.join(entries, `${key}${DATA_SUFFIX}`), header, body)) prune();
+      writeAtomic(key, path.join(entries, `${key}${DATA_SUFFIX}`), header, body);
     },
   };
 }
