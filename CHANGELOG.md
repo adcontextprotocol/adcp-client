@@ -1,5 +1,21 @@
 # Changelog
 
+## 17.0.0-rc.2
+
+### Minor Changes
+
+- e661722: Expose `syncAccounts`'s `beforePreparedDispatch` callback so buyers can durably bind the complete prepared tool arguments to their original idempotency key before the account write is sent. Webhook-generated arguments must remain stable for same-key retries to match the digest.
+- be4dc4a: Buyers can now tell a seller that a reporting revision's content was rejected, instead of reporting a transport failure.
+
+  `reconcileReporting` posts any error thrown by `client.getMediaBuyDelivery` as `unreadable` / `transport_failed`. A consumer that validates the rows before accepting them, for example refusing rows outside the revision's coverage, therefore told the seller the transport failed. Throw the new `ReportingRevisionContentRejectedError` from the read instead, with `integrity_mismatch` (the revision contradicts what the seller declared for it) or `reader_incompatible` (your reader cannot accept it), and the SDK posts `unreadable` with that `failure_code`.
+
+  Only the code goes on the wire. The error's optional `reason` stays in the local `plan.reason`, bounded and stripped of control characters, and its `message` and `cause` are never read. `isReportingRevisionContentRejectedError` recognizes the error across the CommonJS and ESM builds. Every other thrown error, including one that only looks like this class, is still `transport_failed`, so existing consumers see no change.
+
+### Patch Changes
+
+- 0f1e67c: Include the error name and code on aborted task activities so observers can distinguish caller cancellation and timeouts.
+- ebf05d5: Check native main images and icons against the dimensions, pixel densities and image formats declared by their package.
+
 ## 17.0.0-rc.1
 
 ### Minor Changes
