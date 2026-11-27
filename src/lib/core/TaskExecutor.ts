@@ -105,6 +105,17 @@ import {
 // typed timeout error thrown by the deadline wrapper.
 export { TaskTimeoutError } from '../errors';
 
+function abortActivityIdentity(reason: unknown, defaultName?: string) {
+  const value = reason && typeof reason === 'object' ? (reason as { name?: unknown; code?: unknown }) : {};
+  const name = typeof value.name === 'string' && value.name ? value.name.slice(0, 128) : defaultName;
+  const code = value.code;
+  return {
+    ...(name && { error_name: name }),
+    ...(typeof code === 'string' && { error_code: code.slice(0, 128) }),
+    ...(typeof code === 'number' && Number.isFinite(code) && { error_code: code }),
+  };
+}
+
 /**
  * Custom errors for task execution
  */
@@ -1540,7 +1551,8 @@ export class TaskExecutor {
               taskId,
               'aborted',
               undefined,
-              reason instanceof Error ? reason.message : reason == null ? 'The operation was aborted' : String(reason)
+              reason instanceof Error ? reason.message : reason == null ? 'The operation was aborted' : String(reason),
+              abortActivityIdentity(reason, 'AbortError')
             );
           }
         }
@@ -2059,7 +2071,13 @@ export class TaskExecutor {
         }
         const currentStatus = this.activeTasks.get(taskId)?.status;
         if (currentStatus && !TERMINAL_TASK_STATUSES.has(currentStatus)) {
-          this.updateTaskStatus(taskId, 'aborted', undefined, error instanceof Error ? error.message : String(error));
+          this.updateTaskStatus(
+            taskId,
+            'aborted',
+            undefined,
+            error instanceof Error ? error.message : String(error),
+            abortActivityIdentity(error)
+          );
         }
         throw error;
       }
@@ -6743,7 +6761,13 @@ export class TaskExecutor {
   /**
    * Update task status and emit events
    */
-  private updateTaskStatus(taskId: string, status: TaskStatus, result?: any, error?: string): void {
+  private updateTaskStatus(
+    taskId: string,
+    status: TaskStatus,
+    result?: any,
+    error?: string,
+    identity?: ReturnType<typeof abortActivityIdentity>
+  ): void {
     const task = this.activeTasks.get(taskId);
     if (task) {
       // Once cancellation has released request state, late work must not
@@ -6775,7 +6799,7 @@ export class TaskExecutor {
         server_task_id: task.serverTaskId,
         task_type: task.taskName,
         status: status,
-        payload: result ?? (error ? { error } : undefined),
+        payload: result ?? (identity || error ? { error, ...identity } : undefined),
         timestamp: new Date().toISOString(),
       });
 

@@ -384,7 +384,7 @@ Activity types:
 
 - `protocol_request` - Request sent to agent
 - `protocol_response` - Response received from agent
-- `status_change` - Task status changed
+- `status_change` - Task status changed. For an aborted SDK call, `payload.error` carries the message. Use `payload.error_name` and `payload.error_code` when available to distinguish a caller cancellation, task deadline, or transport timeout. Transport codes may be strings or numbers.
 - `webhook_received` - Webhook received from agent
 
 ## Notifications (Agent-Initiated)

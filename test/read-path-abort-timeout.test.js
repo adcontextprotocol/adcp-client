@@ -835,6 +835,46 @@ describe('read-path cancellation and timeout', () => {
     }
   });
 
+  it('preserves abort identity on the terminal activity from either cancellation path', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    try {
+      for (const mode of ['deadline', 'caller', 'transport']) {
+        const activities = [];
+        const executor = new TaskExecutor({ onActivity: event => activities.push(event) });
+        const controller = new AbortController();
+        ProtocolClient.callTool = async () => {
+          if (mode === 'transport') throw Object.assign(new Error('request ended'), { code: -32001 });
+          if (mode === 'caller') controller.abort(Object.assign(new Error('request ended'), { name: 'AbortError' }));
+          return new Promise(() => {});
+        };
+        await assert.rejects(
+          executor.executeTask(
+            { id: 'observer', name: 'observer', protocol: 'mcp', agent_uri: 'https://example.test/mcp' },
+            'custom_late_result',
+            {},
+            undefined,
+            { signal: controller.signal, timeout: mode === 'deadline' ? 50 : 2000 }
+          ),
+          error => {
+            const terminal = activities.filter(a => a.type === 'status_change' && a.status === 'aborted');
+            assert.equal(terminal.length, 1);
+            const expectedName = { deadline: 'TaskTimeoutError', caller: 'AbortError', transport: 'Error' }[mode];
+            assert.equal(error.name, expectedName);
+            assert.deepEqual(terminal[0].payload, {
+              error: error.message,
+              error_name: expectedName,
+              ...(mode === 'deadline' && { error_code: 'TASK_TIMEOUT' }),
+              ...(mode === 'transport' && { error_code: -32001 }),
+            });
+            return true;
+          }
+        );
+      }
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+  });
+
   it('does not resurrect an aborted task when cancellation-ignoring work resolves late', async () => {
     const originalCallTool = ProtocolClient.callTool;
     ProtocolClient.callTool = async () => {

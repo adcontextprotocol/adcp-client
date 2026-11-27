@@ -253,6 +253,7 @@ export interface Activity {
   task_type: string;
   status?: string;
   /**
+   * Aborted status changes carry error, plus error_name and error_code when available.
    * Full AdCP response payload. Populated on `webhook_received` and
    * protocol/status events. INTENTIONALLY omitted on `webhook_duplicate`
    * to avoid re-logging potentially-sensitive data on every retry — the
