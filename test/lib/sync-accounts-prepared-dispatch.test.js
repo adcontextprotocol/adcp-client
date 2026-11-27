@@ -288,26 +288,33 @@ test('a same-key rebuild with an explicit empty replacement cannot pass a saved 
   }
 });
 
-test('a default SDK webhook operation ID changes the complete same-key digest', async () => {
+test('a default SDK webhook operation ID is derived from the idempotency key, so a same-key retry keeps the digest', async () => {
+  // Since #3796 the default operation_id is derived from the idempotency key: a
+  // same-key retry sends the same push_notification_config, and so the same
+  // complete request digest. A different key gets a different operation_id.
   const { agent, calls, close } = await seller({
     webhookUrlTemplate: 'https://buyer.example/webhooks/{task_type}/{operation_id}',
   });
-  let durableDigest;
+  const digests = [];
   const beforePreparedDispatch = async identity => {
-    if (durableDigest && durableDigest !== identity.request_sha256) throw new Error('request identity changed');
-    durableDigest = identity.request_sha256;
+    digests.push(identity.request_sha256);
   };
   try {
     const request = { idempotency_key: 'original-key', accounts: [] };
     await agent.syncAccounts(request, undefined, { beforePreparedDispatch });
-    assert.equal(calls.length, 1);
-    assert.equal(typeof calls[0].push_notification_config.operation_id, 'string');
-    assert.equal(durableDigest, canonicalJsonSha256(calls[0]));
-    await assert.rejects(
-      agent.syncAccounts(request, undefined, { beforePreparedDispatch }),
-      error => error.message === 'request identity changed'
+    await agent.syncAccounts(request, undefined, { beforePreparedDispatch });
+    await agent.syncAccounts({ ...request, idempotency_key: 'another-key' }, undefined, { beforePreparedDispatch });
+    assert.equal(calls.length, 3);
+    const [first, retry, other] = calls.map(call => call.push_notification_config.operation_id);
+    assert.equal(typeof first, 'string');
+    assert.equal(retry, first);
+    assert.notEqual(other, first);
+    assert.deepEqual(
+      digests,
+      calls.map(call => canonicalJsonSha256(call))
     );
-    assert.equal(calls.length, 1);
+    assert.equal(digests[1], digests[0]);
+    assert.notEqual(digests[2], digests[0]);
   } finally {
     await close();
   }
