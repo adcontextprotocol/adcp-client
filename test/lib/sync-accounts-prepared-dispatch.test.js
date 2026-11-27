@@ -309,7 +309,10 @@ test('a default SDK webhook operation ID is derived from the idempotency key, so
     assert.equal(typeof first, 'string');
     assert.equal(retry, first);
     assert.notEqual(other, first);
-    assert.deepEqual(digests, calls.map(call => canonicalJsonSha256(call)));
+    assert.deepEqual(
+      digests,
+      calls.map(call => canonicalJsonSha256(call))
+    );
     assert.equal(digests[1], digests[0]);
     assert.notEqual(digests[2], digests[0]);
   } finally {
