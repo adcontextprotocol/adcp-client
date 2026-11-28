@@ -5,6 +5,7 @@ import { ReportingAdjustmentSchema, ReportingRevisionSchema } from '../../schema
 import { canonicalize } from '../../utils/jcs';
 import { AdcpError } from '../../server/decisioning/async-outcome';
 import { listedReportingSourceProductIdsV1 } from '../source/applicability';
+import { requestableReportingMetricNamesV1 } from '../source/metric-support';
 import {
   canonicalJsonV1,
   reportingIsoDurationMillisecondsV1,
@@ -2204,7 +2205,8 @@ function validateConfigurationAgainstOffering(
       throw new Error('Billing reporting requires a pinned canonicalization contract');
     }
   }
-  const metricNames = new Set(offering.metrics.filter(value => value.support === 'exact').map(value => value.name));
+  // A `partial` metric is requestable: each slice reports per cell where it does not apply.
+  const metricNames = requestableReportingMetricNamesV1(offering.metrics);
   const dimensionNames = new Set(
     offering.dimensions.filter(value => value.support === 'exact').map(value => value.name)
   );

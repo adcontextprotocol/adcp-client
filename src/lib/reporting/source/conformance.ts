@@ -27,6 +27,7 @@ import {
   type ReportingSourceStagedObjectReaderV1,
 } from './source';
 import { listedReportingSourceProductIdsV1 } from './applicability';
+import { conditionalReportingMetricNamesV1, requestableReportingMetricNamesV1 } from './metric-support';
 
 export type ReportingSourceManifestLevelV1 = 'basic' | 'evidenced';
 export const REPORTING_CROSS_FINALITY_BRIDGE_VERSION_V1 = 'reporting.cross_finality_bridge.v1' as const;
@@ -429,9 +430,13 @@ export function validateReportingSourceRequestAgainstCapabilitiesV1(
         'CAPABILITY_MISMATCH',
         'Coverage constituent is outside offering applicability'
       );
+  const requestableMetrics = requestableReportingMetricNamesV1(offering.metrics);
   for (const metric of request.requestedMetrics)
-    if (!offering.metrics.some(item => item.name === metric && item.support === 'exact'))
-      throw new ReportingSourceConformanceError('CAPABILITY_MISMATCH', `Metric ${metric} is not exact`);
+    if (!requestableMetrics.has(metric))
+      throw new ReportingSourceConformanceError(
+        'CAPABILITY_MISMATCH',
+        `Metric ${metric} is not supported by the offering`
+      );
   for (const dimension of request.requestedDimensions)
     if (!offering.dimensions.some(item => item.name === dimension && item.support === 'exact'))
       throw new ReportingSourceConformanceError('CAPABILITY_MISMATCH', `Dimension ${dimension} is not exact`);
@@ -536,6 +541,25 @@ function validateManifestAgainstRequest(
       'MANIFEST_MISMATCH',
       `Manifest does not bind the frozen request: ${issues.map(issue => issue.path).join(', ')}`,
       { issues }
+    );
+  // An inapplicable cell may only stand beside available cells for a metric the offering
+  // declares conditional. An exact metric's unsupported cell is a missing measurement, so
+  // it must keep demoting its constituent rather than ride along under `present`.
+  const conditionalMetrics = conditionalReportingMetricNamesV1(offering.metrics);
+  const presentConstituents = new Set(
+    manifest.coverage.constituents.filter(item => item.status === 'present').map(item => item.constituentId)
+  );
+  if (
+    manifest.metricAvailability.some(
+      cell =>
+        cell.status === 'unsupported' &&
+        presentConstituents.has(cell.constituentId) &&
+        !conditionalMetrics.has(cell.metric)
+    )
+  )
+    throw new ReportingSourceConformanceError(
+      'MANIFEST_MISMATCH',
+      'Unsupported cells under available coverage require partial metric support with a reason'
     );
   if (request.coverage.expected === 'full' && manifest.coverage.status !== 'full')
     throw new ReportingSourceConformanceError(

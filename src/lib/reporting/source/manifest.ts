@@ -545,6 +545,19 @@ function validateManifest(manifest: any, context: z.RefinementCtx) {
     if (missingMetricCell) break;
   }
   if (missingMetricCell) issue(['metricAvailability'], 'Every constituent requires every metric cell');
+  // Zero applicable metrics is no coverage evidence: such a constituent is `unsupported`,
+  // never a vacuously complete `present` or a `partial` with nothing measured.
+  const applicableConstituents = new Set(
+    manifest.metricAvailability
+      .filter((item: any) => item.status !== 'unsupported')
+      .map((item: any) => item.constituentId)
+  );
+  if (
+    manifest.coverage.constituents.some(
+      (item: any) => item.status !== 'unsupported' && !applicableConstituents.has(item.constituentId)
+    )
+  )
+    issue(['coverage', 'constituents'], 'A constituent without applicable metrics must be unsupported');
   const fullyCovered = manifest.coverage.constituents.filter((item: any) =>
     ['present', 'explicit_zero'].includes(item.status)
   ).length;
@@ -1202,10 +1215,16 @@ function sameIntegerSet(left: readonly number[], right: readonly number[]) {
   );
 }
 
+/**
+ * A constituent's roll-up status constrains what its metric cells may claim. An
+ * `unsupported` cell is inapplicable and may accompany available cells under `present`;
+ * conformance checks that its metric is declared `partial` with a reason. Every other
+ * unavailable cell still requires a degraded roll-up.
+ */
 function constituentAllowsMetricStatus(constituent: string, metric: string) {
   switch (constituent) {
     case 'present':
-      return metric === 'present' || metric === 'explicit_zero';
+      return metric === 'present' || metric === 'explicit_zero' || metric === 'unsupported';
     case 'explicit_zero':
       return metric === 'explicit_zero';
     case 'unsupported':

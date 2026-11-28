@@ -1142,7 +1142,9 @@ export function createManagedReportingSubscriptions<TCtxMeta>(
  * The report content a subscription generation gets without `subscriptions.configure`, derived from
  * the resolved source offering:
  *
- * - every metric and dimension the source offering supports exactly;
+ * - every metric and dimension the source offering supports exactly. A `partial` (conditional)
+ *   metric is requestable too, but only through `subscriptions.configure`, so a default
+ *   generation never starts carrying cells that some constituents report as inapplicable;
  * - its first attribution model and window, with a settings digest over them;
  * - for `required_finality: 'official'`, a contractual cutoff at the offering's `delivery_sla`.
  *
