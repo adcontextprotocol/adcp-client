@@ -10,6 +10,7 @@ const {
   ReportingSourceCapabilitiesV1Schema,
   ReportingSourceOfferingV1Schema,
   ReportingSourceConformanceError,
+  ReportingSourceManifestV1Schema,
   ReportingSourceScopeV1Schema,
   ReportingSourceSliceRequestV1Schema,
   ReportingSourceWindowingV1Schema,
@@ -31,6 +32,7 @@ const {
   sourceBatchPublicationContentFingerprintV1,
   validateReportingRevisionSequenceV1,
   validateReportingSourceExecutionV1,
+  validateReportingSourceRequestAgainstCapabilitiesV1,
 } = require('../../dist/lib/reporting/source/index.js');
 
 describe('reporting source contract V1', () => {
@@ -457,6 +459,135 @@ describe('reporting source contract V1', () => {
       }),
       error => error instanceof ReportingSourceConformanceError && error.code === 'MANIFEST_MISMATCH'
     );
+  });
+
+  describe('conditional (partial-support) metrics', () => {
+    const conditionalReason = 'Spend is not reported for barter inventory';
+    function offeringWithSpend(support, reason) {
+      const offering = structuredClone(redactedReportingSourceOfferingV1);
+      const spend = offering.metrics.find(metric => metric.name === 'spend');
+      spend.support = support;
+      if (reason) spend.reason = reason;
+      else delete spend.reason;
+      return offering;
+    }
+    // One present constituent whose spend cell is inapplicable, under full coverage.
+    function inapplicableSpendResult(request) {
+      const fixture = redactedReportingSourceResultV1('basic', request);
+      const manifest = structuredClone(fixture.manifest);
+      const spend = manifest.metricAvailability.find(cell => cell.metric === 'spend');
+      spend.status = 'unsupported';
+      spend.reason = conditionalReason;
+      delete spend.dataThrough;
+      manifest.publication.contentFingerprint = sourceBatchPublicationContentFingerprintV1(manifest);
+      const bytes = encodeReportingSourceManifestV1(manifest);
+      return {
+        manifest,
+        objectReader: fixture.objectReader,
+        result: {
+          ...fixture.result,
+          response: {
+            ...fixture.result.response,
+            manifest: sourceBatchManifestReferenceV1('fixture-inapplicable-spend', bytes, 'basic'),
+          },
+          manifestBytes: bytes,
+        },
+      };
+    }
+
+    test('a request may name a partial metric with a reason, never an unexplained or unavailable one', () => {
+      const request = redactedReportingSourceRequestV1();
+      validateReportingSourceRequestAgainstCapabilitiesV1(
+        reportingSourceCapabilitiesV1([offeringWithSpend('partial', conditionalReason)]),
+        request,
+        'basic'
+      );
+      // The capability schema itself refuses an unexplained partial declaration.
+      assert.throws(() => reportingSourceCapabilitiesV1([offeringWithSpend('partial')]), /require a reason/);
+      assert.throws(
+        () =>
+          validateReportingSourceRequestAgainstCapabilitiesV1(
+            reportingSourceCapabilitiesV1([offeringWithSpend('unavailable', conditionalReason)]),
+            request,
+            'basic'
+          ),
+        error =>
+          error instanceof ReportingSourceConformanceError &&
+          error.code === 'CAPABILITY_MISMATCH' &&
+          /Metric spend is not supported/.test(error.message)
+      );
+    });
+
+    test('admits an inapplicable conditional cell under full coverage', async () => {
+      const request = redactedReportingSourceRequestV1();
+      const { result, objectReader } = inapplicableSpendResult(request);
+      const manifest = await validateReportingSourceExecutionV1({
+        level: 'basic',
+        capabilities: reportingSourceCapabilitiesV1([offeringWithSpend('partial', conditionalReason)]),
+        request,
+        result,
+        objectReader,
+      });
+      assert.equal(manifest.coverage.status, 'full');
+      assert.equal(manifest.coverage.constituents[0].status, 'present');
+      const spend = manifest.metricAvailability.find(cell => cell.metric === 'spend');
+      assert.equal(spend.status, 'unsupported');
+      assert.equal(spend.reason, conditionalReason);
+      assert.equal(spend.dataThrough, undefined);
+    });
+
+    test('refuses an exact metric riding along as unsupported under available coverage', async () => {
+      const request = redactedReportingSourceRequestV1();
+      const { result, objectReader } = inapplicableSpendResult(request);
+      await assert.rejects(
+        validateReportingSourceExecutionV1({
+          level: 'basic',
+          capabilities: redactedReportingSourceCapabilitiesV1,
+          request,
+          result,
+          objectReader,
+        }),
+        error =>
+          error instanceof ReportingSourceConformanceError &&
+          error.code === 'MANIFEST_MISMATCH' &&
+          /require partial metric support/.test(error.message)
+      );
+    });
+
+    test('keeps every non-inapplicable unavailable cell demoting its constituent', () => {
+      const request = redactedReportingSourceRequestV1();
+      for (const status of ['delayed', 'missing', 'stale', 'partial']) {
+        const { manifest } = inapplicableSpendResult(request);
+        manifest.metricAvailability.find(cell => cell.metric === 'spend').status = status;
+        manifest.publication.contentFingerprint = sourceBatchPublicationContentFingerprintV1(manifest);
+        const parsed = ReportingSourceManifestV1Schema.safeParse(manifest);
+        assert.equal(parsed.success, false, status);
+        assert.ok(
+          parsed.error.issues.some(
+            issue => issue.message === 'Metric status must be consistent with its constituent roll-up'
+          ),
+          status
+        );
+      }
+    });
+
+    test('a constituent with no applicable metric must be unsupported, never present', () => {
+      const request = redactedReportingSourceRequestV1();
+      const { manifest } = inapplicableSpendResult(request);
+      for (const cell of manifest.metricAvailability) {
+        cell.status = 'unsupported';
+        cell.reason = conditionalReason;
+        delete cell.dataThrough;
+      }
+      manifest.publication.contentFingerprint = sourceBatchPublicationContentFingerprintV1(manifest);
+      const parsed = ReportingSourceManifestV1Schema.safeParse(manifest);
+      assert.equal(parsed.success, false);
+      assert.ok(
+        parsed.error.issues.some(
+          issue => issue.message === 'A constituent without applicable metrics must be unsupported'
+        )
+      );
+    });
   });
 
   test('binds explicit offering timezone and calendar window bounds', async () => {

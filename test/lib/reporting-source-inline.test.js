@@ -4213,3 +4213,207 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(validateReportingSourceFailureV1(result, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
   });
 });
+
+// A source that measures clicks for one media buy but not the other. Declared `partial`
+// with a reason, clicks is conditional: its `unsupported` cell is inapplicable and the day
+// keeps full coverage. Declared `exact`, the same cell is a missing measurement.
+describe('createInlineReportingSourceExecutor conditional metrics', () => {
+  const CLICKS_REASON = 'Clicks are not measured for audio inventory';
+
+  function offeringWithClicks(support, base = redactedReportingSourceOfferingV1) {
+    const offering = structuredClone(base);
+    offering.metrics.push({
+      ...offering.metrics[0],
+      name: 'clicks',
+      support,
+      ...(support === 'exact' ? {} : { reason: CLICKS_REASON }),
+      semanticContractId: 'delivery.clicks',
+    });
+    return offering;
+  }
+
+  function twoBuySlice(sourceExecutionKey) {
+    const slice = request(sourceExecutionKey);
+    const second = structuredClone(slice.coverage.constituents[0]);
+    second.constituentId = 'fixture-constituent-2';
+    second.mediaBuyId = 'fixture-media-buy-2';
+    second.productBinding.bindingId = 'fixture-product-binding-2';
+    second.productBinding.mediaBuyId = 'fixture-media-buy-2';
+    slice.coverage.constituents.push(second);
+    slice.coverage.mediaBuyIds.push('fixture-media-buy-2');
+    slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+    slice.requestedMetrics.push('clicks');
+    return slice;
+  }
+
+  // Media buy 2 reports no clicks; its clicks cell carries `secondClicks`.
+  function clicksSource(offering, secondClicks, extra = {}) {
+    return createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', clicks: 4 },
+          { media_buy_id: 'fixture-media-buy-2', impressions: 20, spend: '2.50' },
+        ],
+        ...extra,
+        availability_evidence: sharedMediaBuyCells(input, [
+          { constituent_id: 'fixture-constituent-2', metric: 'clicks', ...secondClicks },
+        ]),
+      }),
+      offering
+    );
+  }
+
+  const inapplicable = { status: 'unsupported', reason: CLICKS_REASON };
+
+  test('publishes full coverage with an inapplicable cell and keeps its evidence', async () => {
+    const source = clicksSource(offeringWithClicks('partial'), inapplicable);
+    const slice = twoBuySlice('fixture-inline-conditional-full');
+    const manifest = await runReportingSourceReplayConformanceV1({
+      level: 'basic',
+      executor: source,
+      request: slice,
+      objectReader: source,
+    });
+    assert.equal(manifest.coverage.status, 'full');
+    assert.deepEqual(
+      manifest.coverage.constituents.map(item => [item.constituentId, item.status, item.dataThrough, item.reason]),
+      [
+        ['fixture-constituent', 'present', slice.period.end, undefined],
+        ['fixture-constituent-2', 'present', slice.period.end, undefined],
+      ]
+    );
+    const cell = manifest.metricAvailability.find(
+      item => item.constituentId === 'fixture-constituent-2' && item.metric === 'clicks'
+    );
+    assert.deepEqual(
+      { status: cell.status, reason: cell.reason, dataThrough: cell.dataThrough },
+      { status: 'unsupported', reason: CLICKS_REASON, dataThrough: undefined }
+    );
+    assert.equal(cell.semanticContractId, 'delivery.clicks');
+  });
+
+  test("keeps an exact metric's unsupported cell demoting coverage", async () => {
+    const source = clicksSource(offeringWithClicks('exact'), inapplicable);
+    const slice = twoBuySlice('fixture-inline-conditional-exact');
+    const full = await source.execute(slice, context());
+    assert.equal(validateReportingSourceFailureV1(full, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+    slice.identity.sourceExecutionKey = 'fixture-inline-conditional-exact-partial';
+    slice.coverage.expected = 'partial';
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'partial');
+    assert.equal(manifest.coverage.constituents[1].status, 'partial');
+  });
+
+  test('keeps a delayed or missing conditional cell demoting coverage', async () => {
+    for (const status of ['delayed', 'missing']) {
+      const source = clicksSource(offeringWithClicks('partial'), {
+        status,
+        reason: 'Clicks have not arrived from the provider',
+      });
+      const result = await source.execute(twoBuySlice(`fixture-inline-conditional-${status}`), context());
+      assert.equal(validateReportingSourceFailureV1(result, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT', status);
+    }
+  });
+
+  test('a constituent with only inapplicable cells stays unsupported and cannot satisfy full coverage', async () => {
+    const offering = offeringWithClicks('partial');
+    for (const metric of offering.metrics) {
+      metric.support = 'partial';
+      metric.reason = CLICKS_REASON;
+    }
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', clicks: 4 }],
+        availability_evidence: sharedMediaBuyCells(
+          input,
+          input.requested_metrics.map(metric => ({ constituent_id: 'fixture-constituent-2', metric, ...inapplicable }))
+        ),
+      }),
+      offering
+    );
+    const slice = twoBuySlice('fixture-inline-conditional-none-applicable');
+    const full = await source.execute(slice, context());
+    assert.equal(validateReportingSourceFailureV1(full, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+    slice.identity.sourceExecutionKey = 'fixture-inline-conditional-none-applicable-partial';
+    slice.coverage.expected = 'partial';
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'partial');
+    assert.equal(manifest.coverage.constituents[1].status, 'unsupported');
+  });
+
+  test('refuses a row value for an inapplicable cell, so no total sums a disclaimed value', async () => {
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', clicks: 4 },
+          { media_buy_id: 'fixture-media-buy-2', impressions: 20, spend: '2.50', clicks: 7 },
+        ],
+        availability_evidence: sharedMediaBuyCells(input, [
+          { constituent_id: 'fixture-constituent-2', metric: 'clicks', ...inapplicable },
+        ]),
+      }),
+      offeringWithClicks('partial')
+    );
+    const result = await source.execute(twoBuySlice('fixture-inline-conditional-row-value'), context());
+    assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+  });
+
+  test('an inapplicable cell does not hold back an authoritative close; an exact one still does', async () => {
+    const { cadence, ...offeringBase } = redactedReportingSourceOfferingV1;
+    const authoritative = {
+      ...offeringBase,
+      publicationClass: 'AUTHORITATIVE',
+      revisionSemantics: 'official_with_declared_correction_policy',
+      finalization: {
+        schedule: { sourceLocalReadyTime: '00:00', daysAfterPeriodEnd: 1 },
+        expectedAvailabilityLag: 'PT1H',
+        worstCaseAvailabilityLag: 'P1D',
+        triggerSupport: cadence.triggerSupport,
+        correctionWindow: 'P1D',
+        correctionPolicy: 'none',
+      },
+    };
+    for (const support of ['partial', 'exact']) {
+      const source = createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [
+            { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', clicks: 4 },
+            { media_buy_id: 'fixture-media-buy-2', impressions: 20, spend: '2.50' },
+          ],
+          data_through: input.end_date,
+          observed_at: input.end_date,
+          is_final: true,
+          notification_type: 'final',
+          availability_evidence: sharedMediaBuyCells(input, [
+            { constituent_id: 'fixture-constituent-2', metric: 'clicks', ...inapplicable },
+          ]),
+        }),
+        offeringWithClicks(support, authoritative)
+      );
+      const slice = twoBuySlice(`fixture-inline-conditional-authoritative-${support}`);
+      slice.publicationClass = 'AUTHORITATIVE';
+      slice.finality = { revisionKind: 'authoritative' };
+      const result = await source.execute(slice, context());
+      if (support === 'exact') {
+        assert.equal(validateReportingSourceFailureV1(result, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+        continue;
+      }
+      assert.equal(result.ok, true, JSON.stringify(result));
+      const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+      assert.equal(manifest.coverage.status, 'full');
+      assert.equal(manifest.publication.publicationClass, 'AUTHORITATIVE');
+    }
+  });
+});

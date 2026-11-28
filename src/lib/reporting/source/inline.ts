@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { reportingLocalDayStartDateV1 } from '../subscriptions/calendar';
 import { buildReportingSourceManifestV1 } from './builder';
 import { validateReportingSourceRequestAgainstCapabilitiesV1 } from './conformance';
+import { conditionalReportingMetricNamesV1 } from './metric-support';
 import {
   canonicalJsonV1,
   ReportingEvidenceReasonV1Schema,
@@ -1183,10 +1184,15 @@ async function executeAndSeal(
   if (request.coverage.expected === 'full' && projectedAvailability.coverageStatus !== 'full') {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery evidence does not satisfy full requested coverage');
   }
+  // A conditional metric's unsupported cell is inapplicable, not incomplete: there is no
+  // measurement for it to finalize, so it does not hold back an authoritative close.
+  const conditionalMetrics = conditionalReportingMetricNamesV1(offering.metrics);
   if (
     request.publicationClass === 'AUTHORITATIVE' &&
     projectedAvailability.metricAvailability.some(
-      cell => !['present', 'explicit_zero'].includes(cell.status) || Date.parse(cell.dataThrough ?? '') !== endMs
+      cell =>
+        !(cell.status === 'unsupported' && conditionalMetrics.has(cell.metric)) &&
+        (!['present', 'explicit_zero'].includes(cell.status) || Date.parse(cell.dataThrough ?? '') !== endMs)
     )
   ) {
     return failure('PARTIAL_RESULT', 'retryable', 'Authoritative inline reporting has incomplete metric evidence');
@@ -2071,10 +2077,17 @@ function projectInlineAvailabilityEvidence(
       ...(cell.reason ? { reason: cell.reason } : {}),
     } satisfies InlineAvailabilityCell;
   });
+  const conditionalMetrics = conditionalReportingMetricNamesV1([...declaredMetrics.values()]);
   const coverageConstituents = request.coverage.constituents.map(constituent => {
     const constituentCells = metricAvailability.filter(cell => cell.constituentId === constituent.constituentId);
-    const status = rollUpInlineConstituentStatus(constituentCells.map(cell => cell.status));
-    const dataThrough = earliestDataThrough(constituentCells);
+    const status = rollUpInlineConstituentStatus(constituentCells, conditionalMetrics);
+    const available = ['present', 'explicit_zero'].includes(status);
+    // An available roll-up's watermark is its measured cells' watermark. An inapplicable
+    // cell beside them measured nothing, so it neither holds the constituent back nor
+    // lends it a watermark.
+    const dataThrough = earliestDataThrough(
+      available ? constituentCells.filter(cell => ['present', 'explicit_zero'].includes(cell.status)) : constituentCells
+    );
     const reason = constituentCells.find(cell => cell.reason)?.reason;
     if (!['present', 'explicit_zero'].includes(status) && !reason) {
       throw new TypeError('Unavailable constituent roll-up requires supplied evidence');
@@ -2141,11 +2154,25 @@ function projectLegacyAvailability(
 }
 
 function rollUpInlineConstituentStatus(
-  statuses: readonly InlineAvailabilityCell['status'][]
+  cells: readonly Pick<InlineAvailabilityCell, 'metric' | 'status'>[],
+  conditionalMetrics: ReadonlySet<string>
 ): InlineCoverageConstituent['status'] {
+  const statuses = cells.map(cell => cell.status);
   if (statuses.every(status => status === 'explicit_zero')) return 'explicit_zero';
   if (statuses.every(status => status === 'present' || status === 'explicit_zero')) return 'present';
+  // Zero applicable metrics is no coverage evidence, not a vacuously complete measurement.
   if (statuses.every(status => status === 'unsupported')) return 'unsupported';
+  // A conditional metric's unsupported cell is inapplicable, so it does not demote
+  // otherwise available cells. An exact metric's unsupported cell still does.
+  if (
+    cells.every(
+      cell =>
+        cell.status === 'present' ||
+        cell.status === 'explicit_zero' ||
+        (cell.status === 'unsupported' && conditionalMetrics.has(cell.metric))
+    )
+  )
+    return 'present';
   if (statuses.every(status => status === 'missing')) return 'missing';
   if (statuses.every(status => ['unsupported', 'delayed', 'missing'].includes(status))) return 'delayed';
   if (statuses.every(status => ['unsupported', 'delayed', 'stale', 'missing'].includes(status))) return 'stale';

@@ -29,6 +29,7 @@ const {
   redactedReportingSourceResultV1,
   reportingSourceCapabilitiesV1,
 } = require('../../dist/lib/reporting/source/index.js');
+const { detectReportingContentMismatch } = require('../../dist/lib/reporting/index.js');
 const { AdcpError } = require('../../dist/lib/server/decisioning/async-outcome.js');
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
 const { InMemoryStateStore } = require('../../dist/lib/server/legacy/v5/index.js');
@@ -2245,6 +2246,170 @@ describe('seller reporting ledger', () => {
     const restatement = await producer.runWorker({ now: () => new Date(anchor + 3 * 86_400_000), maxIterations: 1 });
     assert.equal(restatement.revisionsCommitted, 1);
     assert.equal((await store.listRevisions(planned[0].reporting_obligation_id)).length, 2);
+  });
+
+  describe('conditional (partial-support) metrics', () => {
+    const CLICKS_REASON = 'Clicks are not measured for audio inventory';
+
+    function offeringWithClicks(support, reason = CLICKS_REASON) {
+      const offering = structuredClone(redactedReportingSourceOfferingV1);
+      offering.metrics.push({
+        ...offering.metrics[0],
+        name: 'clicks',
+        support,
+        ...(reason ? { reason } : {}),
+        semanticContractId: 'delivery.clicks',
+      });
+      return offering;
+    }
+
+    function twoBuyConstituents(request) {
+      const second = structuredClone(request.coverage.constituents[0]);
+      second.constituentId = 'fixture-constituent-2';
+      second.mediaBuyId = 'fixture-media-buy-2';
+      second.productBinding.bindingId = 'fixture-product-binding-2';
+      second.productBinding.mediaBuyId = 'fixture-media-buy-2';
+      return [request.coverage.constituents[0], second];
+    }
+
+    function configurationFor(request, overrides = {}) {
+      const constituents = twoBuyConstituents(request);
+      return {
+        account: request.account,
+        sourceScope: request.sourceScope,
+        delivery_config_id: request.delivery_config_id,
+        delivery_config_version: request.delivery_config_version,
+        offeringId: request.offeringId,
+        report_definition_id: request.report_definition_id,
+        feedPurpose: 'analytics',
+        requiredFinality: 'snapshot',
+        requestedMetrics: [...request.requestedMetrics, 'clicks'],
+        requestedDimensions: request.requestedDimensions,
+        constituents,
+        mediaBuyIds: constituents.map(value => value.mediaBuyId),
+        sourceTimezone: 'UTC',
+        schedule: {
+          anchor: request.period.start,
+          periodMilliseconds: 86_400_000,
+          deliverySlaMilliseconds: 0,
+          recoveryWindowMilliseconds: 86_400_000,
+        },
+        sourceSettings: request.sourceSettings,
+        contract: request.contract,
+        ...overrides,
+      };
+    }
+
+    // The second media buy has no clicks measurement: its rows omit clicks and its
+    // clicks cell says so, while impressions and spend are present for both buys.
+    async function runDay(offering) {
+      const store = new MemoryLedgerStore();
+      const request = redactedReportingSourceRequestV1();
+      const source = createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [
+            { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', clicks: 4 },
+            { media_buy_id: 'fixture-media-buy-2', impressions: 20, spend: '2.50' },
+          ],
+          availability_evidence: {
+            version: '1.0',
+            cells: input.constituents.flatMap(constituent =>
+              input.requested_metrics.map(metric =>
+                constituent.media_buy_id === 'fixture-media-buy-2' && metric === 'clicks'
+                  ? {
+                      constituent_id: constituent.constituent_id,
+                      metric,
+                      status: 'unsupported',
+                      reason: CLICKS_REASON,
+                    }
+                  : {
+                      constituent_id: constituent.constituent_id,
+                      metric,
+                      status: 'present',
+                      data_through: input.end_date,
+                    }
+              )
+            ),
+          },
+        }),
+        offering
+      );
+      const producer = createReportingProducer({
+        store,
+        source,
+        offerings: [offering],
+        contact: { name: 'Reporting operations' },
+      });
+      await producer.installConfiguration(configurationFor(request));
+      const anchor = Date.parse(request.period.start);
+      [...store.configurations.values()][0].installedAt = new Date(anchor).toISOString();
+      const [obligation] = await producer.planObligations(new Date(anchor + 86_400_000).toISOString());
+      const outcome = await producer.runWorker({ now: () => new Date(anchor + 86_400_000 + 60_000), maxIterations: 1 });
+      return { store, request, obligation, outcome };
+    }
+
+    test('a configuration may request a partial metric, never an unexplained or unavailable one', async () => {
+      const request = redactedReportingSourceRequestV1();
+      const install = offering =>
+        createReportingProducer({
+          store: new MemoryLedgerStore(),
+          // The source's own capability schema would refuse an unexplained partial
+          // declaration at construction; this test exercises the producer's check.
+          source: createInlineReportingSourceExecutor(() => [], redactedReportingSourceOfferingV1),
+          offerings: [offering],
+          contact: { name: 'Reporting operations' },
+        }).installConfiguration(configurationFor(request));
+      await install(offeringWithClicks('partial'));
+      await assert.rejects(() => install(offeringWithClicks('partial', null)), /Unsupported reporting metric/);
+      await assert.rejects(() => install(offeringWithClicks('unavailable')), /Unsupported reporting metric/);
+      // Dimensions are unchanged: they must still be supported exactly.
+      const partialDimension = offeringWithClicks('partial');
+      partialDimension.dimensions[0] = { ...partialDimension.dimensions[0], support: 'partial', reason: CLICKS_REASON };
+      await assert.rejects(() => install(partialDimension), /Unsupported reporting dimension/);
+    });
+
+    test('commits a full day when a conditional metric is inapplicable to one media buy', async () => {
+      const { store, request, obligation, outcome } = await runDay(offeringWithClicks('partial'));
+      assert.equal(outcome.revisionsCommitted, 1);
+      assert.equal(outcome.notReady, 0);
+      const [revision] = await store.listRevisions(obligation.reporting_obligation_id);
+      assert.equal(revision.wireRevision.coverage.status, 'full');
+
+      // The consumer reads the inapplicable cell as absent, never as zero: the row for
+      // the unmeasured media buy carries no clicks field, and the revision publishes no
+      // clicks control total because no honest total over every row exists.
+      const context = { account: { account_id: request.account.account_id } };
+      const delivery = await createReportingDeliveryHandler(store)(
+        { account: request.account, reporting_revision_id: revision.reporting_revision_id },
+        context
+      );
+      const served = Object.fromEntries(delivery.reporting_rows.map(row => [row.media_buy_id, row]));
+      assert.equal(served['fixture-media-buy'].clicks, 4);
+      assert.equal(Object.hasOwn(served['fixture-media-buy-2'], 'clicks'), false);
+      assert.equal(Object.hasOwn(served['fixture-media-buy-2'].totals ?? {}, 'clicks'), false);
+      const totals = Object.fromEntries(revision.wireRevision.control_totals.map(total => [total.name, total.value]));
+      assert.deepEqual(totals, { impressions: '30', spend: '3.75' });
+
+      // A buyer that pinned clicks still finds it in the revision, so the partial
+      // measurement is not reported as a missing metric.
+      assert.equal(
+        detectReportingContentMismatch(
+          { committedMetrics: ['impressions', 'spend', 'clicks'] },
+          revision.wireRevision,
+          { observedMetricNames: Object.keys(Object.assign({}, ...delivery.reporting_rows)) }
+        ),
+        undefined
+      );
+    });
+
+    test('an exact metric missing for one media buy still commits nothing', async () => {
+      const { store, obligation, outcome } = await runDay(offeringWithClicks('exact', null));
+      assert.equal(outcome.revisionsCommitted, 0);
+      assert.equal(outcome.notReady, 1);
+      assert.deepEqual(await store.listRevisions(obligation.reporting_obligation_id), []);
+    });
   });
 
   test('recovers lifecycle projection after a revision commit interruption', async () => {

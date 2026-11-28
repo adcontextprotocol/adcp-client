@@ -56,7 +56,7 @@ Local days follow `core/reporting-schedule.json` `period_generation`. A day star
   - `resolveSource` must return the account's timezone as `sourceTimezone`, because the source reports each account's days in that account's zone. When an owed period is not whole local days in the returned zone, planning fails for that subscription and names the period.
   - A generation keeps the zone it was installed with. The managed path does not yet follow an account timezone change (a `timezone_cutovers` entry) or a `selector.period_timezone` override the source does not report in. Planning reports both as failures.
 
-Without `configure`, each generation requests every metric and dimension its source offering supports exactly, with the offering's first attribution model and window, and an `official` feed gets a contractual cutoff at the offering's `delivery_sla`. Billing feeds need a canonicalization, so they fail to plan until you supply `configure`.
+Without `configure`, each generation requests every metric and dimension its source offering supports exactly, with the offering's first attribution model and window, and an `official` feed gets a contractual cutoff at the offering's `delivery_sla`. Billing feeds need a canonicalization, so they fail to plan until you supply `configure`. A metric the offering declares `partial` (it applies to only some constituents) is never in the default; request it through `configure`.
 
 ## What the SDK derives
 
